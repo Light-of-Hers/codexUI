@@ -4664,17 +4664,26 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
   }
 
   async function refreshAll(
-    options: { includeSelectedThreadMessages?: boolean; awaitAncillaryRefreshes?: boolean; providerChanged?: boolean } = {},
+    options: {
+      includeSelectedThreadMessages?: boolean
+      awaitAncillaryRefreshes?: boolean
+      providerChanged?: boolean
+      refreshAncillary?: boolean
+    } = {},
   ) {
     error.value = ''
     const includeSelectedThreadMessages = options.includeSelectedThreadMessages !== false
     const awaitAncillaryRefreshes = options.awaitAncillaryRefreshes === true
+    const refreshAncillary = options.refreshAncillary !== false
 
     try {
       await loadPersistedQueueStateIfNeeded()
       await loadThreads()
       if (includeSelectedThreadMessages) {
         await loadMessages(selectedThreadId.value)
+      }
+      if (!refreshAncillary) {
+        return
       }
       if (awaitAncillaryRefreshes) {
         await refreshAncillaryState({

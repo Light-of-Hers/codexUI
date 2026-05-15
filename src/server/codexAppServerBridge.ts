@@ -5480,9 +5480,12 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         if (req.method === 'GET' && url.pathname === '/codex-api/free-mode/status') {
           try {
             const state = readFreeModeState()
-            const freeModels = state.provider === MOONBRIDGE_PROVIDER_ID
+            const statusProvider = state.enabled ? (state.provider ?? 'openrouter') : undefined
+            const freeModels = statusProvider === MOONBRIDGE_PROVIDER_ID
               ? getMoonBridgeModels()
-              : await getFreeModels()
+              : statusProvider === 'openrouter'
+                ? await getFreeModels()
+                : []
             const maskedKey = state.apiKey && state.customKey
               ? `${state.apiKey.substring(0, 12)}...${state.apiKey.substring(state.apiKey.length - 4)}`
               : null
@@ -5493,7 +5496,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
               currentModel: state.enabled ? state.model : null,
               customKey: Boolean(state.customKey),
               maskedKey,
-              provider: state.enabled ? (state.provider ?? 'openrouter') : undefined,
+              provider: statusProvider,
               customBaseUrl: state.customBaseUrl ?? null,
               wireApi: state.wireApi ?? null,
             })

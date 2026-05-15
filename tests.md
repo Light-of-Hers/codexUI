@@ -5121,6 +5121,33 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Rollback/Cleanup
 - No cleanup is required.
 
+### Feature: Faster reload skips duplicate ancillary refresh
+
+#### Prerequisites
+- App server is running from this repository.
+- Browser profiling dependencies are installed.
+- A dev server can run on a non-conflicting port.
+
+#### Steps
+1. Start the dev server, for example `node scripts/dev.cjs --host 127.0.0.1 --port 5174`.
+2. From outside the repository root, run `PROFILE_BASE_URL=http://127.0.0.1:5174 PROFILE_ROUTE='/' PROFILE_WAIT_MS=6000 node /path/to/codexUI/scripts/profile-browser-runtime.cjs`.
+3. Open the generated JSON report under `output/playwright/`.
+4. Inspect `duplicateCounts` for `skillsList`, `rateLimitsRead`, and `providerModels`.
+5. Inspect the `apiRows` entries for `model/list`, `config/read`, `collaborationMode/list`, and `free-mode/status`.
+6. Run `./node_modules/.bin/vue-tsc --noEmit --pretty false`.
+
+#### Expected Results
+- Initial `refreshAll` does not schedule an ancillary refresh when provider synchronization is about to perform the startup ancillary refresh.
+- Startup profiling no longer shows two rounds of `skills/list`, `account/rateLimits/read`, `model/list`, `config/read`, and `collaborationMode/list` caused by the initialization sequence.
+- Startup profiling does not fetch `/codex-api/provider-models`; full provider model discovery remains reserved for explicit provider changes.
+- `free-mode/status` does not fetch the OpenRouter free-model catalog unless the active provider is OpenRouter.
+- The page still loads the thread list and then synchronizes provider state.
+- TypeScript check passes.
+
+#### Rollback/Cleanup
+- Stop only the temporary dev server started for this test.
+- Remove generated files under `output/playwright/` if they are not needed.
+
 ### Feature: Auto-continue unexpectedly interrupted Codex turns
 
 #### Prerequisites
