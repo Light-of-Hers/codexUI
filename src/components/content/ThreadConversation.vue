@@ -392,7 +392,7 @@
                 <div
                   v-if="readPlanExplanation(message)"
                   class="plan-card-explanation plan-card-markdown"
-                  v-html="renderMarkdownContent(readPlanExplanation(message), { cwd: props.cwd, kind: 'plan', highlightVersion: highlightCacheVersion }).html"
+                  v-html="renderProgressiveMarkdownContent(readPlanExplanation(message), 'plan', markdownRendererVersion)"
                 />
                   <ol v-if="readPlanSteps(message).length > 0" class="plan-step-list">
                     <li
@@ -404,14 +404,14 @@
                       <span class="plan-step-status" :data-status="step.status">{{ planStepStatusIcon(step.status) }}</span>
                       <div
                         class="plan-step-text plan-card-markdown"
-                        v-html="renderMarkdownContent(step.step, { cwd: props.cwd, kind: 'plan', highlightVersion: highlightCacheVersion }).html"
+                        v-html="renderProgressiveMarkdownContent(step.step, 'plan', markdownRendererVersion)"
                       />
                     </li>
                   </ol>
                   <div
                     v-else
                     class="plan-card-markdown"
-                    v-html="renderMarkdownContent(message.text, { cwd: props.cwd, kind: 'plan', highlightVersion: highlightCacheVersion }).html"
+                    v-html="renderProgressiveMarkdownContent(message.text, 'plan', markdownRendererVersion)"
                   />
                   <div v-if="showImplementPlanButton(message)" class="plan-card-actions">
                     <button
@@ -426,8 +426,8 @@
                 <div
                   v-else
                   class="message-text-flow message-markdown-body"
-                  v-memo="[message.id, message.text, props.cwd, highlightCacheVersion]"
-                  v-html="renderMarkdownContent(message.text, { cwd: props.cwd, kind: 'message', highlightVersion: highlightCacheVersion }).html"
+                  v-memo="[message.id, message.text, props.cwd, highlightCacheVersion, markdownRendererVersion]"
+                  v-html="renderProgressiveMarkdownContent(message.text, 'message', markdownRendererVersion)"
                 ></div>
               </article>
 
@@ -749,7 +749,6 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { UiFileChange, UiLiveOverlay, UiMessage, UiPlanStep, UiServerRequest } from '../../types/codex'
 import { useMobile } from '../../composables/useMobile'
 import { useUiLanguage } from '../../composables/useUiLanguage'
-import { clearMarkdownRendererCache, renderMarkdownContent } from './markdownRenderer'
 import { getHighlightLanguageForPath, normalizeHighlightLanguage } from '../../utils/codeLanguage.js'
 
 import IconTablerArrowUp from '../icons/IconTablerArrowUp.vue'
@@ -759,6 +758,7 @@ import IconTablerGitFork from '../icons/IconTablerGitFork.vue'
 import IconTablerX from '../icons/IconTablerX.vue'
 
 type HighlightJsModule = (typeof import('highlight.js'))['default']
+type MarkdownRendererModule = typeof import('./markdownRenderer')
 
 const expandedCommandIds = ref<Set<string>>(new Set())
 const collapsedAutoCommandIds = ref<Set<string>>(new Set())
@@ -1284,10 +1284,14 @@ let conversationScrollPromise: Promise<void> | null = null
 const trackedPendingImages = new WeakSet<HTMLImageElement>()
 const highlightJsModule = ref<HighlightJsModule | null>(null)
 const highlightCacheVersion = ref(0)
+const markdownRendererVersion = ref(0)
 const markdownImageFailureVersion = ref(0)
 const agentAvatarSrc = '/icons/agent-avatar.png'
 const userAvatarSrc = '/icons/user-avatar.png'
 let highlightJsLoader: Promise<void> | null = null
+let markdownRendererModule: MarkdownRendererModule | null = null
+let markdownRendererLoader: Promise<MarkdownRendererModule> | null = null
+let markdownRendererLoadScheduled = false
 const MESSAGE_BLOCK_CACHE_LIMIT = 300
 const INLINE_SEGMENT_CACHE_LIMIT = 1200
 const MARKDOWN_HTML_CACHE_LIMIT = 300
@@ -1351,6 +1355,40 @@ function ensureHighlightJsLoaded(): Promise<void> {
       })
   }
   return highlightJsLoader
+}
+
+function loadMarkdownRendererModule(): Promise<MarkdownRendererModule> {
+  if (markdownRendererModule) return Promise.resolve(markdownRendererModule)
+  if (!markdownRendererLoader) {
+    markdownRendererLoader = Promise.all([
+      import('katex/dist/katex.min.css'),
+      import('./markdownRenderer'),
+    ])
+      .then(([, module]) => {
+        markdownRendererModule = module
+        markdownHtmlCache.clear()
+        markdownRendererVersion.value += 1
+        return module
+      })
+      .finally(() => {
+        markdownRendererLoader = null
+      })
+  }
+  return markdownRendererLoader
+}
+
+function scheduleMarkdownRendererLoad(): void {
+  if (markdownRendererModule || markdownRendererLoader || markdownRendererLoadScheduled) return
+  markdownRendererLoadScheduled = true
+  if (typeof window === 'undefined') {
+    markdownRendererLoadScheduled = false
+    void loadMarkdownRendererModule().catch(() => {})
+    return
+  }
+  window.setTimeout(() => {
+    markdownRendererLoadScheduled = false
+    void loadMarkdownRendererModule().catch(() => {})
+  }, 0)
 }
 
 type ParsedToolQuestion = {
@@ -3576,6 +3614,22 @@ function renderMarkdownBlocksAsHtml(text: string): string {
   ).html
 }
 
+function renderProgressiveMarkdownContent(
+  text: string,
+  kind: 'message' | 'plan',
+  _rendererVersion = markdownRendererVersion.value,
+): string {
+  const renderer = markdownRendererModule
+  if (!renderer) {
+    return renderMarkdownBlocksAsHtml(text)
+  }
+  return renderer.renderMarkdownContent(text, {
+    cwd: props.cwd,
+    kind,
+    highlightVersion: highlightCacheVersion.value,
+  }).html
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -4140,7 +4194,7 @@ async function scheduleConversationScroll(): Promise<void> {
 }
 
 function clearRenderCaches(): void {
-  clearMarkdownRendererCache()
+  markdownRendererModule?.clearMarkdownRendererCache()
   messageBlockCache.clear()
   inlineSegmentCache.clear()
   markdownHtmlCache.clear()
@@ -4188,6 +4242,15 @@ watch(
 
     await scheduleConversationScroll()
   },
+)
+
+watch(
+  () => props.messages.length,
+  (messageCount) => {
+    if (messageCount === 0) return
+    scheduleMarkdownRendererLoad()
+  },
+  { immediate: true },
 )
 
 watch(

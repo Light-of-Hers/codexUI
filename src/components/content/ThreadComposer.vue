@@ -507,7 +507,10 @@ let composerSkillMentionsModulePromise: Promise<ComposerSkillMentionsModule> | n
 
 async function loadMarkdownRendererModule(): Promise<MarkdownRendererModule> {
   if (!markdownRendererModulePromise) {
-    markdownRendererModulePromise = import('./markdownRenderer')
+    markdownRendererModulePromise = Promise.all([
+      import('katex/dist/katex.min.css'),
+      import('./markdownRenderer'),
+    ]).then(([, module]) => module)
   }
   return markdownRendererModulePromise
 }

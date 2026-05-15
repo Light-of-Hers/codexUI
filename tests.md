@@ -66,6 +66,30 @@ This file tracks manual regression and feature verification steps.
 #### Rollback/Cleanup
 - No cleanup is required.
 
+### Feature: Conversation markdown renderer loads after first paint
+
+#### Prerequisites
+- App server is running from this repository.
+- A thread with markdown content is available, preferably including a code fence and a math expression.
+- Browser devtools Network panel is available.
+- Light theme and dark theme are both available from Settings.
+
+#### Steps
+1. Open the thread in light theme and reload the page.
+2. Watch the Network panel during the refresh and confirm the conversation shell appears before the markdown renderer and KaTeX assets finish loading.
+3. Confirm the first visible conversation content uses the lightweight fallback rendering and then upgrades to rich markdown after the async renderer loads.
+4. Verify code fences still render with syntax highlighting after the enhancement finishes.
+5. Verify math content renders correctly after KaTeX CSS is loaded.
+6. Switch to dark theme and repeat the refresh check.
+
+#### Expected Results
+- First paint is no longer blocked on the full markdown/KaTeX renderer chunk.
+- Rich markdown still appears after the lazy-loaded renderer finishes.
+- Code blocks and math remain readable in both light and dark themes.
+
+#### Rollback/Cleanup
+- No cleanup is required.
+
 ### Feature: Composer helper lazy loading
 
 #### Prerequisites
