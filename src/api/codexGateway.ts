@@ -254,6 +254,7 @@ export type MoonBridgeModelMetadata = {
 }
 
 const PROVIDER_MODELS_FETCH_TIMEOUT_MS = 5_000
+const WORKSPACE_ROOTS_STATE_CACHE_TTL_MS = 1_000
 
 type ResolvedCollaborationModeSettings = {
   model: string
@@ -280,6 +281,10 @@ export type WorkspaceRootsState = {
     label: string
   }>
 }
+
+let workspaceRootsStateCache: { value: WorkspaceRootsState; expiresAt: number } | null = null
+let workspaceRootsStatePromise: Promise<WorkspaceRootsState> | null = null
+let workspaceRootsStateCacheVersion = 0
 
 export type StoredQueuedMessage = {
   id: string
@@ -2432,6 +2437,31 @@ function normalizeWorkspaceRootsState(payload: unknown): WorkspaceRootsState {
   }
 }
 
+function cloneWorkspaceRootsState(state: WorkspaceRootsState): WorkspaceRootsState {
+  return {
+    order: [...state.order],
+    labels: { ...state.labels },
+    active: [...state.active],
+    projectOrder: [...state.projectOrder],
+    remoteProjects: (state.remoteProjects ?? []).map((remoteProject) => ({ ...remoteProject })),
+  }
+}
+
+function cacheWorkspaceRootsState(state: WorkspaceRootsState): WorkspaceRootsState {
+  const value = cloneWorkspaceRootsState(state)
+  workspaceRootsStateCache = {
+    value,
+    expiresAt: Date.now() + WORKSPACE_ROOTS_STATE_CACHE_TTL_MS,
+  }
+  return cloneWorkspaceRootsState(value)
+}
+
+function clearWorkspaceRootsStateCache(): void {
+  workspaceRootsStateCache = null
+  workspaceRootsStatePromise = null
+  workspaceRootsStateCacheVersion += 1
+}
+
 function normalizeStoredQueuedMessage(value: unknown): StoredQueuedMessage | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const record = value as Record<string, unknown>
@@ -2489,16 +2519,40 @@ function normalizeThreadQueueState(value: unknown): ThreadQueueState {
 }
 
 export async function getWorkspaceRootsState(): Promise<WorkspaceRootsState> {
-  const response = await fetch('/codex-api/workspace-roots-state')
-  const payload = (await response.json()) as unknown
-  if (!response.ok) {
-    throw new Error('Failed to load workspace roots state')
+  const now = Date.now()
+  if (workspaceRootsStateCache && workspaceRootsStateCache.expiresAt > now) {
+    return cloneWorkspaceRootsState(workspaceRootsStateCache.value)
   }
-  const envelope =
-    payload && typeof payload === 'object' && !Array.isArray(payload)
-      ? (payload as Record<string, unknown>)
-      : {}
-  return normalizeWorkspaceRootsState(envelope.data)
+  if (!workspaceRootsStatePromise) {
+    const cacheVersion = workspaceRootsStateCacheVersion
+    const requestPromise = (async () => {
+      const response = await fetch('/codex-api/workspace-roots-state')
+      const payload = (await response.json()) as unknown
+      if (!response.ok) {
+        throw new Error('Failed to load workspace roots state')
+      }
+      const envelope =
+        payload && typeof payload === 'object' && !Array.isArray(payload)
+          ? (payload as Record<string, unknown>)
+          : {}
+      const state = normalizeWorkspaceRootsState(envelope.data)
+      return cacheVersion === workspaceRootsStateCacheVersion
+        ? cacheWorkspaceRootsState(state)
+        : cloneWorkspaceRootsState(state)
+    })()
+    workspaceRootsStatePromise = requestPromise
+    void requestPromise.then(() => {
+      if (workspaceRootsStatePromise === requestPromise) {
+        workspaceRootsStatePromise = null
+      }
+    }, () => {
+      if (workspaceRootsStatePromise === requestPromise) {
+        workspaceRootsStatePromise = null
+      }
+    })
+  }
+
+  return cloneWorkspaceRootsState(await workspaceRootsStatePromise)
 }
 
 export async function getThreadQueueState(): Promise<ThreadQueueState> {
@@ -2870,6 +2924,7 @@ async function readJsonResponse(response: Response): Promise<unknown> {
 }
 
 export async function setWorkspaceRootsState(nextState: WorkspaceRootsState): Promise<void> {
+  clearWorkspaceRootsStateCache()
   const response = await fetch('/codex-api/workspace-roots-state', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -2878,9 +2933,11 @@ export async function setWorkspaceRootsState(nextState: WorkspaceRootsState): Pr
   if (!response.ok) {
     throw new Error('Failed to save workspace roots state')
   }
+  cacheWorkspaceRootsState(nextState)
 }
 
 export async function openProjectRoot(path: string, options?: { createIfMissing?: boolean; label?: string }): Promise<string> {
+  clearWorkspaceRootsStateCache()
   const response = await fetch('/codex-api/project-root', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -2904,6 +2961,7 @@ export async function openProjectRoot(path: string, options?: { createIfMissing?
       ? (record.data as Record<string, unknown>)
       : {}
   const normalizedPath = typeof data.path === 'string' ? normalizePathForUi(data.path) : ''
+  clearWorkspaceRootsStateCache()
   return normalizedPath
 }
 

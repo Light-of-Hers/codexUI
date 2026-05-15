@@ -19,6 +19,31 @@ This file tracks manual regression and feature verification steps.
 #### Rollback/Cleanup
 - <cleanup action, if any>
 
+### Feature: Startup background refresh scheduling
+
+#### Prerequisites
+- App server is running from this repository.
+- Browser devtools Network panel is available.
+- At least one workspace root and one Git-backed project are available.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Open the app home route and hard-refresh the browser.
+2. Confirm the thread list and composer become usable before Telegram, first-launch card, terminal status, and project suggestion requests finish.
+3. In Network, confirm startup does not issue `/codex-api/git/repository-status` for every sidebar project.
+4. In Network, confirm concurrent `/codex-api/workspace-roots-state` calls are coalesced to a single request during reload.
+5. Open a project menu for a Git-backed project and confirm the Git status request is made lazily.
+6. Switch to light theme and dark theme, then reopen the project menu.
+
+#### Expected Results
+- Startup keeps critical thread/provider loading ahead of non-critical settings and helper refreshes.
+- Sidebar project Git checks do not fan out during page reload.
+- The project menu still shows `New worktree` for Git projects after its lazy status check finishes.
+- Light and dark project menus remain readable while the lazy menu item appears.
+
+#### Rollback/Cleanup
+- No cleanup is required.
+
 ### Feature: Markdown editor preview for local files
 
 #### Prerequisites
