@@ -72,26 +72,41 @@
                     :class="{ 'cmd-output-visible': isCommandExpanded(cmd) }"
                   >
                     <div class="cmd-output-inner">
-                      <div class="cmd-output-command">
-                        <span class="cmd-output-command-label">Command</span>
-                        <div class="cmd-output-command-text" tabindex="0" @keydown="onCommandTextKeydown">
-                          <div class="cmd-output-command-lines">
+                      <div class="cmd-output-section">
+                        <span class="cmd-output-section-label">Command</span>
+                        <div class="cmd-code-box" tabindex="0" @keydown="onCodeBoxKeydown">
+                          <div class="cmd-code-box-lines">
                             <div
                               v-for="(line, lineIndex) in commandDisplayLines(cmd)"
                               :key="`grouped-command-line-${cmd.id}-${lineIndex}`"
-                              class="cmd-output-command-line"
+                              class="cmd-code-box-line"
                               :data-line-number="lineIndex + 1"
                             >
-                              <code class="cmd-output-command-line-code" v-text="line || ' '"></code>
+                              <code class="cmd-code-box-line-code" v-text="line || ' '"></code>
                             </div>
                           </div>
                         </div>
                       </div>
-                      <pre
-                        class="cmd-output"
-                        :class="{ 'cmd-output-condensed': isCommandOutputCondensed(cmd) }"
-                        v-text="cmd.commandExecution?.aggregatedOutput || '(no output)'"
-                      ></pre>
+                      <div class="cmd-output-section">
+                        <span class="cmd-output-section-label">Output</span>
+                        <div
+                          class="cmd-code-box cmd-code-box-output"
+                          :class="{ 'cmd-code-box-condensed': isCommandOutputCondensed(cmd) }"
+                          tabindex="0"
+                          @keydown="onCodeBoxKeydown"
+                        >
+                          <div class="cmd-code-box-lines">
+                            <div
+                              v-for="(line, lineIndex) in outputDisplayLines(cmd)"
+                              :key="`grouped-output-line-${cmd.id}-${lineIndex}`"
+                              class="cmd-code-box-line"
+                              :data-line-number="lineIndex + 1"
+                            >
+                              <code class="cmd-code-box-line-code" v-text="line || ' '"></code>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -119,26 +134,41 @@
                 :class="{ 'cmd-output-visible': isCommandExpanded(message) }"
               >
                 <div class="cmd-output-inner">
-                  <div class="cmd-output-command">
-                    <span class="cmd-output-command-label">Command</span>
-                    <div class="cmd-output-command-text" tabindex="0" @keydown="onCommandTextKeydown">
-                      <div class="cmd-output-command-lines">
+                  <div class="cmd-output-section">
+                    <span class="cmd-output-section-label">Command</span>
+                    <div class="cmd-code-box" tabindex="0" @keydown="onCodeBoxKeydown">
+                      <div class="cmd-code-box-lines">
                         <div
                           v-for="(line, lineIndex) in commandDisplayLines(message)"
                           :key="`command-line-${message.id}-${lineIndex}`"
-                          class="cmd-output-command-line"
+                          class="cmd-code-box-line"
                           :data-line-number="lineIndex + 1"
                         >
-                          <code class="cmd-output-command-line-code" v-text="line || ' '"></code>
+                          <code class="cmd-code-box-line-code" v-text="line || ' '"></code>
                         </div>
                       </div>
                     </div>
                   </div>
-                  <pre
-                    class="cmd-output"
-                    :class="{ 'cmd-output-condensed': isCommandOutputCondensed(message) }"
-                    v-text="message.commandExecution?.aggregatedOutput || '(no output)'"
-                  ></pre>
+                  <div class="cmd-output-section">
+                    <span class="cmd-output-section-label">Output</span>
+                    <div
+                      class="cmd-code-box cmd-code-box-output"
+                      :class="{ 'cmd-code-box-condensed': isCommandOutputCondensed(message) }"
+                      tabindex="0"
+                      @keydown="onCodeBoxKeydown"
+                    >
+                      <div class="cmd-code-box-lines">
+                        <div
+                          v-for="(line, lineIndex) in outputDisplayLines(message)"
+                          :key="`output-line-${message.id}-${lineIndex}`"
+                          class="cmd-code-box-line"
+                          :data-line-number="lineIndex + 1"
+                        >
+                          <code class="cmd-code-box-line-code" v-text="line || ' '"></code>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             </template>
@@ -314,26 +344,41 @@
                         :class="{ 'cmd-output-visible': isCommandExpanded(cmd) }"
                       >
                         <div class="cmd-output-inner">
-                          <div class="cmd-output-command">
-                            <span class="cmd-output-command-label">Command</span>
-                            <div class="cmd-output-command-text" tabindex="0" @keydown="onCommandTextKeydown">
-                              <div class="cmd-output-command-lines">
+                          <div class="cmd-output-section">
+                            <span class="cmd-output-section-label">Command</span>
+                            <div class="cmd-code-box" tabindex="0" @keydown="onCodeBoxKeydown">
+                              <div class="cmd-code-box-lines">
                                 <div
                                   v-for="(line, lineIndex) in commandDisplayLines(cmd)"
                                   :key="`worked-command-line-${cmd.id}-${lineIndex}`"
-                                  class="cmd-output-command-line"
+                                  class="cmd-code-box-line"
                                   :data-line-number="lineIndex + 1"
                                 >
-                                  <code class="cmd-output-command-line-code" v-text="line || ' '"></code>
+                                  <code class="cmd-code-box-line-code" v-text="line || ' '"></code>
                                 </div>
                               </div>
                             </div>
                           </div>
-                          <pre
-                            class="cmd-output"
-                            :class="{ 'cmd-output-condensed': isCommandOutputCondensed(cmd) }"
-                            v-text="cmd.commandExecution?.aggregatedOutput || '(no output)'"
-                          ></pre>
+                          <div class="cmd-output-section">
+                            <span class="cmd-output-section-label">Output</span>
+                            <div
+                              class="cmd-code-box cmd-code-box-output"
+                              :class="{ 'cmd-code-box-condensed': isCommandOutputCondensed(cmd) }"
+                              tabindex="0"
+                              @keydown="onCodeBoxKeydown"
+                            >
+                              <div class="cmd-code-box-lines">
+                                <div
+                                  v-for="(line, lineIndex) in outputDisplayLines(cmd)"
+                                  :key="`worked-output-line-${cmd.id}-${lineIndex}`"
+                                  class="cmd-code-box-line"
+                                  :data-line-number="lineIndex + 1"
+                                >
+                                  <code class="cmd-code-box-line-code" v-text="line || ' '"></code>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -792,17 +837,27 @@ function commandDisplayText(message: UiMessage): string {
 function commandDisplayLines(message: UiMessage): string[] {
   const command = message.commandExecution?.command
   if (typeof command !== 'string' || command.length === 0) return ['(command)']
-  return command.split(/\r\n|\r|\n/gu)
+  return splitDisplayLines(command)
 }
 
-function onCommandTextKeydown(event: KeyboardEvent): void {
+function outputDisplayLines(message: UiMessage): string[] {
+  const output = message.commandExecution?.aggregatedOutput
+  if (typeof output !== 'string' || output.length === 0) return ['(no output)']
+  return splitDisplayLines(output)
+}
+
+function splitDisplayLines(text: string): string[] {
+  return text.split(/\r\n|\r|\n/gu)
+}
+
+function onCodeBoxKeydown(event: KeyboardEvent): void {
   if (event.key.toLowerCase() !== 'a') return
   if (!event.ctrlKey && !event.metaKey) return
   if (event.altKey) return
 
   const target = event.currentTarget
   if (!(target instanceof HTMLElement)) return
-  const lines = target.querySelector<HTMLElement>('.cmd-output-command-lines')
+  const lines = target.querySelector<HTMLElement>('.cmd-code-box-lines')
   if (!lines) return
 
   const selection = window.getSelection()
@@ -5173,46 +5228,46 @@ onBeforeUnmount(() => {
   min-height: 0;
 }
 
-.cmd-output-command {
-  @apply flex flex-col gap-1 border-b border-white/10 px-3 py-2;
+.cmd-output-section {
+  @apply flex flex-col gap-1 border-b border-white/10 px-2 py-1.5;
 }
 
-.cmd-output-command-label {
+.cmd-output-section-label {
   @apply text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-400;
 }
 
-.cmd-output-command-text {
+.cmd-code-box {
   @apply block max-h-40 overflow-y-auto rounded-lg border border-white/10 bg-white/5 px-0 py-0 text-xs font-mono text-zinc-100 outline-none;
 }
 
-.cmd-output-command-text:focus-visible {
+.cmd-code-box-output {
+  @apply max-h-60;
+}
+
+.cmd-code-box-output.cmd-code-box-condensed {
+  max-height: 9rem;
+}
+
+.cmd-code-box:focus-visible {
   @apply ring-2 ring-sky-400/60 ring-offset-0;
 }
 
-.cmd-output-command-lines {
+.cmd-code-box-lines {
   @apply min-w-0;
 }
 
-.cmd-output-command-line {
-  @apply grid min-w-0 items-start gap-3 px-3 py-1.5;
-  grid-template-columns: minmax(2.75rem, max-content) minmax(0, 1fr);
+.cmd-code-box-line {
+  @apply grid min-w-0 items-start gap-1.5 px-1.5 py-0.5;
+  grid-template-columns: minmax(1.25rem, max-content) minmax(0, 1fr);
 }
 
-.cmd-output-command-line::before {
+.cmd-code-box-line::before {
   content: attr(data-line-number);
-  @apply select-none text-right text-[11px] leading-5 text-zinc-500;
+  @apply select-none pr-0.5 text-right text-[10px] leading-4 text-zinc-500;
 }
 
-.cmd-output-command-line-code {
-  @apply min-w-0 whitespace-pre-wrap break-words leading-5 text-zinc-100;
-}
-
-.cmd-output {
-  @apply m-0 px-3 py-2 text-xs font-mono text-zinc-200 whitespace-pre-wrap break-words max-h-60 overflow-y-auto;
-}
-
-.cmd-output.cmd-output-condensed {
-  max-height: 9rem;
+.cmd-code-box-line-code {
+  @apply min-w-0 whitespace-pre-wrap break-words leading-4 text-zinc-100;
 }
 
 .file-change-summary-block {
