@@ -5241,15 +5241,20 @@ Markdown files opened through the local editor expose a preview button that rend
 1. Open the thread in light theme.
 2. Click the command row to expand its output.
 3. Confirm the expanded panel shows a `Command` block with the full command text, not just the truncated row label.
-4. Confirm the existing output still appears below the command block.
-5. Confirm long commands wrap inside the `Command` block and scroll vertically when they exceed the block height.
-6. Hover the collapsed command label and confirm the full command is exposed via the tooltip.
-7. Switch to dark theme and repeat steps 2-6.
+4. Confirm the `Command` block shows line numbers for each command line.
+5. Confirm the existing output still appears below the command block.
+6. Confirm long commands wrap inside the `Command` block and scroll vertically when they exceed the block height.
+7. Click inside the `Command` block and press `Ctrl+A` or `Cmd+A`.
+8. Confirm only the command block contents are selected, not the rest of the thread.
+9. Hover the collapsed command label and confirm the full command is exposed via the tooltip.
+10. Switch to dark theme and repeat steps 2-9.
 
 #### Expected Results
 - Expanded command rows show the complete command string above the output.
+- The command block shows non-selectable line numbers.
 - The output content remains visible and unchanged below the new command block.
 - The command block wraps long command lines and scrolls vertically when the wrapped content is taller than the block.
+- Select-all while focused inside the command block selects only the command text area.
 - The collapsed row still uses compact truncation for the inline label, but the full command is available on hover.
 - Both light and dark themes keep the command block readable.
 

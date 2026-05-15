@@ -74,7 +74,18 @@
                     <div class="cmd-output-inner">
                       <div class="cmd-output-command">
                         <span class="cmd-output-command-label">Command</span>
-                        <pre class="cmd-output-command-text" v-text="commandDisplayText(cmd)"></pre>
+                        <div class="cmd-output-command-text" tabindex="0" @keydown="onCommandTextKeydown">
+                          <div class="cmd-output-command-lines">
+                            <div
+                              v-for="(line, lineIndex) in commandDisplayLines(cmd)"
+                              :key="`grouped-command-line-${cmd.id}-${lineIndex}`"
+                              class="cmd-output-command-line"
+                              :data-line-number="lineIndex + 1"
+                            >
+                              <code class="cmd-output-command-line-code" v-text="line || ' '"></code>
+                            </div>
+                          </div>
+                        </div>
                       </div>
                       <pre
                         class="cmd-output"
@@ -110,7 +121,18 @@
                 <div class="cmd-output-inner">
                   <div class="cmd-output-command">
                     <span class="cmd-output-command-label">Command</span>
-                    <pre class="cmd-output-command-text" v-text="commandDisplayText(message)"></pre>
+                    <div class="cmd-output-command-text" tabindex="0" @keydown="onCommandTextKeydown">
+                      <div class="cmd-output-command-lines">
+                        <div
+                          v-for="(line, lineIndex) in commandDisplayLines(message)"
+                          :key="`command-line-${message.id}-${lineIndex}`"
+                          class="cmd-output-command-line"
+                          :data-line-number="lineIndex + 1"
+                        >
+                          <code class="cmd-output-command-line-code" v-text="line || ' '"></code>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                   <pre
                     class="cmd-output"
@@ -294,7 +316,18 @@
                         <div class="cmd-output-inner">
                           <div class="cmd-output-command">
                             <span class="cmd-output-command-label">Command</span>
-                            <pre class="cmd-output-command-text" v-text="commandDisplayText(cmd)"></pre>
+                            <div class="cmd-output-command-text" tabindex="0" @keydown="onCommandTextKeydown">
+                              <div class="cmd-output-command-lines">
+                                <div
+                                  v-for="(line, lineIndex) in commandDisplayLines(cmd)"
+                                  :key="`worked-command-line-${cmd.id}-${lineIndex}`"
+                                  class="cmd-output-command-line"
+                                  :data-line-number="lineIndex + 1"
+                                >
+                                  <code class="cmd-output-command-line-code" v-text="line || ' '"></code>
+                                </div>
+                              </div>
+                            </div>
                           </div>
                           <pre
                             class="cmd-output"
@@ -754,6 +787,33 @@ function isCommandMessage(message: UiMessage): boolean {
 function commandDisplayText(message: UiMessage): string {
   const command = message.commandExecution?.command
   return typeof command === 'string' && command.length > 0 ? command : '(command)'
+}
+
+function commandDisplayLines(message: UiMessage): string[] {
+  const command = message.commandExecution?.command
+  if (typeof command !== 'string' || command.length === 0) return ['(command)']
+  return command.split(/\r\n|\r|\n/gu)
+}
+
+function onCommandTextKeydown(event: KeyboardEvent): void {
+  if (event.key.toLowerCase() !== 'a') return
+  if (!event.ctrlKey && !event.metaKey) return
+  if (event.altKey) return
+
+  const target = event.currentTarget
+  if (!(target instanceof HTMLElement)) return
+  const lines = target.querySelector<HTMLElement>('.cmd-output-command-lines')
+  if (!lines) return
+
+  const selection = window.getSelection()
+  if (!selection) return
+
+  const range = document.createRange()
+  range.selectNodeContents(lines)
+  selection.removeAllRanges()
+  selection.addRange(range)
+  event.preventDefault()
+  event.stopPropagation()
 }
 
 function isPlanMessage(message: UiMessage): boolean {
@@ -5122,7 +5182,29 @@ onBeforeUnmount(() => {
 }
 
 .cmd-output-command-text {
-  @apply m-0 max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-xs font-mono text-zinc-100;
+  @apply block max-h-40 overflow-y-auto rounded-lg border border-white/10 bg-white/5 px-0 py-0 text-xs font-mono text-zinc-100 outline-none;
+}
+
+.cmd-output-command-text:focus-visible {
+  @apply ring-2 ring-sky-400/60 ring-offset-0;
+}
+
+.cmd-output-command-lines {
+  @apply min-w-0;
+}
+
+.cmd-output-command-line {
+  @apply grid min-w-0 items-start gap-3 px-3 py-1.5;
+  grid-template-columns: minmax(2.75rem, max-content) minmax(0, 1fr);
+}
+
+.cmd-output-command-line::before {
+  content: attr(data-line-number);
+  @apply select-none text-right text-[11px] leading-5 text-zinc-500;
+}
+
+.cmd-output-command-line-code {
+  @apply min-w-0 whitespace-pre-wrap break-words leading-5 text-zinc-100;
 }
 
 .cmd-output {
