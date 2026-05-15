@@ -5122,7 +5122,7 @@ onBeforeUnmount(() => {
 }
 
 .cmd-output-command-text {
-  @apply m-0 max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-xs font-mono text-zinc-100;
+  @apply m-0 max-h-40 overflow-auto whitespace-pre text-xs font-mono text-zinc-100;
 }
 
 .cmd-output {
