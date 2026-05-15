@@ -5190,14 +5190,14 @@ Markdown files opened through the local editor expose a preview button that rend
 2. Click the command row to expand its output.
 3. Confirm the expanded panel shows a `Command` block with the full command text, not just the truncated row label.
 4. Confirm the existing output still appears below the command block.
-5. Confirm long commands can be scrolled inside the `Command` block without losing the output panel.
+5. Confirm long commands wrap inside the `Command` block and scroll vertically when they exceed the block height.
 6. Hover the collapsed command label and confirm the full command is exposed via the tooltip.
 7. Switch to dark theme and repeat steps 2-6.
 
 #### Expected Results
 - Expanded command rows show the complete command string above the output.
 - The output content remains visible and unchanged below the new command block.
-- The command block itself scrolls when the command is longer than the available area.
+- The command block wraps long command lines and scrolls vertically when the wrapped content is taller than the block.
 - The collapsed row still uses compact truncation for the inline label, but the full command is available on hover.
 - Both light and dark themes keep the command block readable.
 
