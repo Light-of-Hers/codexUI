@@ -44,6 +44,30 @@ This file tracks manual regression and feature verification steps.
 #### Rollback/Cleanup
 - No cleanup is required.
 
+### Feature: Composer helper lazy loading
+
+#### Prerequisites
+- App server is running from this repository.
+- Browser devtools Network panel is available.
+- At least one workspace folder is available for file mention checks.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Open the app home route and hard-refresh the browser.
+2. Confirm the initial network burst no longer includes `markdownRenderer`, composer file mention, or composer skill mention modules.
+3. Open the markdown preview in the composer and confirm the markdown renderer module loads only when preview is shown.
+4. Select a workspace folder, type `@` and `$` mention prefixes in the composer, and confirm the file and skill mention helper modules load on demand.
+5. Switch to light theme and dark theme, then repeat the preview and mention checks.
+
+#### Expected Results
+- The initial composer load avoids the markdown rendering stack and mention helper modules.
+- Markdown preview still renders correctly after it is opened.
+- File and skill mentions still work after their helper modules load lazily.
+- Light and dark theme composer surfaces remain readable.
+
+#### Rollback/Cleanup
+- No cleanup is required.
+
 ### Feature: Markdown editor preview for local files
 
 #### Prerequisites

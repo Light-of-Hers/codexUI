@@ -479,17 +479,6 @@ import {
   type ComposerFileSuggestion,
   type ComposerPromptInfo,
 } from '../../api/codexGateway'
-import {
-  extractComposerFileMentionAttachments,
-  insertComposerFileMentionText,
-  toComposerFileMentionSearchQuery,
-} from './composerFileMentions'
-import {
-  extractComposerSkillMentionSelections,
-  filterComposerSkillMentionSuggestions,
-  insertComposerSkillMentionText,
-} from './composerSkillMentions'
-import { renderMarkdownContent } from './markdownRenderer'
 import IconTablerArrowUp from '../icons/IconTablerArrowUp.vue'
 import IconTablerBolt from '../icons/IconTablerBolt.vue'
 import IconTablerEye from '../icons/IconTablerEye.vue'
@@ -508,6 +497,34 @@ type SkillSourceBadge = {
 }
 
 type SkillItem = { name: string; displayName?: string; description: string; path: string; scope?: string; enabled?: boolean }
+type MarkdownRendererModule = typeof import('./markdownRenderer')
+type ComposerFileMentionsModule = typeof import('./composerFileMentions')
+type ComposerSkillMentionsModule = typeof import('./composerSkillMentions')
+
+let markdownRendererModulePromise: Promise<MarkdownRendererModule> | null = null
+let composerFileMentionsModulePromise: Promise<ComposerFileMentionsModule> | null = null
+let composerSkillMentionsModulePromise: Promise<ComposerSkillMentionsModule> | null = null
+
+async function loadMarkdownRendererModule(): Promise<MarkdownRendererModule> {
+  if (!markdownRendererModulePromise) {
+    markdownRendererModulePromise = import('./markdownRenderer')
+  }
+  return markdownRendererModulePromise
+}
+
+async function loadComposerFileMentionsModule(): Promise<ComposerFileMentionsModule> {
+  if (!composerFileMentionsModulePromise) {
+    composerFileMentionsModulePromise = import('./composerFileMentions')
+  }
+  return composerFileMentionsModulePromise
+}
+
+async function loadComposerSkillMentionsModule(): Promise<ComposerSkillMentionsModule> {
+  if (!composerSkillMentionsModulePromise) {
+    composerSkillMentionsModulePromise = import('./composerSkillMentions')
+  }
+  return composerSkillMentionsModulePromise
+}
 
 const props = defineProps<{
   activeThreadId: string
@@ -594,6 +611,9 @@ const PROMPT_OPTION_PREFIX = 'prompt:'
 
 const draft = ref('')
 const isMarkdownPreviewVisible = ref(false)
+const draftPreviewHtml = ref('')
+let draftPreviewRenderToken = 0
+const isSubmittingDraft = ref(false)
 const selectedImages = ref<SelectedImage[]>([])
 const selectedSkills = ref<SkillItem[]>([])
 const savedPrompts = ref<ComposerPromptInfo[]>([])
@@ -716,6 +736,7 @@ const canSubmit = computed(() => {
   if (props.isUpdatingSpeedMode) return false
   if (!props.activeThreadId) return false
   if (isPlanModeWaitingForModel.value) return false
+  if (isSubmittingDraft.value) return false
   if (pendingAttachmentCount.value > 0) return false
   return draft.value.trim().length > 0 || selectedImages.value.length > 0 || fileAttachments.value.length > 0
 })
@@ -802,16 +823,6 @@ const placeholderText = computed(() =>
 const hasSubmitContent = computed(() =>
   draft.value.trim().length > 0 || selectedImages.value.length > 0 || fileAttachments.value.length > 0,
 )
-const draftPreviewHtml = computed(() => {
-  const rendered = renderMarkdownContent(draft.value, {
-    cwd: props.cwd ?? '',
-    kind: 'message',
-    highlightVersion: 0,
-  }).html
-  return rendered.trim()
-    ? rendered
-    : `<p class="thread-composer-preview-empty">${t('Nothing to preview.')}</p>`
-})
 const quotaSummaryText = computed(() => buildQuotaSummaryText(props.codexQuota ?? null))
 const quotaWeeklyRefreshText = computed(() => '')
 const quotaTooltipText = computed(() => buildQuotaTooltipText(props.codexQuota ?? null))
@@ -1042,32 +1053,41 @@ function buildContextUsageView(
   }
 }
 
-function onSubmit(mode: 'steer' | 'queue' = 'steer'): void {
+async function onSubmit(mode: 'steer' | 'queue' = 'steer'): Promise<void> {
   const text = draft.value.trim()
   if (!canSubmit.value) return
-  const inlineFileAttachments = extractComposerFileMentionAttachments(text, props.cwd ?? '')
-  const inlineSkillSelections = extractComposerSkillMentionSelections(text, props.skills ?? [])
-  emit('submit', {
-    text,
-    imageUrls: selectedImages.value.map((image) => image.url),
-    fileAttachments: dedupeFileAttachments([...fileAttachments.value, ...inlineFileAttachments]),
-    skills: dedupeSkillSelections([...selectedSkills.value, ...inlineSkillSelections]).map((skill) => ({
-      name: skill.name,
-      path: skill.path,
-    })),
-    mode,
-  })
-  clearPersistedDraftForThread(props.activeThreadId)
-  clearDraftState()
-  isMarkdownPreviewVisible.value = false
-  folderUploadGroups.value = []
-  isAttachMenuOpen.value = false
-  closeFileMention()
-  if (isAndroid || isMobile.value) {
-    inputRef.value?.blur()
-    return
+  isSubmittingDraft.value = true
+  try {
+    const [fileMentionsModule, skillMentionsModule] = await Promise.all([
+      loadComposerFileMentionsModule(),
+      loadComposerSkillMentionsModule(),
+    ])
+    const inlineFileAttachments = fileMentionsModule.extractComposerFileMentionAttachments(text, props.cwd ?? '')
+    const inlineSkillSelections = skillMentionsModule.extractComposerSkillMentionSelections(text, props.skills ?? [])
+    emit('submit', {
+      text,
+      imageUrls: selectedImages.value.map((image) => image.url),
+      fileAttachments: dedupeFileAttachments([...fileAttachments.value, ...inlineFileAttachments]),
+      skills: dedupeSkillSelections([...selectedSkills.value, ...inlineSkillSelections]).map((skill) => ({
+        name: skill.name,
+        path: skill.path,
+      })),
+      mode,
+    })
+    clearPersistedDraftForThread(props.activeThreadId)
+    clearDraftState()
+    isMarkdownPreviewVisible.value = false
+    folderUploadGroups.value = []
+    isAttachMenuOpen.value = false
+    closeFileMention()
+    if (isAndroid || isMobile.value) {
+      inputRef.value?.blur()
+      return
+    }
+    nextTick(() => inputRef.value?.focus())
+  } finally {
+    isSubmittingDraft.value = false
   }
-  nextTick(() => inputRef.value?.focus())
 }
 
 function setActiveInProgressMode(mode: 'steer' | 'queue'): void {
@@ -1077,6 +1097,30 @@ function setActiveInProgressMode(mode: 'steer' | 'queue'): void {
 function toggleMarkdownPreview(): void {
   if (isInteractionDisabled.value) return
   isMarkdownPreviewVisible.value = !isMarkdownPreviewVisible.value
+}
+
+async function refreshDraftPreviewHtml(): Promise<void> {
+  if (!isMarkdownPreviewVisible.value) return
+  const renderToken = ++draftPreviewRenderToken
+  if (!draftPreviewHtml.value.trim()) {
+    draftPreviewHtml.value = `<p class="thread-composer-preview-empty">${t('Loading preview...')}</p>`
+  }
+
+  try {
+    const { renderMarkdownContent } = await loadMarkdownRendererModule()
+    if (renderToken !== draftPreviewRenderToken || !isMarkdownPreviewVisible.value) return
+    const rendered = renderMarkdownContent(draft.value, {
+      cwd: props.cwd ?? '',
+      kind: 'message',
+      highlightVersion: 0,
+    }).html.trim()
+    draftPreviewHtml.value = rendered
+      ? rendered
+      : `<p class="thread-composer-preview-empty">${t('Nothing to preview.')}</p>`
+  } catch {
+    if (renderToken !== draftPreviewRenderToken || !isMarkdownPreviewVisible.value) return
+    draftPreviewHtml.value = `<p class="thread-composer-preview-empty">${t('Nothing to preview.')}</p>`
+  }
 }
 
 function replaceDraftState(payload: ComposerDraftPayload): void {
@@ -1676,9 +1720,9 @@ function onInputKeydown(event: KeyboardEvent): void {
       const selected = suggestions[mentionHighlightedIndex.value]
       if (selected) {
         if (isFileMentionOpen.value) {
-          applyFileMention(selected as ComposerFileSuggestion)
+          void applyFileMention(selected as ComposerFileSuggestion)
         } else {
-          applySkillMention(selected as SkillItem)
+          void applySkillMention(selected as SkillItem)
         }
       } else {
         closeInlineMention()
@@ -1708,6 +1752,13 @@ function closeInlineMention(): void {
 
 function closeFileMention(): void {
   closeInlineMention()
+}
+
+async function refreshSkillMentionSuggestions(): Promise<void> {
+  const { filterComposerSkillMentionSuggestions } = await loadComposerSkillMentionsModule()
+  if (!isSkillMentionOpen.value) return
+  skillMentionSuggestions.value = filterComposerSkillMentionSuggestions(props.skills ?? [], mentionQuery.value, 20)
+  mentionHighlightedIndex.value = 0
 }
 
 function updateInlineMentionState(): void {
@@ -1740,7 +1791,8 @@ function updateInlineMentionState(): void {
   }
 
   fileMentionSuggestions.value = []
-  skillMentionSuggestions.value = filterComposerSkillMentionSuggestions(props.skills ?? [], mentionQuery.value, 20)
+  skillMentionSuggestions.value = []
+  void refreshSkillMentionSuggestions()
 }
 
 async function queueFileMentionSearch(): Promise<void> {
@@ -1756,6 +1808,7 @@ async function queueFileMentionSearch(): Promise<void> {
   const token = ++fileMentionSearchToken
   fileMentionDebounceTimer = setTimeout(async () => {
     try {
+      const { toComposerFileMentionSearchQuery } = await loadComposerFileMentionsModule()
       const rows = await searchComposerFiles(cwd, toComposerFileMentionSearchQuery(mentionQuery.value), 20)
       if (!isFileMentionOpen.value || token !== fileMentionSearchToken) return
       fileMentionSuggestions.value = rows
@@ -1767,10 +1820,11 @@ async function queueFileMentionSearch(): Promise<void> {
   }, 120)
 }
 
-function applyFileMention(suggestion: ComposerFileSuggestion): void {
+async function applyFileMention(suggestion: ComposerFileSuggestion): Promise<void> {
   const input = inputRef.value
   const start = mentionStartIndex.value
   const cursor = input?.selectionStart ?? draft.value.length
+  const { insertComposerFileMentionText } = await loadComposerFileMentionsModule()
   const insertion = insertComposerFileMentionText(draft.value, suggestion.path, start, cursor)
   if (!insertion) {
     closeFileMention()
@@ -1786,10 +1840,11 @@ function applyFileMention(suggestion: ComposerFileSuggestion): void {
   })
 }
 
-function applySkillMention(suggestion: SkillItem): void {
+async function applySkillMention(suggestion: SkillItem): Promise<void> {
   const input = inputRef.value
   const start = mentionStartIndex.value
   const cursor = input?.selectionStart ?? draft.value.length
+  const { insertComposerSkillMentionText } = await loadComposerSkillMentionsModule()
   const insertion = insertComposerSkillMentionText(draft.value, suggestion.name, start, cursor)
   if (!insertion) {
     closeInlineMention()
@@ -2008,8 +2063,7 @@ watch(
   () => props.skills,
   () => {
     if (!isSkillMentionOpen.value) return
-    skillMentionSuggestions.value = filterComposerSkillMentionSuggestions(props.skills ?? [], mentionQuery.value, 20)
-    mentionHighlightedIndex.value = 0
+    void refreshSkillMentionSuggestions()
   },
   { deep: true },
 )
@@ -2017,7 +2071,25 @@ watch(
 watch(isInteractionDisabled, (disabled) => {
   if (disabled) {
     isMarkdownPreviewVisible.value = false
+    draftPreviewHtml.value = ''
   }
+})
+
+watch(
+  [draft, () => props.cwd],
+  () => {
+    if (!isMarkdownPreviewVisible.value) return
+    void refreshDraftPreviewHtml()
+  },
+)
+
+watch(isMarkdownPreviewVisible, (visible) => {
+  if (visible) {
+    void refreshDraftPreviewHtml()
+    return
+  }
+  draftPreviewHtml.value = ''
+  draftPreviewRenderToken += 1
 })
 
 watch(

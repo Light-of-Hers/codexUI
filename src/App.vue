@@ -975,12 +975,7 @@ import DesktopLayout from './components/layout/DesktopLayout.vue'
 import SidebarThreadTree from './components/sidebar/SidebarThreadTree.vue'
 import ContentHeader from './components/content/ContentHeader.vue'
 import ThreadComposer from './components/content/ThreadComposer.vue'
-import ThreadPendingRequestPanel from './components/content/ThreadPendingRequestPanel.vue'
-import QueuedMessages from './components/content/QueuedMessages.vue'
-import RateLimitStatus from './components/content/RateLimitStatus.vue'
 import ComposerDropdown from './components/content/ComposerDropdown.vue'
-import HeaderGitBranchDropdown from './components/content/HeaderGitBranchDropdown.vue'
-import ComposerRuntimeDropdown from './components/content/ComposerRuntimeDropdown.vue'
 import SidebarThreadControls from './components/sidebar/SidebarThreadControls.vue'
 import IconTablerBolt from './components/icons/IconTablerBolt.vue'
 import IconTablerCopy from './components/icons/IconTablerCopy.vue'
@@ -1032,6 +1027,11 @@ const ThreadConversation = defineAsyncComponent(() => import('./components/conte
 const ThreadTerminalPanel = defineAsyncComponent(() => import('./components/content/ThreadTerminalPanel.vue'))
 const ReviewPane = defineAsyncComponent(() => import('./components/content/ReviewPane.vue'))
 const DirectoryHub = defineAsyncComponent(() => import('./components/content/DirectoryHub.vue'))
+const ThreadPendingRequestPanel = defineAsyncComponent(() => import('./components/content/ThreadPendingRequestPanel.vue'))
+const QueuedMessages = defineAsyncComponent(() => import('./components/content/QueuedMessages.vue'))
+const RateLimitStatus = defineAsyncComponent(() => import('./components/content/RateLimitStatus.vue'))
+const HeaderGitBranchDropdown = defineAsyncComponent(() => import('./components/content/HeaderGitBranchDropdown.vue'))
+const ComposerRuntimeDropdown = defineAsyncComponent(() => import('./components/content/ComposerRuntimeDropdown.vue'))
 const { t, uiLanguage, uiLanguageOptions, setUiLanguage } = useUiLanguage()
 
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'codex-web-local.sidebar-collapsed.v1'
