@@ -1,9 +1,11 @@
 import { existsSync } from 'node:fs'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
-  mergeRecoveredTurnItemsIntoThreadResult,
+  BackendQueueProcessor,
+  mergeSessionSkillInputsIntoTurns,
+  parseAutomationToml,
   sanitizeThreadTurnsInlinePayloads,
-  shouldAutoContinueInterruptedThreadFromThreadRead,
+  toAutomationApiRecord,
 } from './codexAppServerBridge'
 
 const pngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII='
@@ -11,6 +13,11 @@ const pngDataUrl = `data:image/png;base64,${pngBase64}`
 const gifBase64 = 'R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=='
 const jpegBase64 = '/9j/4AAQSkZJRgABAQAAAQABAAD/2w=='
 const webpBase64 = 'UklGRiIAAABXRUJQVlA4IC4AAAAwAQCdASoBAAEAAQAcJaQAA3AA/vuUAAA='
+
+afterEach(() => {
+  vi.useRealTimers()
+  vi.restoreAllMocks()
+})
 
 function localImagePathFromProxyUrl(value: string): string {
   const parsed = new URL(value, 'http://localhost')
@@ -231,225 +238,182 @@ describe('thread inline media sanitization', () => {
   })
 })
 
-describe('interrupted turn auto-continue detection', () => {
-  it('detects the latest interrupted turn on an idle thread', () => {
-    const snapshot = shouldAutoContinueInterruptedThreadFromThreadRead({
-      thread: {
-        id: ' thread-1 ',
-        status: { type: ' idle ' },
-        turns: [
-          { id: 'turn-1', status: 'completed' },
-          { id: ' turn-2 ', status: ' interrupted ' },
-        ],
-      },
-    }, new Set())
-
-    expect(snapshot).toEqual({
-      threadId: 'thread-1',
-      turnId: 'turn-2',
-    })
-  })
-
-  it('ignores user-stopped interrupted turns', () => {
-    const snapshot = shouldAutoContinueInterruptedThreadFromThreadRead({
-      thread: {
-        id: 'thread-1',
-        status: { type: 'idle' },
-        turns: [{ id: 'turn-1', status: 'interrupted' }],
-      },
-    }, new Set(['turn-1']))
-
-    expect(snapshot).toBeNull()
-  })
-
-  it('ignores active threads and non-interrupted latest turns', () => {
-    expect(shouldAutoContinueInterruptedThreadFromThreadRead({
-      thread: {
-        id: 'thread-1',
-        status: { type: 'inProgress' },
-        turns: [{ id: 'turn-1', status: 'interrupted' }],
-      },
-    }, new Set())).toBeNull()
-
-    expect(shouldAutoContinueInterruptedThreadFromThreadRead({
-      thread: {
-        id: 'thread-1',
-        status: { type: 'idle' },
-        turns: [
-          { id: 'turn-1', status: 'interrupted' },
-          { id: 'turn-2', status: 'completed' },
-        ],
-      },
-    }, new Set())).toBeNull()
-  })
-})
-
-describe('thread recovered item merge', () => {
-  it('adds captured command executions back into thread turn results', () => {
-    const payload = {
-      thread: {
-        id: 'thread-1',
-        turns: [
-          {
-            id: 'turn-1',
-            items: [
-              { id: 'user-1', type: 'userMessage', text: 'run tests' },
-            ],
-          },
-        ],
-      },
-    }
-
-    const result = mergeRecoveredTurnItemsIntoThreadResult(payload, (threadId, turns) => {
-      expect(threadId).toBe('thread-1')
-      return turns.map((turn) => {
-        const record = turn as { id: string, items: Record<string, unknown>[] }
-        if (record.id !== 'turn-1') return turn
-        return {
-          ...record,
-          items: [
-            ...record.items,
-            {
-              id: 'cmd-1',
-              type: 'commandExecution',
-              command: 'npm test',
-              status: 'completed',
-              aggregatedOutput: 'ok',
-              exitCode: 0,
-            },
-          ],
-        }
-      })
-    }) as {
-      thread: {
-        turns: Array<{
-          items: Array<Record<string, unknown>>
-        }>
-      }
-    }
-
-    expect(result.thread.turns[0].items).toEqual([
-      { id: 'user-1', type: 'userMessage', text: 'run tests' },
-      {
-        id: 'cmd-1',
-        type: 'commandExecution',
-        command: 'npm test',
-        status: 'completed',
-        aggregatedOutput: 'ok',
-        exitCode: 0,
-      },
-    ])
-  })
-
-  it('repositions recovered command executions using the session log order', () => {
-    const payload = {
-      thread: {
-        id: 'thread-1',
-        turns: [
-          {
-            id: 'turn-1',
-            items: [
-              { id: 'user-1', type: 'userMessage', text: 'run tests' },
-              { id: 'agent-1', type: 'agentMessage', text: 'thinking' },
-              {
-                id: 'cmd-1',
-                type: 'commandExecution',
-                command: 'npm test',
-                status: 'completed',
-                aggregatedOutput: 'ok',
-                exitCode: 0,
-              },
-              { id: 'agent-2', type: 'agentMessage', text: 'done' },
-            ],
-          },
-        ],
-      },
-    }
-
-    const sessionLogRaw = [
+describe('thread session skill recovery', () => {
+  it('adds selected skill inputs from session JSONL to matching user messages', () => {
+    const turns = [{
+      id: 'turn-1',
+      items: [{
+        id: 'item-1',
+        type: 'userMessage',
+        content: [{ type: 'text', text: 'use a skill', text_elements: [] }],
+      }],
+    }]
+    const sessionLog = [
       JSON.stringify({ type: 'turn_context', payload: { turn_id: 'turn-1' } }),
       JSON.stringify({
         type: 'response_item',
-        payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'thinking' }] },
-      }),
-      JSON.stringify({
-        type: 'response_item',
         payload: {
-          type: 'function_call',
-          name: 'exec_command',
-          call_id: 'call-1',
-          arguments: '{"cmd":"npm test"}',
+          type: 'message',
+          role: 'user',
+          content: [{ type: 'input_text', text: 'use a skill' }],
         },
       }),
       JSON.stringify({
         type: 'response_item',
         payload: {
-          type: 'function_call_output',
-          call_id: 'call-1',
-          output: 'Process exited with code 0\nWall time: 0.1 seconds\nOutput:\nok',
+          type: 'message',
+          role: 'user',
+          content: [{
+            type: 'input_text',
+            text: '<skill>\n<name>browser-use:browser</name>\n<path>/Users/igor/.codex/plugins/browser/SKILL.md</path>\n---\n# Browser\n</skill>',
+          }],
         },
-      }),
-      JSON.stringify({
-        type: 'response_item',
-        payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'done' }] },
       }),
     ].join('\n')
 
-    const result = mergeRecoveredTurnItemsIntoThreadResult(
-      payload,
-      (_threadId, turns) => turns,
-      sessionLogRaw,
-    ) as {
-      thread: {
-        turns: Array<{
-          items: Array<Record<string, unknown>>
-        }>
-      }
-    }
-
-    expect(result.thread.turns[0].items.map((item) => item.id)).toEqual([
-      'user-1',
-      'agent-1',
-      'cmd-1',
-      'agent-2',
+    const merged = mergeSessionSkillInputsIntoTurns(turns, sessionLog) as typeof turns
+    expect(merged[0].items[0].content).toEqual([
+      { type: 'text', text: 'use a skill', text_elements: [] },
+      { type: 'skill', name: 'browser-use:browser', path: '/Users/igor/.codex/plugins/browser/SKILL.md' },
     ])
   })
 
-  it('keeps the original result when no recovered items are available', () => {
-    const payload = {
-      thread: {
-        id: 'thread-1',
-        turns: [
-          {
-            id: 'turn-1',
-            items: [],
-          },
+  it('does not duplicate skill inputs that are already present', () => {
+    const turns = [{
+      id: 'turn-1',
+      items: [{
+        id: 'item-1',
+        type: 'userMessage',
+        content: [
+          { type: 'text', text: 'use a skill', text_elements: [] },
+          { type: 'skill', name: 'browser-use:browser', path: '/Users/igor/.codex/plugins/browser/SKILL.md' },
         ],
-      },
-    }
+      }],
+    }]
+    const sessionLog = [
+      JSON.stringify({ type: 'turn_context', payload: { turn_id: 'turn-1' } }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'user',
+          content: [{
+            type: 'input_text',
+            text: '<skill>\n<name>browser-use:browser</name>\n<path>/Users/igor/.codex/plugins/browser/SKILL.md</path>\n</skill>',
+          }],
+        },
+      }),
+    ].join('\n')
 
-    const result = mergeRecoveredTurnItemsIntoThreadResult(payload, (_threadId, turns) => turns)
-
-    expect(result).toBe(payload)
+    expect(mergeSessionSkillInputsIntoTurns(turns, sessionLog)).toBe(turns)
   })
 
-  it('keeps the original result when the merger only recreates the turn array', () => {
-    const payload = {
-      thread: {
-        id: 'thread-1',
-        turns: [
-          {
-            id: 'turn-1',
-            items: [
-              { id: 'cmd-1', type: 'commandExecution' },
-            ],
-          },
-        ],
-      },
-    }
+  it('adds selected skill inputs to the last user message in a multi-message turn', () => {
+    const turns = [{
+      id: 'turn-1',
+      items: [
+        {
+          id: 'item-1',
+          type: 'userMessage',
+          content: [{ type: 'text', text: 'first message', text_elements: [] }],
+        },
+        {
+          id: 'item-2',
+          type: 'agentMessage',
+          content: [{ type: 'text', text: 'assistant reply', text_elements: [] }],
+        },
+        {
+          id: 'item-3',
+          type: 'userMessage',
+          content: [{ type: 'text', text: 'second message', text_elements: [] }],
+        },
+      ],
+    }]
+    const sessionLog = [
+      JSON.stringify({ type: 'turn_context', payload: { turn_id: 'turn-1' } }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'user',
+          content: [{
+            type: 'input_text',
+            text: '<skill>\n<name>browser-use:browser</name>\n<path>/Users/igor/.codex/plugins/browser/SKILL.md</path>\n</skill>',
+          }],
+        },
+      }),
+    ].join('\n')
 
-    const result = mergeRecoveredTurnItemsIntoThreadResult(payload, (_threadId, turns) => [...turns])
+    const merged = mergeSessionSkillInputsIntoTurns(turns, sessionLog) as typeof turns
+    expect(merged[0].items[0].content).toEqual([{ type: 'text', text: 'first message', text_elements: [] }])
+    expect(merged[0].items[2].content).toEqual([
+      { type: 'text', text: 'second message', text_elements: [] },
+      { type: 'skill', name: 'browser-use:browser', path: '/Users/igor/.codex/plugins/browser/SKILL.md' },
+    ])
+  })
+})
 
-    expect(result).toBe(payload)
+describe('backend queue scheduling', () => {
+  it('reschedules a pending drain when a run-now request needs an earlier drain', async () => {
+    vi.useFakeTimers()
+    const processor = new BackendQueueProcessor({
+      onNotification: () => () => undefined,
+    } as never)
+    const processThreadQueue = vi
+      .spyOn(processor as unknown as { processThreadQueue: (threadId: string) => Promise<void> }, 'processThreadQueue')
+      .mockResolvedValue(undefined)
+
+    processor.scheduleThreadQueueDrain('thread-1', 5000)
+    processor.scheduleThreadQueueDrain('thread-1', 0)
+
+    await vi.advanceTimersByTimeAsync(0)
+    expect(processThreadQueue).toHaveBeenCalledTimes(1)
+    expect(processThreadQueue).toHaveBeenCalledWith('thread-1')
+
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(processThreadQueue).toHaveBeenCalledTimes(1)
+
+    processor.dispose()
+  })
+})
+
+describe('automation TOML handling', () => {
+  it('parses TOML string arrays without requiring JSON-only syntax', () => {
+    const automation = parseAutomationToml([
+      'version = 1',
+      'id = "cron-smoke"',
+      'kind = "cron"',
+      'name = "Cron Smoke"',
+      'prompt = "run"',
+      'status = "ACTIVE"',
+      'rrule = "FREQ=DAILY"',
+      "cwds = ['/tmp/project-one', '/tmp/project,two']",
+      'created_at = 111',
+      'updated_at = 222',
+      '[scheduler]',
+      'execution_environment = "local"',
+    ].join('\n'))
+
+    expect(automation?.cwds).toEqual(['/tmp/project-one', '/tmp/project,two'])
+    expect(automation?.createdAtMs).toBe(111)
+    expect(automation?.extraTomlLines).toContain('[scheduler]')
+  })
+
+  it('omits preserved TOML internals from automation API records', () => {
+    const automation = parseAutomationToml([
+      'version = 1',
+      'id = "cron-smoke"',
+      'kind = "cron"',
+      'name = "Cron Smoke"',
+      'prompt = "run"',
+      'status = "ACTIVE"',
+      'rrule = "FREQ=DAILY"',
+      'cwds = ["/tmp/project-one"]',
+      '[scheduler]',
+      'execution_environment = "local"',
+    ].join('\n'))
+
+    expect(automation).toBeTruthy()
+    expect(toAutomationApiRecord(automation as NonNullable<typeof automation>)).not.toHaveProperty('extraTomlLines')
   })
 })

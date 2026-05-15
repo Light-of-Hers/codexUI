@@ -12,6 +12,7 @@ import {
   getMoonBridgeModelMetadata,
   getSkillsList,
   getThreadDetail,
+  getOlderThreadMessages,
   getBackgroundThreadListLimit,
   interruptThreadTurn,
   pickCodexRateLimitSnapshot,
@@ -96,6 +97,12 @@ const RECENT_THREAD_MESSAGE_LOAD_REUSE_MS = 2000
 const REASONING_EFFORT_OPTIONS: ReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
 const GLOBAL_SERVER_REQUEST_SCOPE = '__global__'
 const MODEL_FALLBACK_ID = 'gpt-5.4-mini'
+const CODEX_CLI_MISSING_MESSAGE = 'Codex CLI not found. Install @openai/codex or set CODEXUI_CODEX_COMMAND.'
+
+function isCodexCliMissingError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? '')
+  return message.includes('Codex CLI is not available')
+}
 
 export type ProviderId = 'codex' | 'openrouter' | 'opencode-zen' | 'custom' | 'moon'
 
@@ -237,6 +244,10 @@ function toRpcModelProviderId(providerId: ProviderId): string {
   if (providerId === 'custom') return 'custom-endpoint'
   if (providerId === 'moon') return 'moon'
   return ''
+}
+
+function isNewThreadContextId(contextId: string): boolean {
+  return contextId === NEW_THREAD_COLLABORATION_MODE_CONTEXT
 }
 
 function toProviderModelContextId(providerId: string): string {
@@ -417,12 +428,7 @@ function loadSelectedCollaborationModeMap(): Record<string, CollaborationModeKin
     // Fall back to the legacy global preference below.
   }
 
-  const legacyMode = normalizeCollaborationMode(window.localStorage.getItem(LEGACY_COLLABORATION_MODE_STORAGE_KEY))
-  const next = createStringKeyedRecord<CollaborationModeKind>()
-  if (legacyMode === 'plan') {
-    next[NEW_THREAD_COLLABORATION_MODE_CONTEXT] = 'plan'
-  }
-  return next
+  return createStringKeyedRecord<CollaborationModeKind>()
 }
 
 function readSelectedCollaborationMode(
@@ -439,6 +445,9 @@ function writeSelectedCollaborationModeForContext(
   mode: CollaborationModeKind,
 ): Record<string, CollaborationModeKind> {
   const contextId = toThreadContextId(threadId)
+  if (isNewThreadContextId(contextId)) {
+    return omitStringKeyedRecordKey(state, contextId)
+  }
   if (mode === 'plan') {
     const next = cloneStringKeyedRecord(state)
     next[contextId] = 'plan'
@@ -1082,6 +1091,29 @@ function pruneThreadStateMap<T>(stateMap: Record<string, T>, threadIds: Set<stri
   return Object.fromEntries(nextEntries) as Record<string, T>
 }
 
+export function removeThreadFromGroups(groups: UiProjectGroup[], threadId: string): UiProjectGroup[] {
+  const normalizedThreadId = threadId.trim()
+  if (!normalizedThreadId) return groups
+
+  let changed = false
+  const nextGroups: UiProjectGroup[] = []
+
+  for (const group of groups) {
+    const nextThreads = group.threads.filter((thread) => thread.id !== normalizedThreadId)
+    const removedFromGroup = nextThreads.length !== group.threads.length
+    if (removedFromGroup) {
+      changed = true
+    }
+    if (nextThreads.length > 0) {
+      nextGroups.push(removedFromGroup ? { ...group, threads: nextThreads } : group)
+    } else if (group.threads.length === 0) {
+      nextGroups.push(group)
+    }
+  }
+
+  return changed ? nextGroups : groups
+}
+
 function mergeThreadGroups(
   previous: UiProjectGroup[],
   incoming: UiProjectGroup[],
@@ -1527,12 +1559,16 @@ export function useDesktopState() {
   const selectedProvider = ref<ProviderId>(readSelectedProvider(selectedProviderByContext.value, selectedThreadId.value))
   const selectedReasoningEffort = ref<ReasoningEffort | ''>('medium')
   const selectedSpeedMode = ref<SpeedMode>('standard')
+  const activeProviderId = ref('')
+  const codexCliMissingError = ref('')
   const readStateByThreadId = ref<Record<string, string>>(loadReadStateMap())
   const unreadCutoffIso = ref(loadUnreadCutoffIso())
   const projectOrder = ref<string[]>(loadProjectOrder())
   const projectDisplayNameById = ref<Record<string, string>>(loadProjectDisplayNames())
   const loadedVersionByThreadId = ref<Record<string, string>>({})
   const loadedMessagesByThreadId = ref<Record<string, boolean>>({})
+  const hasMoreOlderMessagesByThreadId = ref<Record<string, boolean>>({})
+  const loadingOlderMessagesByThreadId = ref<Record<string, boolean>>({})
   const resumedThreadById = ref<Record<string, boolean>>({})
   const turnIndexByTurnIdByThreadId = ref<Record<string, Record<string, number>>>({})
   const turnSummaryByThreadId = ref<Record<string, TurnSummaryState>>({})
@@ -1555,6 +1591,7 @@ export function useDesktopState() {
 
   const isLoadingThreads = ref(false)
   const isLoadingMessages = ref(false)
+  const isThreadListFullyLoaded = ref(false)
   const isSendingMessage = ref(false)
   const isInterruptingTurn = ref(false)
   const isUpdatingSpeedMode = ref(false)
@@ -1692,8 +1729,39 @@ export function useDesktopState() {
     if (!summary) return combined
     return insertTurnSummaryMessage(combined, summary)
   })
+  const hasMoreOlderMessages = computed(() => {
+    const threadId = selectedThreadId.value
+    return threadId ? hasMoreOlderMessagesByThreadId.value[threadId] === true : false
+  })
+  const isLoadingOlderMessages = computed(() => {
+    const threadId = selectedThreadId.value
+    return threadId ? loadingOlderMessagesByThreadId.value[threadId] === true : false
+  })
+
+  function getFirstPersistedTurnId(threadId: string): string {
+    const persisted = persistedMessagesByThreadId.value[threadId] ?? []
+    for (const message of persisted) {
+      const turnId = message.turnId?.trim() ?? ''
+      if (turnId) return turnId
+    }
+    return ''
+  }
 
   function readModelIdForThread(threadId: string): string {
+    const contextId = toThreadContextId(threadId)
+    if (contextId === NEW_THREAD_COLLABORATION_MODE_CONTEXT) {
+      const activeProvider = normalizeProviderContextId(activeProviderId.value)
+      const selectedNewThreadProvider = readSelectedProvider(selectedProviderByContext.value, '')
+      const providerId = activeProvider !== 'codex' ? activeProvider : selectedNewThreadProvider
+      if (providerId !== 'codex') {
+        const providerContextId = toProviderModelContextId(providerId)
+        const providerModelId = providerContextId
+          ? normalizeStoredModelId(selectedModelIdByContext.value[providerContextId])
+          : ''
+        if (providerModelId) return providerModelId
+      }
+    }
+
     return readSelectedModelForThreadContext(
       selectedModelIdByContext.value,
       threadId,
@@ -1701,38 +1769,26 @@ export function useDesktopState() {
     )
   }
 
-  function readMoonBridgeModelContextWindow(modelId: string): number | null {
-    const normalizedModelId = modelId.trim()
-    if (!normalizedModelId) return null
-    const contextWindow = moonBridgeModelContextWindowById.value[normalizedModelId]
-    return typeof contextWindow === 'number' && Number.isFinite(contextWindow) && contextWindow > 0
-      ? contextWindow
-      : null
-  }
-
- function syncThreadProviderFromModel(threadId: string, modelId: string): void {
-   const inferredProvider = inferProviderFromModel(modelId, moonBridgeModelIds.value)
-   const normalizedThreadId = threadId.trim()
-   if (normalizedThreadId) {
-    const currentProvider = readSelectedProvider(selectedProviderByContext.value, normalizedThreadId)
-    // Only handle provider-to-provider transitions (e.g. moon -> codex when model leaves moon's catalog).
-    // Never infer provider from model name for codex threads, as model names may overlap.
-    if (currentProvider === 'moon' && modelId.trim().length > 0 && !inferredProvider) {
-      // If provider is moon but model is not a moon model, reset to codex.
-      setThreadProviderId(normalizedThreadId, 'codex')
+  function syncThreadProviderFromModel(threadId: string, modelId: string): void {
+    const inferredProvider = inferProviderFromModel(modelId, moonBridgeModelIds.value)
+    const normalizedThreadId = threadId.trim()
+    if (normalizedThreadId) {
+      const currentProvider = readSelectedProvider(selectedProviderByContext.value, normalizedThreadId)
+      if (currentProvider === 'moon' && modelId.trim().length > 0 && !inferredProvider) {
+        setSelectedProviderForThread(normalizedThreadId, 'codex')
+      }
+      return
     }
-    return
-  }
 
-  if (inferredProvider) {
-     setSelectedProviderForThread('', inferredProvider)
-     return
-   }
+    if (inferredProvider) {
+      setSelectedProviderForThread('', inferredProvider)
+      return
+    }
 
     if (modelId.trim().length > 0 && readSelectedProvider(selectedProviderByContext.value, '') === 'moon') {
       setSelectedProviderForThread('', 'codex')
- }
-}
+    }
+  }
 
 function applyThreadModelStateWithProviderPriority(threadId: string, modelId: string, providerId?: unknown): void {
     const normalizedThreadId = threadId.trim()
@@ -1795,25 +1851,43 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
     const normalizedModelId = modelId.trim()
     const contextId = toThreadContextId(threadId)
     const currentContextId = toThreadContextId(selectedThreadId.value)
+    const normalizedProviderId = normalizeProviderContextId(activeProviderId.value)
+    const providerContextId =
+      contextId === NEW_THREAD_COLLABORATION_MODE_CONTEXT && normalizedProviderId !== 'codex'
+        ? toProviderModelContextId(normalizedProviderId)
+        : ''
+    const selectedContextId = providerContextId || contextId
     if (normalizedModelId) {
       const nextModelMap = cloneStringKeyedRecord(selectedModelIdByContext.value)
-      nextModelMap[contextId] = normalizedModelId
+      nextModelMap[selectedContextId] = normalizedModelId
+      if (providerContextId) {
+        delete nextModelMap[contextId]
+      }
       selectedModelIdByContext.value = nextModelMap
     } else {
-      selectedModelIdByContext.value = omitStringKeyedRecordKey(selectedModelIdByContext.value, contextId)
+      let nextModelMap = omitStringKeyedRecordKey(selectedModelIdByContext.value, selectedContextId)
+      if (providerContextId) {
+        nextModelMap = omitStringKeyedRecordKey(nextModelMap, contextId)
+      }
+      selectedModelIdByContext.value = nextModelMap
     }
     if (contextId === NEW_THREAD_COLLABORATION_MODE_CONTEXT) {
       const inferredProvider = inferProviderFromModel(normalizedModelId, moonBridgeModelIds.value)
-      const providerContextId = inferredProvider
-        ? toProviderModelContextId(inferredProvider)
-        : toProviderModelContextId(selectedProvider.value)
-      if (providerContextId) {
+      const activeNewThreadProvider = normalizeProviderContextId(activeProviderId.value)
+      const effectiveNewThreadProvider = inferredProvider
+        || (activeNewThreadProvider !== 'codex'
+          ? activeNewThreadProvider
+          : readSelectedProvider(selectedProviderByContext.value, ''))
+      const newThreadProviderContextId = effectiveNewThreadProvider
+        ? toProviderModelContextId(effectiveNewThreadProvider)
+        : ''
+      if (newThreadProviderContextId) {
         if (normalizedModelId) {
           const nextModelMap = cloneStringKeyedRecord(selectedModelIdByContext.value)
-          nextModelMap[providerContextId] = normalizedModelId
+          nextModelMap[newThreadProviderContextId] = normalizedModelId
           selectedModelIdByContext.value = nextModelMap
         } else {
-          selectedModelIdByContext.value = omitStringKeyedRecordKey(selectedModelIdByContext.value, providerContextId)
+          selectedModelIdByContext.value = omitStringKeyedRecordKey(selectedModelIdByContext.value, newThreadProviderContextId)
         }
       }
     }
@@ -2169,9 +2243,9 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
   }
 
   async function refreshModelPreferences(options?: { providerChanged?: boolean; includeProviderModels?: boolean }): Promise<void> {
+    codexCliMissingError.value = ''
     try {
-      const [modelIds, currentConfig, moonModels] = await Promise.all([
-        getAvailableModelIds({ includeProviderModels: options?.includeProviderModels !== false }),
+      const [currentConfig, moonModels] = await Promise.all([
         getCurrentModelConfig(),
         moonBridgeModelIds.value.length > 0 && Object.keys(moonBridgeModelContextWindowById.value).length > 0
           ? Promise.resolve(moonBridgeModelIds.value)
@@ -2179,16 +2253,23 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
       ])
       moonBridgeModelIds.value = moonModels
 
-      const normalizedSelectedModelId = readModelIdForThread(selectedThreadId.value)
       const normalizedConfiguredModelId = currentConfig.model.trim()
       const normalizedProviderId = normalizeProviderContextId(currentConfig.providerId)
+      const isProviderBacked = normalizedProviderId !== 'codex'
+      activeProviderId.value = normalizedProviderId
+      const normalizedSelectedModelId = readModelIdForThread(selectedThreadId.value)
+      const modelIds = await getAvailableModelIds({
+        includeProviderModels: options?.includeProviderModels !== false || isProviderBacked,
+        requireProviderModels: isProviderBacked,
+      })
       const providerModelContextId = toProviderModelContextId(normalizedProviderId)
       const providerScopedModelId = providerModelContextId
         ? normalizeStoredModelId(selectedModelIdByContext.value[providerModelContextId])
         : ''
       const nextModelIds = [...modelIds]
       if (!options?.providerChanged) {
-        for (const modelId of [normalizedSelectedModelId, normalizedConfiguredModelId]) {
+        const extraModelIds = isProviderBacked ? [normalizedConfiguredModelId] : [normalizedSelectedModelId, normalizedConfiguredModelId]
+        for (const modelId of extraModelIds) {
           if (modelId && !nextModelIds.includes(modelId)) {
             nextModelIds.push(modelId)
           }
@@ -2197,10 +2278,16 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
       availableModelIds.value = nextModelIds
 
       const currentModelInNewList = normalizedSelectedModelId && modelIds.includes(normalizedSelectedModelId)
-      if (!normalizedSelectedModelId || !currentModelInNewList) {
-        console.warn('[DEBUG:refreshModelPreferences] model reset — was=%s inList=%s providerScoped=%s configuredModel=%s firstAvailable=%s',
-          normalizedSelectedModelId || '(none)', currentModelInNewList, providerScopedModelId || '(none)', normalizedConfiguredModelId || '(none)', nextModelIds.length > 0 ? nextModelIds[0] : '(none)')
-        if (providerScopedModelId && nextModelIds.includes(providerScopedModelId)) {
+      if (!normalizedSelectedModelId || !currentModelInNewList || options?.providerChanged) {
+        if (options?.providerChanged && nextModelIds.length > 0) {
+          if (providerScopedModelId && modelIds.includes(providerScopedModelId)) {
+            setSelectedModelId(providerScopedModelId)
+          } else if (normalizedConfiguredModelId && nextModelIds.includes(normalizedConfiguredModelId)) {
+            setSelectedModelId(normalizedConfiguredModelId)
+          } else {
+            setSelectedModelId(nextModelIds[0])
+          }
+        } else if (providerScopedModelId && nextModelIds.includes(providerScopedModelId)) {
           setSelectedModelId(providerScopedModelId)
         } else if (normalizedConfiguredModelId && nextModelIds.includes(normalizedConfiguredModelId)) {
           setSelectedModelId(currentConfig.model)
@@ -2209,6 +2296,8 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
         } else {
           setSelectedModelId('')
         }
+      } else if (selectedModelId.value.trim() !== normalizedSelectedModelId) {
+        setSelectedModelId(normalizedSelectedModelId)
       }
       const nextSelectedModelId = readModelIdForThread(selectedThreadId.value).trim()
       if (selectedModelId.value !== nextSelectedModelId) {
@@ -2229,7 +2318,12 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
         selectedReasoningEffort.value = currentConfig.reasoningEffort
       }
       selectedSpeedMode.value = currentConfig.speedMode
-    } catch {
+    } catch (unknownError) {
+      if (isCodexCliMissingError(unknownError)) {
+        codexCliMissingError.value = CODEX_CLI_MISSING_MESSAGE
+      } else {
+        codexCliMissingError.value = ''
+      }
       // Keep chat UI usable even if model metadata is temporarily unavailable.
     }
   }
@@ -3413,7 +3507,8 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
 
     if (
       notification.method === 'item/reasoning/summaryTextDelta' ||
-      notification.method === 'item/reasoning/summaryPartAdded'
+      notification.method === 'item/reasoning/summaryPartAdded' ||
+      notification.method === 'item/reasoning/textDelta'
     ) {
       return {
         threadId,
@@ -3590,6 +3685,17 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
 
     // Канонический источник дельт для UI — уже нормализованный item/*.
     if (notification.method === 'item/reasoning/summaryTextDelta') {
+      const itemId = readString(params.itemId)
+      const delta = readString(params.delta)
+      if (!itemId || !delta) return null
+      return { messageId: liveReasoningMessageId(itemId), delta }
+    }
+
+    // codex also emits the full reasoning-chain stream as item/reasoning/textDelta
+    // (alongside the summary stream). Without handling it, reasoning text the
+    // model streams via this channel is dropped and the UI shows only the
+    // summary, making long thinking phases look like a stall.
+    if (notification.method === 'item/reasoning/textDelta') {
       const itemId = readString(params.itemId)
       const delta = readString(params.delta)
       if (!itemId || !delta) return null
@@ -4287,7 +4393,7 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
     }
     const filteredGroups = groupsWithWorkspaceRoots.filter((group) => {
       if (allowedProjectNames.has(group.projectName)) return true
-      return group.threads.some((thread) => isProjectlessChatPath(thread.cwd))
+      return isProjectlessGroup(group)
     })
     return orderGroupsByWorkspaceProjectOrder(filteredGroups, rootsState, duplicateLeafNames)
   }
@@ -4364,6 +4470,13 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
     }
   }
 
+  function removeArchivedThreadFromLoadedLists(threadId: string): void {
+    loadedThreadListGroups = removeThreadFromGroups(loadedThreadListGroups, threadId)
+    sourceGroups.value = removeThreadFromGroups(sourceGroups.value, threadId)
+    inProgressById.value = omitKey(inProgressById.value, threadId)
+    applyThreadFlags()
+  }
+
   function mergeThreadGroupPages(previous: UiProjectGroup[], incoming: UiProjectGroup[]): UiProjectGroup[] {
     if (previous.length === 0) return incoming
     if (incoming.length === 0) return previous
@@ -4429,6 +4542,7 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
       const page = await getThreadGroupsPage(threadListNextCursor, getBackgroundThreadListLimit())
       threadListNextCursor = page.nextCursor
       hasLoadedAllThreadPages = page.nextCursor === null
+      isThreadListFullyLoaded.value = hasLoadedAllThreadPages
       loadedThreadListGroups = mergeThreadGroupPages(loadedThreadListGroups, page.groups)
       applyThreadGroups(loadedThreadListGroups, rootsState)
     } catch {
@@ -4467,6 +4581,7 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
         ? threadListNextCursor
         : page.nextCursor
       hasLoadedAllThreadPages = page.nextCursor === null
+      isThreadListFullyLoaded.value = hasLoadedAllThreadPages
       await hydrateWorkspaceRootsStateIfNeeded(groups, rootsState)
 
       applyThreadGroups(loadedThreadListGroups, rootsState)
@@ -4575,12 +4690,15 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
           [threadId]: true,
         }
         lastMessageLoadAtByThreadId.set(threadId, Date.now())
-
         if (version) {
           loadedVersionByThreadId.value = {
             ...loadedVersionByThreadId.value,
             [threadId]: version,
           }
+        }
+        hasMoreOlderMessagesByThreadId.value = {
+          ...hasMoreOlderMessagesByThreadId.value,
+          [threadId]: detail.hasMoreOlder === true,
         }
         setThreadInProgress(threadId, inProgress)
         if (activeTurnId) {
@@ -4606,6 +4724,50 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
 
     loadMessagePromiseByThreadId.set(threadId, loadPromise)
     await loadPromise
+  }
+
+  async function loadOlderMessages(threadId: string = selectedThreadId.value): Promise<void> {
+    if (!threadId) return
+    if (loadingOlderMessagesByThreadId.value[threadId] === true) return
+    if (hasMoreOlderMessagesByThreadId.value[threadId] !== true) return
+
+    const beforeTurnId = getFirstPersistedTurnId(threadId)
+    if (!beforeTurnId) {
+      hasMoreOlderMessagesByThreadId.value = {
+        ...hasMoreOlderMessagesByThreadId.value,
+        [threadId]: false,
+      }
+      return
+    }
+
+    loadingOlderMessagesByThreadId.value = {
+      ...loadingOlderMessagesByThreadId.value,
+      [threadId]: true,
+    }
+
+    try {
+      const page = await getOlderThreadMessages(threadId, beforeTurnId)
+      const previousPersisted = persistedMessagesByThreadId.value[threadId] ?? []
+      const mergedMessages = mergeMessages(page.messages, previousPersisted, { preserveMissing: true })
+      setPersistedMessagesForThread(threadId, mergedMessages)
+      replaceTurnIndexLookupForThread(threadId, {
+        ...(turnIndexByTurnIdByThreadId.value[threadId] ?? {}),
+        ...page.turnIndexByTurnId,
+      })
+      rebindLiveFileChangeTurnIndices(threadId)
+      hasMoreOlderMessagesByThreadId.value = {
+        ...hasMoreOlderMessagesByThreadId.value,
+        [threadId]: page.hasMoreOlder,
+      }
+    } catch (loadError) {
+      error.value = loadError instanceof Error ? loadError.message : 'Failed to load earlier messages'
+      throw loadError
+    } finally {
+      loadingOlderMessagesByThreadId.value = {
+        ...loadingOlderMessagesByThreadId.value,
+        [threadId]: false,
+      }
+    }
   }
 
   async function ensureThreadMessagesLoaded(threadId: string, options: { silent?: boolean } = {}): Promise<void> {
@@ -4672,6 +4834,7 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
     } = {},
   ) {
     error.value = ''
+    codexCliMissingError.value = ''
     const includeSelectedThreadMessages = options.includeSelectedThreadMessages !== false
     const awaitAncillaryRefreshes = options.awaitAncillaryRefreshes === true
     const refreshAncillary = options.refreshAncillary !== false
@@ -4698,6 +4861,11 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
       }
     } catch (unknownError) {
       error.value = unknownError instanceof Error ? unknownError.message : 'Unknown application error'
+      if (isCodexCliMissingError(unknownError)) {
+        codexCliMissingError.value = CODEX_CLI_MISSING_MESSAGE
+      } else {
+        codexCliMissingError.value = ''
+      }
     }
   }
 
@@ -4727,6 +4895,7 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
 
     try {
       await archiveThread(threadId)
+      removeArchivedThreadFromLoadedLists(threadId)
       await loadThreads()
 
       if (wasSelectedThread && nextSelectedThreadId && selectedThreadId.value === nextSelectedThreadId) {
@@ -5836,11 +6005,15 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
     selectedProvider,
     selectedReasoningEffort,
     selectedSpeedMode,
+    codexCliMissingError,
     installedSkills,
     accountRateLimitSnapshots,
     messages,
+    hasMoreOlderMessages,
     isLoadingThreads,
+    isThreadListFullyLoaded,
     isLoadingMessages,
+    isLoadingOlderMessages,
     isSendingMessage,
     isInterruptingTurn,
     isUpdatingSpeedMode,
@@ -5854,6 +6027,7 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
     invalidateAppServerRuntimeState,
     selectThread,
     loadMessages,
+    loadOlderMessages,
     ensureThreadMessagesLoaded,
     setThreadTerminalOpen,
     toggleSelectedThreadTerminal,

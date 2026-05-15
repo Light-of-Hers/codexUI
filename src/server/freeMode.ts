@@ -117,6 +117,7 @@ const FALLBACK_FREE_MODELS = [
 let cachedFreeModels: string[] | null = null
 let cacheTimestamp = 0
 const CACHE_TTL_MS = 10 * 60 * 1000
+let freeModelsRefreshPromise: Promise<string[]> | null = null
 
 async function fetchFreeModelsFromOpenRouter(): Promise<string[]> {
   try {
@@ -143,7 +144,22 @@ export async function getFreeModels(): Promise<string[]> {
   return fetchFreeModelsFromOpenRouter()
 }
 
+export function getCachedFreeModels(): string[] {
+  return cachedFreeModels ?? FALLBACK_FREE_MODELS
+}
+
+export function refreshFreeModelsInBackground(): void {
+  if (cachedFreeModels && Date.now() - cacheTimestamp < CACHE_TTL_MS) return
+  if (freeModelsRefreshPromise) return
+  freeModelsRefreshPromise = fetchFreeModelsFromOpenRouter()
+    .finally(() => {
+      freeModelsRefreshPromise = null
+    })
+}
+
 export const FREE_MODE_DEFAULT_MODEL = 'openrouter/free'
+
+export const FREE_MODE_STATE_FILE = 'webui-free-mode.json'
 
 export function createDefaultFreeModeState(): FreeModeState {
   return {
@@ -156,6 +172,7 @@ export function createDefaultFreeModeState(): FreeModeState {
 export const CUSTOM_PROVIDER_ID = 'custom-endpoint'
 export const OPENCODE_ZEN_PROVIDER_ID = 'opencode-zen'
 export const OPENCODE_ZEN_BASE_URL = 'https://opencode.ai/zen/v1'
+export const OPENCODE_ZEN_DEFAULT_MODEL = 'big-pickle'
 
 function getMoonBridgeDataHomeDir(): string {
   const explicit = process.env.XDG_DATA_HOME?.trim()
@@ -244,6 +261,41 @@ export interface FreeModeState {
   providerKeys?: Record<string, string>
 }
 
+export function createDefaultOpenRouterFreeModeState(): FreeModeState | null {
+  const apiKey = getRandomFreeKey()
+  if (!apiKey) return null
+  return {
+    enabled: true,
+    apiKey,
+    model: FREE_MODE_DEFAULT_MODEL,
+    customKey: false,
+    provider: 'openrouter',
+    wireApi: 'responses',
+    providerKeys: {
+      openrouter: apiKey,
+    },
+  }
+}
+
+export function createDefaultOpenCodeZenFreeModeState(): FreeModeState {
+  return {
+    enabled: true,
+    apiKey: null,
+    model: OPENCODE_ZEN_DEFAULT_MODEL,
+    customKey: false,
+    provider: 'opencode-zen',
+    wireApi: 'responses',
+    providerKeys: {},
+  }
+}
+
+export function shouldCreateDefaultFreeModeStateForMissingAuth(
+  current: FreeModeState | null,
+  hasUsableCodexAuth: boolean,
+): boolean {
+  return current == null && !hasUsableCodexAuth
+}
+
 export function getFreeModeEnvVars(state: FreeModeState): Record<string, string> {
   if (!state.enabled) return {}
 
@@ -262,6 +314,7 @@ export function getFreeModeConfigArgs(state: FreeModeState, serverPort?: number)
   if (!state.enabled) return []
 
   if (state.provider === 'opencode-zen') {
+    const model = state.model?.trim() || OPENCODE_ZEN_DEFAULT_MODEL
     const baseUrl = serverPort
       ? `http://127.0.0.1:${serverPort}/codex-api/zen-proxy/v1`
       : OPENCODE_ZEN_BASE_URL
@@ -270,6 +323,7 @@ export function getFreeModeConfigArgs(state: FreeModeState, serverPort?: number)
       ? ['-c', `model_providers.${OPENCODE_ZEN_PROVIDER_ID}.experimental_bearer_token="zen-proxy-token"`]
       : ['-c', `model_providers.${OPENCODE_ZEN_PROVIDER_ID}.env_key="OPENCODE_ZEN_API_KEY"`]
     return [
+      '-c', `model="${model}"`,
       '-c', `model_provider="${OPENCODE_ZEN_PROVIDER_ID}"`,
       '-c', `model_providers.${OPENCODE_ZEN_PROVIDER_ID}.name="OpenCode Zen"`,
       '-c', `model_providers.${OPENCODE_ZEN_PROVIDER_ID}.base_url="${baseUrl}"`,

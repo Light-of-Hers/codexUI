@@ -60,25 +60,42 @@
             </span>
           </button>
 
-          <SidebarThreadTree :groups="projectGroups" :project-display-name-by-id="projectDisplayNameById"
+          <button
+            v-if="!isSidebarCollapsed"
+            class="sidebar-skills-link"
+            :class="{ 'is-active': isAutomationsRoute }"
+            type="button"
+            @click="router.push({ name: 'automations' }); isMobile && setSidebarCollapsed(true)"
+          >
+            <span class="sidebar-skills-link-icon sidebar-automations-link-icon" aria-hidden="true">
+              <IconTablerBolt />
+            </span>
+            <span class="sidebar-skills-link-copy">
+              <span class="sidebar-skills-link-title">{{ t('Automations') }}</span>
+              <span class="sidebar-skills-link-subtitle">{{ t('Scheduled work') }}</span>
+            </span>
+          </button>
+
+          <SidebarThreadTree ref="sidebarThreadTreeRef" :groups="projectGroups" :project-display-name-by-id="projectDisplayNameById"
             :project-git-repo-by-name="projectGitRepoByName"
+            :project-cwd-by-name="projectCwdByName"
             v-if="!isSidebarCollapsed"
             :selected-thread-id="selectedThreadId" :is-loading="isLoadingThreads"
+            :is-thread-list-fully-loaded="isThreadListFullyLoaded"
             :search-query="sidebarSearchQuery"
             :search-matched-thread-ids="serverMatchedThreadIds"
-            :filter-active="isSidebarSearchVisible"
             @select="onSelectThread"
             @archive="onArchiveThread" @start-new-thread="onStartNewThread" @rename-project="onRenameProject"
             @browse-thread-files="onBrowseThreadFiles"
             @browse-project-files="onBrowseProjectFiles"
-            @project-menu-open="onProjectMenuOpen"
+            @request-project-git-status="onRequestProjectGitStatus"
             @create-project-worktree="onCreateProjectWorktree"
             @rename-thread="onRenameThread"
             @fork-thread="onForkThread"
             @remove-project="onRemoveProject" @reorder-project="onReorderProject"
             @export-thread="onExportThread"
-            @start-new-chat="onStartNewThreadFromToolbar"
-            @toggle-filter="toggleSidebarSearch" />
+            @automations-changed="onAutomationsChanged"
+            @start-new-chat="onStartNewThreadFromToolbar" />
         </div>
 
         <div
@@ -119,7 +136,10 @@
                   </button>
                 </div>
                 <template v-if="!isAccountsSectionCollapsed">
-                  <p v-if="accountActionError" class="sidebar-settings-account-error">{{ accountActionError }}</p>
+                  <div v-if="accountActionError" class="sidebar-settings-account-error visible-error-with-feedback">
+                    <span>{{ accountActionError }}</span>
+                    <a class="visible-error-feedback" :href="feedbackMailto" @click="prepareFeedbackLink($event, accountActionError)">{{ t('Send feedback') }}</a>
+                  </div>
                   <div class="sidebar-settings-account-login">
                     <button
                       class="sidebar-settings-account-login-button"
@@ -229,6 +249,15 @@
                 <span class="sidebar-settings-label">{{ t('Auto send dictation') }}</span>
                 <span class="sidebar-settings-toggle" :class="{ 'is-on': dictationAutoSend }" />
               </button>
+              <a
+                v-if="hasFeedbackDiagnostics"
+                class="sidebar-settings-row sidebar-settings-feedback-row"
+                :href="feedbackMailto"
+                @click="prepareFeedbackLink"
+              >
+                <span class="sidebar-settings-label">{{ t('Send feedback') }}</span>
+                <span class="sidebar-settings-value">{{ t('Issue detected') }}</span>
+              </a>
 
               <div class="sidebar-settings-row sidebar-settings-row--select" :title="t('Choose the API provider for the Codex backend')">
                 <span class="sidebar-settings-label">{{ t('Provider') }}</span>
@@ -246,7 +275,8 @@
                 </select>
               </div>
               <div v-if="providerError" class="sidebar-settings-row sidebar-settings-error">
-                {{ providerError }}
+                <span>{{ providerError }}</span>
+                <a class="visible-error-feedback" :href="feedbackMailto" @click="prepareFeedbackLink($event, providerError)">{{ t('Send feedback') }}</a>
               </div>
               <div v-if="selectedProvider === 'openrouter'" class="sidebar-settings-row sidebar-settings-row--input">
                 <div class="sidebar-settings-provider-info">
@@ -427,7 +457,8 @@
                   {{ t('Put one Telegram user ID per line or separate them with commas. Use `*` to allow all Telegram users. Unauthorized users will see their own ID in the rejection message so they can copy it here.') }}
                 </div>
                 <div v-if="telegramConfigError" class="sidebar-settings-telegram-error">
-                  {{ telegramConfigError }}
+                  <span>{{ telegramConfigError }}</span>
+                  <a class="visible-error-feedback" :href="feedbackMailto" @click="prepareFeedbackLink($event, telegramConfigError)">{{ t('Send feedback') }}</a>
                 </div>
                 <div class="sidebar-settings-telegram-actions">
                   <button
@@ -506,7 +537,7 @@
         :style="contentStyle"
       >
         <span v-if="isVirtualKeyboardOpen" class="content-keyboard-spacer" aria-hidden="true" />
-        <ContentHeader :title="contentTitle" :accent="isSkillsRoute">
+        <ContentHeader :title="contentTitle" :accent="isSkillsRoute || isAutomationsRoute">
           <template #leading>
             <SidebarThreadControls
               v-if="isSidebarCollapsed || isMobile"
@@ -517,6 +548,9 @@
               @start-new-thread="onStartNewThreadFromToolbar"
             />
             <span v-if="isSkillsRoute" class="skills-route-header-icon" aria-hidden="true">
+              <IconTablerBolt />
+            </span>
+            <span v-else-if="isAutomationsRoute" class="skills-route-header-icon automations-route-header-icon" aria-hidden="true">
               <IconTablerBolt />
             </span>
           </template>
@@ -569,6 +603,18 @@
               @try-item="onTryDirectoryItem"
             />
           </template>
+          <template v-else-if="isAutomationsRoute">
+            <AutomationsPanel
+              ref="automationsPanelRef"
+              :groups="projectGroups"
+              :project-cwd-by-name="projectCwdByName"
+              :project-display-name-by-id="projectDisplayNameById"
+              :selected-automation-id="routeAutomationId"
+              @select-automation="onSelectAutomationInPanel"
+              @edit-automation="onEditAutomationFromPanel"
+              @create-automation="onCreateAutomationFromPanel"
+            />
+          </template>
           <template v-else-if="isHomeRoute">
             <div class="content-grid content-grid-home">
               <div class="new-thread-empty">
@@ -585,7 +631,7 @@
                   <button class="new-thread-folder-action new-thread-folder-action-primary" type="button" @click="onOpenExistingFolder">
                     {{ t('Select folder') }}
                   </button>
-                  <button class="new-thread-folder-action" type="button" @click="onCreateProject">
+                  <button class="new-thread-folder-action" type="button" @click="onOpenProjectSetupModal">
                     {{ t('Create Project') }}
                   </button>
                 </div>
@@ -691,7 +737,10 @@
                             {{ createFolderSubmitLabel }}
                           </button>
                         </div>
-                        <p v-if="createFolderError" class="new-thread-open-folder-error">{{ createFolderError }}</p>
+                        <div v-if="createFolderError" class="new-thread-open-folder-error visible-error-with-feedback">
+                          <span>{{ createFolderError }}</span>
+                          <a class="visible-error-feedback" :href="feedbackMailto" @click="prepareFeedbackLink($event, createFolderError)">{{ t('Send feedback') }}</a>
+                        </div>
                       </div>
                       <input
                         ref="existingFolderFilterInputRef"
@@ -702,7 +751,10 @@
                         @keydown.esc.prevent="onCloseExistingFolderPanel"
                       />
                       <div v-if="existingFolderError" class="new-thread-open-folder-error-actions">
-                        <p class="new-thread-open-folder-error">{{ existingFolderError }}</p>
+                        <div class="new-thread-open-folder-error visible-error-with-feedback">
+                          <span>{{ existingFolderError }}</span>
+                          <a class="visible-error-feedback" :href="feedbackMailto" @click="prepareFeedbackLink($event, existingFolderError)">{{ t('Send feedback') }}</a>
+                        </div>
                         <button
                           class="new-thread-folder-action"
                           type="button"
@@ -738,6 +790,93 @@
                           </button>
                         </li>
                       </ul>
+                    </div>
+                  </div>
+                </Teleport>
+                <Teleport to="body">
+                  <div v-if="isProjectSetupModalOpen" class="new-thread-open-folder-overlay" @click.self="onCloseProjectSetupModal">
+                    <div class="new-thread-project-modal" role="dialog" aria-modal="true" :aria-label="t('Create or clone project')" @keydown.esc.prevent="onCloseProjectSetupModal">
+                      <div class="new-thread-open-folder-header">
+                        <p class="new-thread-open-folder-title">{{ t('Create or clone project') }}</p>
+                        <button class="new-thread-open-folder-close" type="button" :disabled="isProjectSetupSubmitting" @click="onCloseProjectSetupModal">
+                          {{ t('Cancel') }}
+                        </button>
+                      </div>
+                      <div class="new-thread-project-mode-tabs" role="tablist" :aria-label="t('Project source')">
+                        <button
+                          class="new-thread-project-mode-tab"
+                          :class="{ 'is-active': projectSetupMode === 'create' }"
+                          type="button"
+                          role="tab"
+                          :aria-selected="projectSetupMode === 'create'"
+                          :disabled="isProjectSetupSubmitting"
+                          @click="projectSetupMode = 'create'"
+                        >
+                          {{ t('New project') }}
+                        </button>
+                        <button
+                          class="new-thread-project-mode-tab"
+                          :class="{ 'is-active': projectSetupMode === 'clone' }"
+                          type="button"
+                          role="tab"
+                          :aria-selected="projectSetupMode === 'clone'"
+                          :disabled="isProjectSetupSubmitting"
+                          @click="projectSetupMode = 'clone'"
+                        >
+                          {{ t('Clone from GitHub') }}
+                        </button>
+                      </div>
+                      <label class="new-thread-project-field">
+                        <span class="new-thread-open-folder-label">{{ t('Destination folder') }}</span>
+                        <input
+                          v-model="projectSetupBaseDir"
+                          class="new-thread-open-folder-path"
+                          type="text"
+                          :disabled="isProjectSetupSubmitting"
+                          :placeholder="t('Destination folder')"
+                        />
+                      </label>
+                      <label v-if="projectSetupMode === 'create'" class="new-thread-project-field">
+                        <span class="new-thread-open-folder-label">{{ t('Project name') }}</span>
+                        <input
+                          ref="projectSetupPrimaryInputRef"
+                          v-model="projectNameDraft"
+                          class="new-thread-open-folder-create-input"
+                          type="text"
+                          :disabled="isProjectSetupSubmitting"
+                          :placeholder="t('Project name')"
+                          @keydown.enter.prevent="onSubmitProjectSetup"
+                        />
+                      </label>
+                      <label v-else class="new-thread-project-field">
+                        <span class="new-thread-open-folder-label">{{ t('GitHub repository URL') }}</span>
+                        <input
+                          ref="projectSetupPrimaryInputRef"
+                          v-model="githubCloneUrlDraft"
+                          class="new-thread-open-folder-create-input"
+                          type="url"
+                          :disabled="isProjectSetupSubmitting"
+                          placeholder="https://github.com/owner/repo"
+                          @keydown.enter.prevent="onSubmitProjectSetup"
+                        />
+                      </label>
+                      <div v-if="projectSetupError" class="new-thread-open-folder-error visible-error-with-feedback">
+                        <span>{{ projectSetupError }}</span>
+                        <a class="visible-error-feedback" :href="feedbackMailto" @click="prepareFeedbackLink($event, projectSetupError)">{{ t('Send feedback') }}</a>
+                      </div>
+                      <div class="new-thread-project-modal-actions">
+                        <button class="new-thread-folder-action" type="button" :disabled="isProjectSetupSubmitting" @click="onCloseProjectSetupModal">
+                          {{ t('Cancel') }}
+                        </button>
+                        <button
+                          class="new-thread-folder-action new-thread-folder-action-primary"
+                          type="button"
+                          :disabled="!canSubmitProjectSetup || isProjectSetupSubmitting"
+                          @click="onSubmitProjectSetup"
+                        >
+                          {{ projectSetupSubmitLabel }}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </Teleport>
@@ -785,6 +924,10 @@
               </div>
 
               <div class="composer-with-queue">
+                <div v-if="codexCliMissingError" class="composer-runtime-error" role="alert">
+                  <span>{{ t(codexCliMissingError) }}</span>
+                  <a class="visible-error-feedback" :href="feedbackMailto" @click="prepareFeedbackLink($event, codexCliMissingError)">{{ t('Send feedback') }}</a>
+                </div>
                 <ThreadTerminalPanel
                   v-if="homeTerminalOpen && composerCwd"
                   ref="homeTerminalPanelRef"
@@ -834,6 +977,9 @@
                     :active-thread-id="composerThreadContextId" :cwd="composerCwd"
                     :live-overlay="liveOverlay"
                     :pending-requests="selectedThreadServerRequests"
+                    :has-more-persisted-above="hasMoreOlderMessages"
+                    :is-loading-persisted-above="isLoadingOlderMessages"
+                    :load-earlier-messages="loadOlderMessages"
                     @fork-thread="onForkThreadFromMessage"
                     @rollback="onRollback"
                     @implement-plan="onImplementPlan"
@@ -841,6 +987,10 @@
                 </div>
 
                 <div class="composer-with-queue">
+                  <div v-if="codexCliMissingError" class="composer-runtime-error" role="alert">
+                    <span>{{ t(codexCliMissingError) }}</span>
+                    <a class="visible-error-feedback" :href="feedbackMailto" @click="prepareFeedbackLink($event, codexCliMissingError)">{{ t('Send feedback') }}</a>
+                  </div>
                   <QueuedMessages
                     :messages="selectedThreadQueuedMessages"
                     @edit="onEditQueuedMessage"
@@ -946,7 +1096,10 @@
         :placeholder="t('Paste localhost callback URL')"
         :disabled="isCompletingCodexLogin"
       >
-      <p v-if="accountActionError" class="codex-login-modal-error">{{ accountActionError }}</p>
+      <div v-if="accountActionError" class="codex-login-modal-error visible-error-with-feedback">
+        <span>{{ accountActionError }}</span>
+        <a class="visible-error-feedback" :href="feedbackMailto" @click="prepareFeedbackLink($event, accountActionError)">{{ t('Send feedback') }}</a>
+      </div>
       <div class="codex-login-modal-actions">
         <button
           class="codex-login-modal-cancel"
@@ -986,8 +1139,10 @@ import IconTablerX from './components/icons/IconTablerX.vue'
 import { useDesktopState } from './composables/useDesktopState'
 import { useMobile } from './composables/useMobile'
 import { useUiLanguage } from './composables/useUiLanguage'
+import { useFeedbackDiagnostics } from './composables/useFeedbackDiagnostics'
 import {
   checkoutGitBranch,
+  cloneGithubRepository,
   configureTelegramBot,
   createPermanentWorktree,
   createWorktree,
@@ -1017,7 +1172,7 @@ import {
   searchThreads,
   switchAccount,
 } from './api/codexGateway'
-import type { ReasoningEffort, SpeedMode, UiAccountEntry, UiRateLimitWindow, UiServerRequest, UiServerRequestReply, UiThreadTokenUsage } from './types/codex'
+import type { ReasoningEffort, SpeedMode, UiAccountEntry, UiRateLimitWindow, UiServerRequest, UiServerRequestReply, UiThreadAutomation, UiThreadTokenUsage } from './types/codex'
 import type { ComposerDraftPayload, ThreadComposerExposed } from './components/content/ThreadComposer.vue'
 import type { GitCommitOption, LocalDirectoryEntry, TelegramStatus, ThreadTerminalQuickCommand, WorktreeBranchOption } from './api/codexGateway'
 import { getFreeModeStatus, setFreeMode, setFreeModeCustomKey, setCustomProvider } from './api/codexGateway'
@@ -1032,6 +1187,7 @@ const QueuedMessages = defineAsyncComponent(() => import('./components/content/Q
 const RateLimitStatus = defineAsyncComponent(() => import('./components/content/RateLimitStatus.vue'))
 const HeaderGitBranchDropdown = defineAsyncComponent(() => import('./components/content/HeaderGitBranchDropdown.vue'))
 const ComposerRuntimeDropdown = defineAsyncComponent(() => import('./components/content/ComposerRuntimeDropdown.vue'))
+const AutomationsPanel = defineAsyncComponent(() => import('./components/content/AutomationsPanel.vue'))
 const { t, uiLanguage, uiLanguageOptions, setUiLanguage } = useUiLanguage()
 
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'codex-web-local.sidebar-collapsed.v1'
@@ -1222,20 +1378,26 @@ const {
   selectedProvider,
   selectedReasoningEffort,
   selectedSpeedMode,
+  codexCliMissingError,
   installedSkills,
   accountRateLimitSnapshots,
   messages,
+  hasMoreOlderMessages,
   isLoadingThreads,
+  isThreadListFullyLoaded,
   isLoadingMessages,
+  isLoadingOlderMessages,
   isSendingMessage,
   isInterruptingTurn,
   isSelectedThreadInterruptPending,
   isUpdatingSpeedMode,
+  error: desktopError,
   refreshAll,
   refreshSkills,
   selectThread,
   loadMessages,
   ensureThreadMessagesLoaded,
+  loadOlderMessages,
   setThreadTerminalOpen,
   toggleSelectedThreadTerminal,
   archiveThreadById,
@@ -1272,6 +1434,37 @@ const {
 const route = useRoute()
 const router = useRouter()
 const { isMobile } = useMobile()
+type SidebarThreadTreeExposed = {
+  openAutomationEditorFromPanel: (payload: AutomationEditRequest) => void
+  openAutomationCreatorFromPanel: () => void
+}
+type AutomationsPanelExposed = {
+  loadAutomations: () => Promise<void>
+}
+type AutomationEditRequest = {
+  scope: 'thread' | 'project'
+  target: string
+  automation: UiThreadAutomation
+}
+const sidebarThreadTreeRef = ref<SidebarThreadTreeExposed | null>(null)
+const automationsPanelRef = ref<AutomationsPanelExposed | null>(null)
+const {
+  hasFeedbackDiagnostics,
+  buildFeedbackMailto,
+  feedbackMailtoBase,
+  recordVisibleFailure,
+} = useFeedbackDiagnostics()
+const feedbackMailto = feedbackMailtoBase()
+
+function prepareFeedbackLink(event: MouseEvent, message?: string): void {
+  if (message) {
+    recordVisibleFailure(message)
+  }
+  const target = event.currentTarget
+  if (target instanceof HTMLAnchorElement) {
+    target.href = buildFeedbackMailto()
+  }
+}
 const homeThreadComposerRef = ref<ThreadComposerExposed | null>(null)
 const threadComposerRef = ref<ThreadComposerExposed | null>(null)
 const threadConversationRef = ref<{ jumpToLatest: () => void } | null>(null)
@@ -1292,6 +1485,7 @@ const hasInitialized = ref(false)
 const newThreadCwd = ref('')
 const newThreadRuntime = ref<'local' | 'worktree'>('local')
 const gitRepoStatusByCwd = ref<Record<string, boolean>>({})
+const gitRepoStatusRequestByCwd = new Map<string, Promise<boolean>>()
 const newWorktreeBaseBranch = ref('')
 const worktreeBranchOptions = ref<WorktreeBranchOption[]>([])
 const isLoadingWorktreeBranches = ref(false)
@@ -1393,6 +1587,14 @@ const isCreateFolderOpen = ref(false)
 const createFolderDraft = ref('')
 const createFolderError = ref('')
 const isCreatingFolder = ref(false)
+const isProjectSetupModalOpen = ref(false)
+const projectSetupMode = ref<'create' | 'clone'>('create')
+const projectSetupBaseDir = ref('')
+const projectNameDraft = ref('')
+const githubCloneUrlDraft = ref('')
+const projectSetupError = ref('')
+const isProjectSetupSubmitting = ref(false)
+const projectSetupPrimaryInputRef = ref<HTMLInputElement | null>(null)
 const isExistingFolderPickerOpen = ref(false)
 const existingFolderPathInputRef = ref<HTMLInputElement | null>(null)
 const existingFolderFilterInputRef = ref<HTMLInputElement | null>(null)
@@ -1405,6 +1607,18 @@ const isExistingFolderLoading = ref(false)
 const isOpeningExistingFolder = ref(false)
 const showHiddenFolders = ref(false)
 const existingFolderFilter = ref('')
+const visibleFeedbackErrors = [
+  desktopError,
+  codexCliMissingError,
+  threadBranchError,
+  threadBranchCommitsError,
+  accountActionError,
+  providerError,
+  telegramConfigError,
+  createFolderError,
+  projectSetupError,
+  existingFolderError,
+]
 const telegramStatus = ref<TelegramStatus>({
   configured: false,
   active: false,
@@ -1431,7 +1645,13 @@ const routeThreadId = computed(() => {
 
 const isHomeRoute = computed(() => route.name === 'home')
 const isSkillsRoute = computed(() => route.name === 'skills')
+const isAutomationsRoute = computed(() => route.name === 'automations')
+const routeAutomationId = computed(() => {
+  const raw = route.query.automationId
+  return typeof raw === 'string' ? raw : ''
+})
 const contentTitle = computed(() => {
+  if (isAutomationsRoute.value) return t('Automations')
   if (isSkillsRoute.value) return t('Skills')
   if (isHomeRoute.value) return t('Start new thread')
   return selectedThread.value?.title ?? t('Choose a thread')
@@ -1496,7 +1716,7 @@ const isTerminalKeyboardLayoutActive = computed(() => (
 ))
 const directoryCwd = computed(() => selectedThread.value?.cwd?.trim() ?? newThreadCwd.value.trim())
 const isSelectedThreadInProgress = computed(() => !isHomeRoute.value && selectedThread.value?.inProgress === true)
-const showThreadContextBadge = computed(() => !isHomeRoute.value && !isSkillsRoute.value && selectedThreadId.value.trim().length > 0)
+const showThreadContextBadge = computed(() => !isHomeRoute.value && !isSkillsRoute.value && !isAutomationsRoute.value && selectedThreadId.value.trim().length > 0)
 const threadSessionId = computed(() => selectedThreadId.value.trim())
 const showThreadSessionIdRow = computed(() => !isHomeRoute.value && !isSkillsRoute.value && threadSessionId.value.length > 0)
 const copiedThreadSessionId = ref('')
@@ -1765,6 +1985,18 @@ const isCreateFolderNameValid = computed(() => {
 const canCreateFolder = computed(() => {
   return isCreateFolderNameValid.value && createFolderParentPath.value.trim().length > 0 && !existingFolderError.value
 })
+const isProjectNameDraftValid = computed(() => {
+  const draft = projectNameDraft.value.trim()
+  if (!draft) return false
+  if (draft === '.' || draft === '..') return false
+  return !/[\\/]/u.test(draft)
+})
+const canSubmitProjectSetup = computed(() => {
+  const baseDir = projectSetupBaseDir.value.trim()
+  if (!baseDir) return false
+  if (projectSetupMode.value === 'create') return isProjectNameDraftValid.value
+  return githubCloneUrlDraft.value.trim().length > 0
+})
 const resolvedExistingFolderPath = computed(() => {
   const draftedPath = normalizePathForUi(existingFolderPathDraft.value).trim()
   if (draftedPath) return draftedPath
@@ -1773,6 +2005,12 @@ const resolvedExistingFolderPath = computed(() => {
 const createFolderSubmitLabel = computed(() => {
   if (isCreatingFolder.value) return 'Creating…'
   return 'Create'
+})
+const projectSetupSubmitLabel = computed(() => {
+  if (isProjectSetupSubmitting.value) {
+    return projectSetupMode.value === 'clone' ? t('Cloning…') : t('Creating…')
+  }
+  return projectSetupMode.value === 'clone' ? t('Clone repository') : t('Create project')
 })
 const canBrowseExistingFolderParent = computed(() => {
   const current = existingFolderBrowsePath.value.trim()
@@ -1875,6 +2113,16 @@ onMounted(() => {
   applyDarkMode()
   darkModeMediaQuery?.addEventListener('change', applyDarkMode)
   void initialize()
+})
+
+watch(visibleFeedbackErrors, (values, oldValues) => {
+  values.forEach((value, index) => {
+    if (value === oldValues[index]) return
+    const message = value.trim()
+    if (message) {
+      recordVisibleFailure(message)
+    }
+  })
 })
 
 onUnmounted(() => {
@@ -2151,6 +2399,33 @@ function onSelectThread(threadId: string): void {
   if (route.name === 'thread' && routeThreadId.value === threadId) return
   void router.push({ name: 'thread', params: { threadId } })
   if (isMobile.value) setSidebarCollapsed(true)
+}
+
+function onSelectAutomationInPanel(automationId: string): void {
+  if (route.name !== 'automations') return
+  if (routeAutomationId.value === automationId) return
+  void router.replace({ name: 'automations', query: automationId ? { automationId } : {} })
+}
+
+async function onEditAutomationFromPanel(payload: AutomationEditRequest): Promise<void> {
+  if (isSidebarCollapsed.value) {
+    setSidebarCollapsed(false)
+    await nextTick()
+  }
+  sidebarThreadTreeRef.value?.openAutomationEditorFromPanel(payload)
+}
+
+async function onCreateAutomationFromPanel(): Promise<void> {
+  if (isSidebarCollapsed.value) {
+    setSidebarCollapsed(false)
+    await nextTick()
+  }
+  sidebarThreadTreeRef.value?.openAutomationCreatorFromPanel()
+}
+
+function onAutomationsChanged(): void {
+  if (route.name !== 'automations') return
+  void automationsPanelRef.value?.loadAutomations()
 }
 
 async function onExportThread(threadId: string): Promise<void> {
@@ -2505,6 +2780,14 @@ function getProjectCwd(projectName: string): string {
     || resolvePreferredLocalCwd(projectName, projectGroup?.threads[0]?.cwd?.trim() ?? '')
 }
 
+const projectCwdByName = computed<Record<string, string>>(() =>
+  Object.fromEntries(
+    projectGroups.value
+      .map((group) => [group.projectName, getProjectCwd(group.projectName).trim()] as const)
+      .filter(([, cwd]) => cwd.length > 0),
+  ),
+)
+
 function getProjectDisplayNameForWorktree(projectName: string): string {
   return (projectDisplayNameById.value[projectName] ?? projectName).trim() || projectName
 }
@@ -2522,12 +2805,6 @@ function onBrowseProjectFiles(projectName: string): void {
   const targetCwd = getProjectCwd(projectName)
   if (!targetCwd || typeof window === 'undefined') return
   window.open(`/codex-local-browse${encodeURI(targetCwd)}`, '_blank', 'noopener,noreferrer')
-}
-
-function onProjectMenuOpen(projectName: string): void {
-  const cwd = getProjectCwd(projectName)
-  if (!cwd) return
-  scheduleGitRepoStatusRefresh(cwd, 0)
 }
 
 async function onCreateProjectWorktree(projectName: string): Promise<void> {
@@ -2557,7 +2834,7 @@ async function onCreateProjectWorktree(projectName: string): Promise<void> {
 
     newThreadCwd.value = normalizedPath
     newThreadRuntime.value = 'local'
-    pinProjectToTop(getPathLeafName(normalizedPath))
+    pinProjectToTop(getProjectOrderNameForPath(normalizedPath))
     await loadWorkspaceRootOptionsState()
     await refreshDefaultProjectName()
     if (isMobile.value) setSidebarCollapsed(true)
@@ -2581,17 +2858,32 @@ function onStartNewThreadFromToolbar(): void {
 async function loadGitRepoStatus(cwdRaw: string): Promise<void> {
   const cwd = cwdRaw.trim()
   if (!cwd || Object.prototype.hasOwnProperty.call(gitRepoStatusByCwd.value, cwd)) return
-  try {
-    const status = await getGitRepositoryStatus(cwd)
-    gitRepoStatusByCwd.value = {
-      ...gitRepoStatusByCwd.value,
-      [cwd]: status.isGitRepo,
+
+  const existingRequest = gitRepoStatusRequestByCwd.get(cwd)
+  if (existingRequest) {
+    const isGitRepo = await existingRequest
+    if (!Object.prototype.hasOwnProperty.call(gitRepoStatusByCwd.value, cwd)) {
+      gitRepoStatusByCwd.value = {
+        ...gitRepoStatusByCwd.value,
+        [cwd]: isGitRepo,
+      }
     }
-  } catch {
-    gitRepoStatusByCwd.value = {
-      ...gitRepoStatusByCwd.value,
-      [cwd]: false,
-    }
+    return
+  }
+
+  const request = getGitRepositoryStatus(cwd)
+    .then((status) => status.isGitRepo)
+    .catch(() => false)
+    .finally(() => {
+      gitRepoStatusRequestByCwd.delete(cwd)
+    })
+  gitRepoStatusRequestByCwd.set(cwd, request)
+
+  const isGitRepo = await request
+  if (Object.prototype.hasOwnProperty.call(gitRepoStatusByCwd.value, cwd)) return
+  gitRepoStatusByCwd.value = {
+    ...gitRepoStatusByCwd.value,
+    [cwd]: isGitRepo,
   }
 }
 
@@ -2611,6 +2903,12 @@ async function onRemoveProject(projectName: string): Promise<void> {
 
 function onReorderProject(payload: { projectName: string; toIndex: number }): void {
   reorderProject(payload.projectName, payload.toIndex)
+}
+
+function onRequestProjectGitStatus(projectName: string): void {
+  const group = projectGroups.value.find((entry) => entry.projectName === projectName)
+  const cwd = resolvePreferredLocalCwd(projectName, group?.threads[0]?.cwd?.trim() ?? '')
+  void loadGitRepoStatus(cwd)
 }
 
 function onRespondServerRequest(payload: UiServerRequestReply): void {
@@ -3186,35 +3484,70 @@ function loadThreadBranchCommits(branch: string): void {
     })
 }
 
-async function onCreateProject(): Promise<void> {
+async function onOpenProjectSetupModal(): Promise<void> {
   const baseDir = await resolveProjectBaseDirectory()
   if (!baseDir) return
 
   await refreshDefaultProjectName()
-  const suggestedName = defaultNewProjectName.value.trim() || 'New Project (1)'
-  const projectName = window.prompt(`Create project in ${baseDir}`, suggestedName)
-  if (projectName === null) return
+  projectSetupBaseDir.value = baseDir
+  projectNameDraft.value = defaultNewProjectName.value.trim() || 'New Project (1)'
+  githubCloneUrlDraft.value = ''
+  projectSetupError.value = ''
+  projectSetupMode.value = 'create'
+  isProjectSetupModalOpen.value = true
+  void nextTick(() => projectSetupPrimaryInputRef.value?.focus())
+}
 
-  const normalizedProjectName = projectName.trim()
-  if (!normalizedProjectName) return
+function onCloseProjectSetupModal(): void {
+  if (isProjectSetupSubmitting.value) return
+  isProjectSetupModalOpen.value = false
+  projectSetupError.value = ''
+}
 
+async function createProjectFromSetupModal(): Promise<string> {
+  const baseDir = projectSetupBaseDir.value.trim()
+  const normalizedProjectName = projectNameDraft.value.trim()
+  if (!isProjectNameDraftValid.value) {
+    throw new Error('Enter a single project folder name.')
+  }
   const targetPath = normalizeAbsolutePath(joinPath(baseDir, normalizedProjectName))
-  if (!targetPath) return
+  if (!targetPath) return ''
 
+  return openProjectRoot(targetPath, {
+    createIfMissing: true,
+    label: '',
+  })
+}
+
+async function cloneGithubRepositoryFromSetupModal(): Promise<string> {
+  const baseDir = projectSetupBaseDir.value.trim()
+  const normalizedRepoUrl = githubCloneUrlDraft.value.trim()
+  if (!normalizedRepoUrl) return ''
+
+  return cloneGithubRepository(normalizedRepoUrl, baseDir)
+}
+
+async function onSubmitProjectSetup(): Promise<void> {
+  if (!canSubmitProjectSetup.value || isProjectSetupSubmitting.value) return
+
+  projectSetupError.value = ''
+  isProjectSetupSubmitting.value = true
   try {
-    const normalizedPath = await openProjectRoot(targetPath, {
-      createIfMissing: true,
-      label: '',
-    })
+    const normalizedPath =
+      projectSetupMode.value === 'clone'
+        ? await cloneGithubRepositoryFromSetupModal()
+        : await createProjectFromSetupModal()
     if (!normalizedPath) return
 
     newThreadCwd.value = normalizedPath
     pinProjectToTop(getProjectOrderNameForPath(normalizedPath))
     await loadWorkspaceRootOptionsState()
     await refreshDefaultProjectName()
+    isProjectSetupModalOpen.value = false
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Failed to create the project.'
-    window.alert(message)
+    projectSetupError.value = error instanceof Error ? error.message : 'Failed to create or clone project.'
+  } finally {
+    isProjectSetupSubmitting.value = false
   }
 }
 
@@ -3294,7 +3627,7 @@ async function onConfirmExistingFolder(path = resolvedExistingFolderPath.value):
     }
 
     newThreadCwd.value = normalizedPath
-    pinProjectToTop(getPathLeafName(normalizedPath))
+    pinProjectToTop(getProjectOrderNameForPath(normalizedPath))
     await loadWorkspaceRootOptionsState()
     await refreshDefaultProjectName()
     onCloseExistingFolderPanel()
@@ -3387,7 +3720,7 @@ async function applyLaunchProjectPathFromUrl(): Promise<boolean> {
     })
     if (!normalizedPath) return false
     newThreadCwd.value = normalizedPath
-    pinProjectToTop(getPathLeafName(normalizedPath))
+    pinProjectToTop(getProjectOrderNameForPath(normalizedPath))
     await router.replace({ name: 'home' })
     await loadWorkspaceRootOptionsState()
     const nextUrl = new URL(window.location.href)
@@ -3587,7 +3920,7 @@ function onImplementPlan(payload: { turnId: string }): void {
 
 
 function onExportChat(): void {
-  if (isHomeRoute.value || isSkillsRoute.value || typeof document === 'undefined') return
+  if (isHomeRoute.value || isSkillsRoute.value || isAutomationsRoute.value || typeof document === 'undefined') return
   if (!selectedThread.value || filteredMessages.value.length === 0) return
   const markdown = buildThreadMarkdown()
   const fileName = buildExportFileName()
@@ -3791,7 +4124,7 @@ async function applySelectedProviderState(
       })
     } else if (provider === 'opencode-zen') {
       await setCustomProvider('', opencodeZenKey.value.trim(), {
-        wireApi: 'chat',
+        wireApi: 'responses',
         provider: 'opencode-zen',
       })
       freeModeEnabled.value = true
@@ -4082,7 +4415,7 @@ async function syncThreadSelectionWithRoute(): Promise<void> {
     do {
       hasPendingRouteSync = false
 
-      if (route.name === 'home' || route.name === 'skills') {
+      if (route.name === 'home' || route.name === 'skills' || route.name === 'automations') {
         if (selectedThreadId.value !== '') {
           await selectThread('')
           await applySelectedProviderState().catch(() => {})
@@ -4138,17 +4471,27 @@ watch(
 )
 
 watch(
+  () => [route.name, composerCwd.value] as const,
+  ([routeName, cwd]) => {
+    if (routeName !== 'thread') return
+    void loadGitRepoStatus(cwd)
+  },
+  { immediate: true },
+)
+
+watch(
   () => selectedThreadId.value,
   async (threadId) => {
     if (!hasInitialized.value) return
-    if (!isRouteSyncInProgress.value && !isHomeRoute.value && !isSkillsRoute.value) {
-      if (!threadId) {
-        if (route.name !== 'home') {
-          await router.replace({ name: 'home' })
-        }
-      } else if (!(route.name === 'thread' && routeThreadId.value === threadId)) {
-        await router.replace({ name: 'thread', params: { threadId } })
+    if (isRouteSyncInProgress.value) return
+    if (isHomeRoute.value || isSkillsRoute.value || isAutomationsRoute.value) return
+
+    if (!threadId) {
+      if (route.name !== 'home') {
+        await router.replace({ name: 'home' })
       }
+    } else if (!(route.name === 'thread' && routeThreadId.value === threadId)) {
+      await router.replace({ name: 'thread', params: { threadId } })
     }
 
     if (isRouteSyncInProgress.value) return
@@ -4193,8 +4536,9 @@ watch(
 )
 
 watch(
-  () => newThreadCwd.value,
-  (cwd) => {
+  () => [route.name, newThreadCwd.value] as const,
+  ([routeName, cwd]) => {
+    if (routeName !== 'home') return
     scheduleGitRepoStatusRefresh(cwd)
   },
   { immediate: true },
@@ -4474,6 +4818,10 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
   @apply flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-emerald-600 text-white;
 }
 
+.sidebar-automations-link-icon {
+  @apply bg-amber-500;
+}
+
 .sidebar-skills-link-icon :deep(svg) {
   @apply h-5 w-5;
 }
@@ -4496,6 +4844,10 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 
 .skills-route-header-icon {
   @apply flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-emerald-600 text-white shadow-[0_16px_32px_-20px_rgba(5,150,105,0.9)];
+}
+
+.automations-route-header-icon {
+  @apply bg-amber-500 shadow-[0_16px_32px_-20px_rgba(245,158,11,0.9)];
 }
 
 .skills-route-header-icon :deep(svg) {
@@ -4559,6 +4911,18 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 
 .composer-with-queue {
   @apply w-full shrink-0 px-2 sm:px-6 flex flex-col gap-2;
+}
+
+.composer-runtime-error {
+  @apply flex w-full items-start justify-between gap-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-800 shadow-sm;
+}
+
+.visible-error-with-feedback {
+  @apply flex items-start justify-between gap-3;
+}
+
+.visible-error-feedback {
+  @apply shrink-0 rounded-full border border-rose-200 bg-white px-2.5 py-1 text-xs font-semibold text-rose-700 transition hover:bg-rose-100 focus:outline-none focus:ring-2 focus:ring-rose-300;
 }
 
 .content-thread-terminal-panel {
@@ -4762,6 +5126,10 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
   @apply flex w-full max-w-3xl max-h-[90vh] flex-col gap-2 overflow-y-auto rounded-2xl border border-zinc-200 bg-white px-4 py-4 text-left shadow-xl;
 }
 
+.new-thread-project-modal {
+  @apply flex w-full max-w-xl max-h-[90vh] flex-col gap-3 overflow-y-auto rounded-2xl border border-zinc-200 bg-white px-4 py-4 text-left shadow-xl;
+}
+
 .new-thread-open-folder-header {
   @apply flex items-center justify-between gap-3;
 }
@@ -4788,6 +5156,26 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 
 .new-thread-open-folder-actions {
   @apply flex flex-wrap items-center gap-2;
+}
+
+.new-thread-project-mode-tabs {
+  @apply grid grid-cols-2 rounded-xl border border-zinc-200 bg-zinc-50 p-1;
+}
+
+.new-thread-project-mode-tab {
+  @apply inline-flex h-9 items-center justify-center rounded-lg border-0 bg-transparent px-3 text-sm font-medium text-zinc-600 transition hover:bg-white hover:text-zinc-900 disabled:cursor-default disabled:opacity-60;
+}
+
+.new-thread-project-mode-tab.is-active {
+  @apply bg-white text-zinc-950 shadow-sm;
+}
+
+.new-thread-project-field {
+  @apply flex flex-col gap-1.5;
+}
+
+.new-thread-project-modal-actions {
+  @apply mt-1 flex flex-wrap justify-end gap-2;
 }
 
 .new-thread-open-folder-toggle {

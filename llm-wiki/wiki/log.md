@@ -1,5 +1,11 @@
 # Log
 
+## [2026-05-15] ingest | codex thread link rendering review follow-up
+- Added source: `raw/fixes/codex-thread-link-pr174.md`.
+- Updated wiki page: `concepts/realtime-chat-rendering.md`.
+- Documents: PR #174 chat link parser fixes, Qodo/CodeRabbit finding triage, dynamic-origin `codex://threads/<id>` URL rewriting, light/dark Playwright checks, and profile result.
+- Updated `index.md`.
+
 ## [2026-05-02] ingest | Directory Hub Composio and Skills search
 - Added source: `raw/features/directory-hub-composio-skills-search.md`.
 - Created wiki page: `concepts/directory-hub-composio-skills.md`.
@@ -34,3 +40,21 @@
 - Added source: `raw/projects/codex-web-local.md`.
 - Created wiki pages: `overview.md`, `entities/codex-web-local.md`, `concepts/merge-to-main-workflow.md`.
 - Updated `index.md` with initial catalog entries.
+
+## [2026-05-09] ingest | thread heartbeat automations
+- Added source: `raw/features/thread-heartbeat-automations.md`.
+- Created wiki page: `concepts/thread-heartbeat-automations.md`.
+- Documents: multiple heartbeat automations per thread, ID-aware manager operations, and manual `Run now` behavior through the persisted thread queue.
+- Updated `index.md`.
+
+## [2026-05-09] ingest | OpenCode Zen reasoning_content proxy fix
+- Added source: `raw/fixes/opencode-zen-reasoning-content-proxy.md`.
+- Updated wiki page: `concepts/opencode-zen-big-pickle.md`.
+- Documents: DeepSeek thinking-mode `reasoning_content` round-trip requirement, Chat-shaped Zen proxy endpoint selection, streaming reasoning preservation, Docker validation, and the `/tmp/app.tar` restart gotcha.
+- Updated `index.md`.
+## 2026-05-10
+
+- Added project cron automation notes for sidebar project-level automation management.
+- Updated project cron automation notes for the combined Automations panel.
+- Updated Automations panel notes for active/newest sorting and direct edit buttons.
+- Updated project cron automation notes for absolute cwd validation and multi-cwd preservation.

@@ -88,18 +88,27 @@ function toImageGenerationUrl(value: string): string {
   return `data:image/png;base64,${compact}`
 }
 
-function readHeartbeatField(value: string, field: string): string {
-  const match = new RegExp(`<${field}>\\s*([\\s\\S]*?)\\s*</${field}>`, 'iu').exec(value)
-  return match?.[1]?.trim() ?? ''
+function decodeHeartbeatXmlText(value: string): string {
+  return value
+    .replace(/&lt;/giu, '<')
+    .replace(/&gt;/giu, '>')
+    .replace(/&amp;/giu, '&')
 }
 
-function parseHeartbeatEnvelope(value: string): { automationId: string; instructions: string } | null {
+function readHeartbeatField(value: string, field: string): string {
+  const match = new RegExp(`<${field}>\\s*([\\s\\S]*?)\\s*</${field}>`, 'iu').exec(value)
+  return match?.[1] ? decodeHeartbeatXmlText(match[1].trim()) : ''
+}
+
+function parseHeartbeatEnvelope(value: string): { automationId: string; currentTimeIso: string; instructions: string } | null {
   const trimmed = value.trim()
   if (!trimmed.startsWith('<heartbeat>') || !trimmed.endsWith('</heartbeat>')) return null
+  const currentTimeIso = readHeartbeatField(trimmed, 'current_time_iso')
   const instructions = readHeartbeatField(trimmed, 'instructions')
-  if (!instructions) return null
+  if (!currentTimeIso || !instructions) return null
   return {
     automationId: readHeartbeatField(trimmed, 'automation_id'),
+    currentTimeIso,
     instructions,
   }
 }
@@ -110,17 +119,19 @@ function parseUserMessageContent(
 ): {
   text: string
   images: string[]
+  skills: Array<{ name: string; path: string }>
   fileAttachments: UiFileAttachment[]
   rawBlocks: UiMessage[]
   isAutomationRun: boolean
   automationDisplayName: string | null
 } {
   if (!Array.isArray(content)) {
-    return { text: '', images: [], fileAttachments: [], rawBlocks: [], isAutomationRun: false, automationDisplayName: null }
+    return { text: '', images: [], skills: [], fileAttachments: [], rawBlocks: [], isAutomationRun: false, automationDisplayName: null }
   }
 
   const textChunks: string[] = []
   const images: string[] = []
+  const skills: Array<{ name: string; path: string }> = []
   const rawBlocks: UiMessage[] = []
 
   for (const [index, block] of content.entries()) {
@@ -133,8 +144,15 @@ function parseUserMessageContent(
     if (block.type === 'localImage' && typeof block.path === 'string' && block.path.trim().length > 0) {
       images.push(toLocalImageUrl(block.path.trim()))
     }
+    if (block.type === 'skill') {
+      const name = typeof block.name === 'string' ? block.name.trim() : ''
+      const path = typeof block.path === 'string' ? block.path.trim() : ''
+      if (name && path) {
+        skills.push({ name, path })
+      }
+    }
 
-    if (block.type !== 'text' && block.type !== 'image' && block.type !== 'localImage') {
+    if (block.type !== 'text' && block.type !== 'image' && block.type !== 'localImage' && block.type !== 'skill') {
       rawBlocks.push({
         id: `${itemId}:user-content:${index}`,
         role: 'user',
@@ -153,6 +171,7 @@ function parseUserMessageContent(
   return {
     text: heartbeat?.instructions ?? extractCodexUserRequestText(fullText),
     images,
+    skills,
     fileAttachments,
     rawBlocks,
     isAutomationRun: heartbeat !== null,
@@ -390,14 +409,15 @@ function toUiMessages(item: ThreadItem): UiMessage[] {
   if (item.type === 'userMessage') {
     const parsed = parseUserMessageContent(item.id, item.content as UserInput[] | undefined)
     const messages: UiMessage[] = []
-    const hasRenderableUserContent = parsed.text.length > 0 || parsed.images.length > 0 || parsed.fileAttachments.length > 0
+    const hasRenderableUserContent = parsed.text.length > 0 || parsed.images.length > 0 || parsed.fileAttachments.length > 0 || parsed.skills.length > 0
 
     if (hasRenderableUserContent) {
       messages.push({
         id: item.id,
-        role: parsed.isAutomationRun ? 'system' : 'user',
+        role: 'user',
         text: parsed.text,
         images: parsed.images,
+        skills: parsed.skills.length > 0 ? parsed.skills : undefined,
         fileAttachments: parsed.fileAttachments.length > 0 ? parsed.fileAttachments : undefined,
         messageType: item.type,
         isAutomationRun: parsed.isAutomationRun,
@@ -568,6 +588,10 @@ function toUiThread(summary: Thread): UiThread {
   }
 }
 
+export function normalizeThreadSummaryV2(payload: ThreadReadResponse): UiThread {
+  return toUiThread(payload.thread)
+}
+
 function groupThreadsByProject(threads: UiThread[]): UiProjectGroup[] {
   const grouped = new Map<string, UiThread[]>()
   for (const thread of threads) {
@@ -595,11 +619,12 @@ export function normalizeThreadGroupsV2(payload: ThreadListResponse): UiProjectG
   return groupThreadsByProject(uiThreads)
 }
 
-export function normalizeThreadMessagesV2(payload: ThreadReadResponse): UiMessage[] {
+export function normalizeThreadMessagesV2(payload: ThreadReadResponse, baseTurnIndex = 0): UiMessage[] {
   const turns = Array.isArray(payload.thread.turns) ? payload.thread.turns : []
   const messages: UiMessage[] = []
-  for (let turnIndex = 0; turnIndex < turns.length; turnIndex++) {
-    const turn = turns[turnIndex]
+  for (let turnOffset = 0; turnOffset < turns.length; turnOffset++) {
+    const turnIndex = baseTurnIndex + turnOffset
+    const turn = turns[turnOffset]
     const turnId = typeof turn?.id === 'string' ? turn.id : undefined
     const items = Array.isArray(turn.items) ? turn.items : []
     for (const item of items) {
