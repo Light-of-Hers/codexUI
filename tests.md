@@ -90,28 +90,6 @@ This file tracks manual regression and feature verification steps.
 #### Rollback/Cleanup
 - No cleanup is required.
 
-### Feature: Root app boots with a lightweight shell
-
-#### Prerequisites
-- App server is running from this repository.
-- Browser devtools Network panel is available.
-- Light theme and dark theme are both available from Settings.
-
-#### Steps
-1. Open the app in light theme and reload the page.
-2. Confirm a lightweight loading shell appears before the full application chunk finishes loading.
-3. Watch the Network panel and confirm the large `AppMain` chunk loads after the shell is already visible.
-4. Wait for the full app to mount and confirm the normal UI replaces the loading shell.
-5. Switch to dark theme and repeat the reload check.
-
-#### Expected Results
-- First paint is a small shell instead of waiting for the full app graph.
-- The full app still mounts normally after the async chunk resolves.
-- Both light and dark loading shells remain readable.
-
-#### Rollback/Cleanup
-- No cleanup is required.
-
 ### Feature: Composer helper lazy loading
 
 #### Prerequisites
