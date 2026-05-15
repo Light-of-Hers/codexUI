@@ -44,6 +44,28 @@ This file tracks manual regression and feature verification steps.
 #### Rollback/Cleanup
 - No cleanup is required.
 
+### Asset: Conversation avatars are optimized
+
+#### Prerequisites
+- App server is running from this repository.
+- A thread with conversation messages is available.
+- Light theme and dark theme are both available from Settings.
+
+#### Steps
+1. Open the thread in light theme.
+2. Confirm the agent and user avatars render in the conversation list.
+3. Verify the avatar images still look crisp at the rendered size.
+4. Switch to dark theme.
+5. Confirm the same avatars still render correctly and remain legible against the dark UI surfaces.
+
+#### Expected Results
+- Conversation avatars render normally in both themes.
+- The images remain visually sharp at the small display size.
+- No layout shift or clipping appears around the avatar boxes.
+
+#### Rollback/Cleanup
+- No cleanup is required.
+
 ### Feature: Composer helper lazy loading
 
 #### Prerequisites
