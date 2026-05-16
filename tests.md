@@ -5332,3 +5332,39 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - No cleanup is required.
+
+### Feature: Restored interrupted-turn recovery and provider runtime isolation
+
+#### Prerequisites
+- App server is running from this repository.
+- Moon Bridge catalog exists at the default catalog path or `CODEXUI_MOONBRIDGE_MODEL_CATALOG` points to a test catalog.
+- `codex-moon` is available in `PATH` or `CODEXUI_CODEX_MOON_COMMAND` points to an executable command.
+- Light theme and dark theme are both available from Settings.
+
+#### Steps
+1. Run `./node_modules/.bin/vitest run src/server/codexAppServerBridge.inlinePayload.test.ts src/server/freeMode.test.ts`.
+2. Run `./node_modules/.bin/vue-tsc --noEmit --pretty false`.
+3. Start the dev server with `pnpm run dev --host 127.0.0.1 --port 4173`.
+4. In light theme, open the provider dropdown and select `Moon Bridge`.
+5. Confirm `/codex-api/moonbridge/models` and `/codex-api/moonbridge/model-metadata` return the local Moon Bridge catalog.
+6. Select a Moon Bridge model, switch to another session, refresh the page, and switch back.
+7. Confirm the provider remains `Moon Bridge` and the selected Moon Bridge model is not reset to another provider's model.
+8. Start a long-running turn, refresh or switch sessions while it is active, and confirm an unexpected `interrupted` idle turn auto-starts `Please continue.`.
+9. Start another long-running turn and click the UI stop button.
+10. Confirm the user-stopped turn does not auto-continue.
+11. Repeat steps 4-10 in dark theme.
+12. POST a sample payload to `/codex-api/debug-log` and confirm it returns `{ "ok": true }`.
+
+#### Expected Results
+- Provider changes persist to `webui-free-mode.json` without disposing the previous provider runtime.
+- Moon Bridge uses the `codex-moon` app-server command and exposes only Moon Bridge catalog models.
+- Switching providers creates or reuses provider-scoped runtimes; existing provider turns can still emit notifications.
+- Unexpected interrupted idle turns are resumed with a follow-up `Please continue.` turn.
+- User-initiated `turn/interrupt` calls are recorded and skipped by auto-continue.
+- Debug logging accepts frontend diagnostic posts and app-server interruption logs remain best-effort.
+- Provider controls remain readable and usable in both light and dark themes.
+
+#### Rollback/Cleanup
+- Stop only the temporary dev server started for this test.
+- Restore the preferred provider and model after manual verification.
+- Remove any temporary Moon Bridge catalog created only for testing.

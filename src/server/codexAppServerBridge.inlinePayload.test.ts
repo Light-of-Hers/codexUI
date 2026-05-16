@@ -1,10 +1,15 @@
 import { existsSync } from 'node:fs'
+import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   BackendQueueProcessor,
+  buildAppServerConfigForState,
   mergeSessionSkillInputsIntoTurns,
   parseAutomationToml,
   sanitizeThreadTurnsInlinePayloads,
+  shouldAutoContinueInterruptedThreadFromThreadRead,
   toAutomationApiRecord,
 } from './codexAppServerBridge'
 
@@ -17,7 +22,21 @@ const webpBase64 = 'UklGRiIAAABXRUJQVlA4IC4AAAAwAQCdASoBAAEAAQAcJaQAA3AA/vuUAAA=
 afterEach(() => {
   vi.useRealTimers()
   vi.restoreAllMocks()
+  vi.unstubAllEnvs()
 })
+
+async function writeMockCommand(path: string): Promise<void> {
+  await writeFile(path, '#!/bin/sh\nif [ "$1" = "--version" ]; then echo mock; exit 0; fi\nexit 0\n', 'utf8')
+  await chmod(path, 0o755)
+}
+
+async function waitForCondition(predicate: () => boolean): Promise<void> {
+  for (let index = 0; index < 50; index += 1) {
+    if (predicate()) return
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  throw new Error('Timed out waiting for condition')
+}
 
 function localImagePathFromProxyUrl(value: string): string {
   const parsed = new URL(value, 'http://localhost')
@@ -374,6 +393,120 @@ describe('backend queue scheduling', () => {
     expect(processThreadQueue).toHaveBeenCalledTimes(1)
 
     processor.dispose()
+  })
+
+  it('detects interrupted idle turns that were not intentionally stopped', () => {
+    const snapshot = shouldAutoContinueInterruptedThreadFromThreadRead({
+      thread: {
+        id: 'thread-1',
+        status: { type: 'idle' },
+        turns: [
+          { id: 'turn-1', status: 'completed' },
+          { id: 'turn-2', status: 'interrupted' },
+        ],
+      },
+    }, new Set(['turn-1']))
+
+    expect(snapshot).toEqual({ threadId: 'thread-1', turnId: 'turn-2' })
+  })
+
+  it('skips interrupted turns that came from a user stop', () => {
+    const snapshot = shouldAutoContinueInterruptedThreadFromThreadRead({
+      thread: {
+        id: 'thread-1',
+        status: { type: 'idle' },
+        turns: [{ id: 'turn-1', status: 'interrupted' }],
+      },
+    }, new Set(['turn-1']))
+
+    expect(snapshot).toBeNull()
+  })
+
+  it('auto-continues unexpected interrupted turn completions', async () => {
+    vi.stubEnv('CODEX_HOME', `/tmp/codexui-auto-continue-${String(Date.now())}`)
+    const listeners: Array<(value: { method: string; params: unknown }) => void> = []
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = []
+    const processor = new BackendQueueProcessor({
+      onNotification(listener: (value: { method: string; params: unknown }) => void) {
+        listeners.push(listener)
+        return () => undefined
+      },
+      async rpc(method: string, params: Record<string, unknown>): Promise<unknown> {
+        calls.push({ method, params })
+        if (method === 'thread/read') {
+          return {
+            thread: {
+              id: 'thread-1',
+              status: { type: 'idle' },
+              turns: [{ id: 'turn-1', status: 'interrupted' }],
+            },
+          }
+        }
+        if (method === 'thread/resume') {
+          return { model: 'deepseek-v4-pro' }
+        }
+        return {}
+      },
+    } as never)
+
+    listeners[0]?.({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-1',
+        turn: { id: 'turn-1', status: 'interrupted' },
+      },
+    })
+
+    await waitForCondition(() => calls.length >= 3)
+
+    expect(calls).toEqual([
+      { method: 'thread/read', params: { threadId: 'thread-1', includeTurns: true } },
+      { method: 'thread/resume', params: { threadId: 'thread-1', persistExtendedHistory: true } },
+      {
+        method: 'turn/start',
+        params: {
+          threadId: 'thread-1',
+          input: [{ type: 'text', text: 'Please continue.' }],
+          model: 'deepseek-v4-pro',
+        },
+      },
+    ])
+
+    processor.dispose()
+  })
+})
+
+describe('app-server runtime configuration', () => {
+  it('uses the Moon Bridge command for moon provider runtimes', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-runtime-config-'))
+    try {
+      const codexCommand = join(tempDir, 'codex')
+      const moonCommand = join(tempDir, 'codex-moon')
+      await writeMockCommand(codexCommand)
+      await writeMockCommand(moonCommand)
+      vi.stubEnv('CODEXUI_CODEX_COMMAND', codexCommand)
+      vi.stubEnv('CODEXUI_CODEX_MOON_COMMAND', moonCommand)
+
+      const defaultConfig = buildAppServerConfigForState({
+        enabled: false,
+        apiKey: null,
+        model: 'openrouter/free',
+      })
+      const moonConfig = buildAppServerConfigForState({
+        enabled: true,
+        apiKey: null,
+        model: 'deepseek-v4-pro',
+        provider: 'moon',
+      })
+
+      expect(defaultConfig.command).toBe(codexCommand)
+      expect(defaultConfig.args[0]).toBe('app-server')
+      expect(moonConfig.command).toBe(moonCommand)
+      expect(moonConfig.args[0]).toBe('app-server')
+      expect(moonConfig.args.some((arg) => arg.includes('model_provider'))).toBe(false)
+    } finally {
+      await rm(tempDir, { recursive: true, force: true })
+    }
   })
 })
 
