@@ -1750,16 +1750,24 @@ export function useDesktopState() {
   function readModelIdForThread(threadId: string): string {
     const contextId = toThreadContextId(threadId)
     if (contextId === NEW_THREAD_COLLABORATION_MODE_CONTEXT) {
-      const activeProvider = normalizeProviderContextId(activeProviderId.value)
       const selectedNewThreadProvider = readSelectedProvider(selectedProviderByContext.value, '')
-      const providerId = activeProvider !== 'codex' ? activeProvider : selectedNewThreadProvider
-      if (providerId !== 'codex') {
-        const providerContextId = toProviderModelContextId(providerId)
+      if (selectedNewThreadProvider !== 'codex') {
+        const providerContextId = toProviderModelContextId(selectedNewThreadProvider)
         const providerModelId = providerContextId
           ? normalizeStoredModelId(selectedModelIdByContext.value[providerContextId])
           : ''
         if (providerModelId) return providerModelId
       }
+
+      const selectedModel = readSelectedModelForThreadContext(
+        selectedModelIdByContext.value,
+        threadId,
+        selectedNewThreadProvider,
+      )
+      if (selectedNewThreadProvider === 'codex' && inferProviderFromModel(selectedModel, moonBridgeModelIds.value)) {
+        return ''
+      }
+      return selectedModel
     }
 
     return readSelectedModelForThreadContext(
@@ -1834,7 +1842,9 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
       selectedThreadId.value = nextThreadId
       saveSelectedThreadId(nextThreadId)
     }
-    const beforeModel = selectedModelId.value
+    if (!nextThreadId.trim()) {
+      clearNewThreadProviderSelection()
+    }
     selectedModelId.value = readModelIdForThread(nextThreadId)
     ensureAvailableModelIds(selectedModelId.value)
     selectedCollaborationMode.value = readSelectedCollaborationMode(
@@ -1842,7 +1852,6 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
       nextThreadId,
     )
     selectedProvider.value = readSelectedProvider(selectedProviderByContext.value, nextThreadId)
-    console.warn('[DEBUG:setSelectedThreadId] threadId=%s model: %s->%s provider=%s', nextThreadId, beforeModel || '(none)', selectedModelId.value || '(none)', selectedProvider.value || 'codex')
     activeReasoningItemId = ''
     shouldAutoScrollOnNextAgentEvent = false
   }
@@ -1851,7 +1860,9 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
     const normalizedModelId = modelId.trim()
     const contextId = toThreadContextId(threadId)
     const currentContextId = toThreadContextId(selectedThreadId.value)
-    const normalizedProviderId = normalizeProviderContextId(activeProviderId.value)
+    const normalizedProviderId = contextId === NEW_THREAD_COLLABORATION_MODE_CONTEXT
+      ? readSelectedProvider(selectedProviderByContext.value, '')
+      : normalizeProviderContextId(activeProviderId.value)
     const providerContextId =
       contextId === NEW_THREAD_COLLABORATION_MODE_CONTEXT && normalizedProviderId !== 'codex'
         ? toProviderModelContextId(normalizedProviderId)
@@ -1873,11 +1884,9 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
     }
     if (contextId === NEW_THREAD_COLLABORATION_MODE_CONTEXT) {
       const inferredProvider = inferProviderFromModel(normalizedModelId, moonBridgeModelIds.value)
-      const activeNewThreadProvider = normalizeProviderContextId(activeProviderId.value)
+      const selectedNewThreadProvider = readSelectedProvider(selectedProviderByContext.value, '')
       const effectiveNewThreadProvider = inferredProvider
-        || (activeNewThreadProvider !== 'codex'
-          ? activeNewThreadProvider
-          : readSelectedProvider(selectedProviderByContext.value, ''))
+        || selectedNewThreadProvider
       const newThreadProviderContextId = effectiveNewThreadProvider
         ? toProviderModelContextId(effectiveNewThreadProvider)
         : ''
@@ -1920,6 +1929,13 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
       selectedProvider.value = normalizedProvider
     }
     saveSelectedProviderMap(selectedProviderByContext.value)
+  }
+
+  function clearNewThreadProviderSelection(): void {
+    const nextProviderMap = omitStringKeyedRecordKey(selectedProviderByContext.value, NEW_THREAD_PROVIDER_CONTEXT)
+    if (nextProviderMap === selectedProviderByContext.value) return
+    selectedProviderByContext.value = nextProviderMap
+    saveSelectedProviderMap(nextProviderMap)
   }
 
   function setSelectedProvider(providerId: ProviderId): void {
@@ -2234,7 +2250,9 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
 
   async function refreshMoonBridgeModelIds(): Promise<void> {
     await loadMoonBridgeModelIds()
-    syncThreadProviderFromModel(selectedThreadId.value, readModelIdForThread(selectedThreadId.value))
+    if (selectedThreadId.value.trim()) {
+      syncThreadProviderFromModel(selectedThreadId.value, readModelIdForThread(selectedThreadId.value))
+    }
   }
 
   function invalidateAppServerRuntimeState(): void {

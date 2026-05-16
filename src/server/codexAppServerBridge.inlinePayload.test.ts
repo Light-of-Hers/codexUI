@@ -31,14 +31,6 @@ async function writeMockCommand(path: string): Promise<void> {
   await chmod(path, 0o755)
 }
 
-async function waitForCondition(predicate: () => boolean): Promise<void> {
-  for (let index = 0; index < 50; index += 1) {
-    if (predicate()) return
-    await new Promise((resolve) => setTimeout(resolve, 10))
-  }
-  throw new Error('Timed out waiting for condition')
-}
-
 function localImagePathFromProxyUrl(value: string): string {
   const parsed = new URL(value, 'http://localhost')
   expect(parsed.pathname).toBe('/codex-local-image')
@@ -424,6 +416,7 @@ describe('backend queue scheduling', () => {
   })
 
   it('auto-continues unexpected interrupted turn completions', async () => {
+    vi.useFakeTimers()
     vi.stubEnv('CODEX_HOME', `/tmp/codexui-auto-continue-${String(Date.now())}`)
     const listeners: Array<(value: { method: string; params: unknown }) => void> = []
     const calls: Array<{ method: string; params: Record<string, unknown> }> = []
@@ -458,7 +451,7 @@ describe('backend queue scheduling', () => {
       },
     })
 
-    await waitForCondition(() => calls.length >= 3)
+    await vi.advanceTimersByTimeAsync(250)
 
     expect(calls).toEqual([
       { method: 'thread/read', params: { threadId: 'thread-1', includeTurns: true } },
@@ -471,6 +464,52 @@ describe('backend queue scheduling', () => {
           model: 'deepseek-v4-pro',
         },
       },
+    ])
+
+    processor.dispose()
+  })
+
+  it('does not auto-continue when a stop arrives before the delayed interrupted-turn check', async () => {
+    vi.useFakeTimers()
+    vi.stubEnv('CODEX_HOME', `/tmp/codexui-auto-continue-stop-${String(Date.now())}`)
+    const listeners: Array<(value: { method: string; params: unknown }) => void> = []
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = []
+    const processor = new BackendQueueProcessor({
+      onNotification(listener: (value: { method: string; params: unknown }) => void) {
+        listeners.push(listener)
+        return () => undefined
+      },
+      async rpc(method: string, params: Record<string, unknown>): Promise<unknown> {
+        calls.push({ method, params })
+        if (method === 'thread/read') {
+          return {
+            thread: {
+              id: 'thread-1',
+              status: { type: 'idle' },
+              turns: [{ id: 'turn-1', status: 'interrupted' }],
+            },
+          }
+        }
+        if (method === 'thread/resume') {
+          return { model: 'deepseek-v4-pro' }
+        }
+        return {}
+      },
+    } as never)
+
+    listeners[0]?.({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-1',
+        turn: { id: 'turn-1', status: 'interrupted' },
+      },
+    })
+
+    processor.recordIntentionalInterrupt('thread-1', 'turn-1')
+    await vi.advanceTimersByTimeAsync(250)
+
+    expect(calls).toEqual([
+      { method: 'thread/read', params: { threadId: 'thread-1', includeTurns: true } },
     ])
 
     processor.dispose()

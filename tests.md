@@ -5368,3 +5368,29 @@ Markdown files opened through the local editor expose a preview button that rend
 - Stop only the temporary dev server started for this test.
 - Restore the preferred provider and model after manual verification.
 - Remove any temporary Moon Bridge catalog created only for testing.
+
+### Feature: Intentional stop guard and Codex new-session default
+
+#### Prerequisites
+- App server is running from this repository.
+- Moon Bridge or another non-Codex provider is available for provider switching.
+- Light theme and dark theme are both available from Settings.
+
+#### Steps
+1. Run `./node_modules/.bin/vitest run src/server/codexAppServerBridge.inlinePayload.test.ts src/composables/useDesktopState.test.ts`.
+2. Run `./node_modules/.bin/vue-tsc --noEmit --pretty false`.
+3. Start a long-running turn in light theme and click the UI stop button.
+4. Confirm no automatic `Please continue.` turn is created after the stop.
+5. Switch the new-session composer provider to `Moon Bridge`, refresh the page, then return to the new-session composer.
+6. Confirm the new-session provider resets to `Codex` instead of inheriting `Moon Bridge`.
+7. Repeat steps 3-6 in dark theme.
+
+#### Expected Results
+- A user `turn/interrupt` recorded before the delayed interrupted-turn check prevents auto-continue.
+- Unexpected interrupted completions still auto-continue after the delay.
+- New-session provider state is cleared when the empty composer context is selected.
+- Provider controls remain readable and usable in both light and dark themes.
+
+#### Rollback/Cleanup
+- Stop only the temporary dev server started for this test.
+- Restore the preferred provider and model after manual verification.

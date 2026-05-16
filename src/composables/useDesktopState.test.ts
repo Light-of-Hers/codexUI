@@ -402,6 +402,26 @@ describe('provider session helpers', () => {
     expect(readSelectedProvider(next, '__new-thread__')).toBe('moon')
   })
 
+  it('resets the new-session provider back to Codex', () => {
+    installTestWindow({
+      'codex-web-local.provider-by-context.v1': JSON.stringify({
+        '__new-thread-provider__': 'moon',
+      }),
+      'codex-web-local.selected-model-by-context.v1': JSON.stringify({
+        '__new-thread-provider__::moon': 'glm-5.1',
+      }),
+    })
+
+    const state = useDesktopState()
+
+    expect(state.selectedProvider.value).toBe('moon')
+
+    state.primeSelectedThread('')
+
+    expect(state.selectedProvider.value).toBe('codex')
+    expect(window.localStorage.getItem('codex-web-local.provider-by-context.v1')).toBe(null)
+  })
+
   it('infers Moon Bridge provider from session model catalog entries', () => {
     expect(inferProviderFromModel('glm-5.1', ['glm-5.1', 'kimi-k2.6'])).toBe('moon')
     expect(inferProviderFromModel('gpt-5.4-mini', ['glm-5.1', 'kimi-k2.6'])).toBeNull()
@@ -577,7 +597,9 @@ describe('provider model selection', () => {
     expect(state.selectedModelId.value).toBe('big-pickle')
     expect(state.readModelIdForThread('').trim()).toBe('big-pickle')
     expect(JSON.parse(window.localStorage.getItem('codex-web-local.selected-model-by-context.v1') ?? '{}')).toEqual({
+      '__new-thread-provider__::codex': 'big-pickle',
       '__new-thread-provider__::opencode-zen': 'big-pickle',
+      '__new-thread__': 'big-pickle',
     })
     expect(window.localStorage.getItem('codex-web-local.selected-model-id.v1')).toBe(null)
   })
@@ -615,7 +637,9 @@ describe('provider model selection', () => {
     expect(state.selectedModelId.value).toBe('ring-2.6-1t-free')
     expect(state.readModelIdForThread('').trim()).toBe('ring-2.6-1t-free')
     expect(JSON.parse(window.localStorage.getItem('codex-web-local.selected-model-by-context.v1') ?? '{}')).toEqual({
+      '__new-thread-provider__::codex': 'ring-2.6-1t-free',
       '__new-thread-provider__::opencode-zen': 'ring-2.6-1t-free',
+      '__new-thread__': 'ring-2.6-1t-free',
     })
   })
 })
