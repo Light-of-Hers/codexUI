@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   BackendQueueProcessor,
   buildAppServerConfigForState,
+  createCodexBridgeMiddleware,
   mergeSessionSkillInputsIntoTurns,
   parseAutomationToml,
   sanitizeThreadTurnsInlinePayloads,
@@ -477,6 +478,57 @@ describe('backend queue scheduling', () => {
 })
 
 describe('app-server runtime configuration', () => {
+  it('bypasses requests that do not need app-server without resolving the command', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-non-api-bypass-'))
+    const commandPath = join(tempDir, 'codex')
+    const markerPath = join(tempDir, 'called')
+    await writeFile(commandPath, `#!/bin/sh\necho called >> ${JSON.stringify(markerPath)}\necho mock\n`, 'utf8')
+    await chmod(commandPath, 0o755)
+    vi.stubEnv('CODEX_HOME', tempDir)
+    vi.stubEnv('CODEXUI_CODEX_COMMAND', commandPath)
+
+    const middleware = createCodexBridgeMiddleware()
+    let nextCalls = 0
+    const responseChunks: string[] = []
+    const response = {
+      statusCode: 0,
+      setHeader: () => undefined,
+      write: (chunk?: unknown) => {
+        if (chunk) responseChunks.push(String(chunk))
+        return true
+      },
+      end: (chunk?: unknown) => {
+        if (chunk) responseChunks.push(String(chunk))
+      },
+      once: () => response,
+    }
+
+    try {
+      await middleware(
+        { url: '/src/App.vue', method: 'GET', headers: {} } as never,
+        {} as never,
+        () => { nextCalls += 1 },
+      )
+
+      expect(nextCalls).toBe(1)
+      expect(existsSync(markerPath)).toBe(false)
+
+      await middleware(
+        { url: '/codex-api/prompts', method: 'GET', headers: {} } as never,
+        response as never,
+        () => { nextCalls += 1 },
+      )
+
+      expect(response.statusCode).toBe(200)
+      expect(JSON.parse(responseChunks.join(''))).toEqual({ data: [] })
+      expect(nextCalls).toBe(1)
+      expect(existsSync(markerPath)).toBe(false)
+    } finally {
+      middleware.dispose()
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
   it('uses the Moon Bridge command for moon provider runtimes', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'codexui-runtime-config-'))
     try {
