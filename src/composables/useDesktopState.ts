@@ -1793,18 +1793,18 @@ export function useDesktopState() {
 function applyThreadModelStateWithProviderPriority(threadId: string, modelId: string, providerId?: unknown): void {
     const normalizedThreadId = threadId.trim()
     if (!normalizedThreadId) return
- 
+
     setThreadModelId(normalizedThreadId, modelId)
 
     // When the thread has an explicit modelProvider (non-empty), use it directly.
     // Empty providerId means codex thread (default), so skip inference entirely.
     const rawProvider = typeof providerId === 'string' ? providerId.trim() : ''
     if (rawProvider.length === 0) return
- 
+
     const normalizedProvider = normalizeProviderId(rawProvider)
     if (normalizedProvider !== 'codex') {
       setThreadProviderId(normalizedThreadId, normalizedProvider)
-   }
+    }
  }
 
   function readThreadRpcProviderId(threadId: string): string {
