@@ -140,10 +140,22 @@ const answer = 42
   it('links file paths that appear inside inline code', () => {
     const html = render('Run `./src/App.vue:3-7` before continuing.')
 
-    expect(html).toContain('<a class="message-file-link message-inline-code-link"')
+    expect(html).toMatch(/Run <code class="message-inline-code"[^>]*><a class="message-file-link message-inline-code-link"/u)
     expect(html).toContain('href="/codex-local-browse/home/ubuntu/Documents/New%20Project%20(2)/src/App.vue?line=3-7"')
     expect(html).toContain('title="./src/App.vue:3-7"')
-    expect(html).toMatch(/<code class="message-inline-code"[^>]*>\.\/src\/App\.vue:3-7<\/code>/u)
+    expect(html).toContain('>./src/App.vue:3-7</a></code> before continuing.')
+  })
+
+  it('keeps command inline code as code while linking embedded file paths', () => {
+    const html = render('`npx vitest run src/composables/useDesktopState.test.ts src/api/normalizers/v2.test.ts src/server/freeMode.test.ts src/server/codexAppServerBridge.inlinePayload.test.ts`')
+
+    expect(html).toMatch(/<code class="message-inline-code"[^>]*>npx vitest run /u)
+    expect(html).toContain('message-inline-code-link')
+    expect(html).toContain('href="/codex-local-browse/home/ubuntu/Documents/New%20Project%20(2)/src/composables/useDesktopState.test.ts"')
+    expect(html).toContain('href="/codex-local-browse/home/ubuntu/Documents/New%20Project%20(2)/src/api/normalizers/v2.test.ts"')
+    expect(html).toContain('href="/codex-local-browse/home/ubuntu/Documents/New%20Project%20(2)/src/server/freeMode.test.ts"')
+    expect(html).toContain('href="/codex-local-browse/home/ubuntu/Documents/New%20Project%20(2)/src/server/codexAppServerBridge.inlinePayload.test.ts"')
+    expect(html).not.toContain('href="/codex-local-browse/home/ubuntu/Documents/New%20Project%20(2)/npx')
   })
 
   it('renders local markdown images through the local image route', () => {

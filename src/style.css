@@ -1062,7 +1062,7 @@
 }
 
 .message-inline-code-link {
-  @apply inline-flex no-underline;
+  @apply inline text-[inherit] leading-[inherit] no-underline;
 }
 
 .message-inline-code-link:hover,
@@ -1070,9 +1070,13 @@
   @apply no-underline;
 }
 
-.message-inline-code-link:hover .message-inline-code,
-.message-inline-code-link:focus-visible .message-inline-code {
-  @apply border-sky-300 bg-sky-100 text-slate-900;
+.message-inline-code .message-inline-code-link {
+  @apply text-[#0969da] text-[inherit] leading-[inherit] underline decoration-sky-300 underline-offset-2;
+}
+
+.message-inline-code .message-inline-code-link:hover,
+.message-inline-code .message-inline-code-link:focus-visible {
+  @apply underline;
 }
 
 .message-code-block {
@@ -1167,9 +1171,13 @@
   @apply border-zinc-600 bg-zinc-700/60 text-zinc-200;
 }
 
-:root.dark .message-inline-code-link:hover .message-inline-code,
-:root.dark .message-inline-code-link:focus-visible .message-inline-code {
-  @apply border-sky-500/60 bg-sky-900/40 text-zinc-50;
+:root.dark .message-inline-code .message-inline-code-link {
+  @apply text-sky-300 decoration-sky-500;
+}
+
+:root.dark .message-inline-code .message-inline-code-link:hover,
+:root.dark .message-inline-code .message-inline-code-link:focus-visible {
+  @apply underline;
 }
 
 :root.dark .message-image-fallback {
@@ -1775,9 +1783,13 @@
   @apply bg-zinc-800 text-zinc-100;
 }
 
-:root.dark .plan-card-markdown .message-inline-code-link:hover .message-inline-code,
-:root.dark .plan-card-markdown .message-inline-code-link:focus-visible .message-inline-code {
-  @apply border-sky-500/60 bg-sky-900/40 text-zinc-50;
+:root.dark .plan-card-markdown .message-inline-code .message-inline-code-link {
+  @apply text-sky-300 decoration-sky-500;
+}
+
+:root.dark .plan-card-markdown .message-inline-code .message-inline-code-link:hover,
+:root.dark .plan-card-markdown .message-inline-code .message-inline-code-link:focus-visible {
+  @apply underline;
 }
 
 :root.dark .plan-card-markdown .message-file-link {

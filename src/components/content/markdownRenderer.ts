@@ -437,7 +437,7 @@ function transformElement(node: MarkdownElement, parent: MarkdownNode, index: nu
   } else if (tagName === 'code') {
     if (parentTagName !== 'pre') {
       addClass(node, 'message-inline-code')
-      wrapInlineCodeFileReference(node, parent, index, context)
+      linkInlineCodeFileReferences(node, context)
     }
   } else if (tagName === 'a') {
     enhanceAnchor(node, context.cwd)
@@ -465,47 +465,54 @@ function transformElement(node: MarkdownElement, parent: MarkdownNode, index: nu
   }
 }
 
-function wrapInlineCodeFileReference(
-  node: MarkdownElement,
-  parent: MarkdownNode,
-  index: number,
-  context: MarkdownRenderContext,
-): void {
-  if (!isElement(parent)) return
-  if (parent.tagName === 'a') return
+function linkInlineCodeFileReferences(node: MarkdownElement, context: MarkdownRenderContext): void {
   if (!Array.isArray(node.children) || node.children.length === 0) return
   if (!node.children.every(isText)) return
 
   const codeValue = node.children.map((child) => child.value).join('')
-  const ref = parseFileReference(codeValue)
-  if (!ref) return
-  if (!shouldLinkInlineCodeFileReference(ref)) return
+  const segments = splitPlainTextByLinks(codeValue)
+  if (segments.length === 1 && segments[0].kind === 'text' && segments[0].value === codeValue) return
 
-  const href = toBrowseUrl(codeValue, context.cwd, ref.line, ref.endLine)
-  if (href === '#') return
+  const nextChildren: MarkdownNode[] = []
+  for (const segment of segments) {
+    if (segment.kind === 'text') {
+      nextChildren.push({ type: 'text', value: segment.value })
+      continue
+    }
 
-  parent.children.splice(index, 1, {
-    type: 'element',
-    tagName: 'a',
-    properties: {
-      className: ['message-file-link', 'message-inline-code-link'],
-      href,
-      target: '_blank',
-      rel: 'noopener noreferrer',
-      title: fileReferenceDisplayPath(ref.path, ref.line, ref.endLine),
-    },
-    children: [node],
-  })
-}
+    if (segment.kind === 'url') {
+      nextChildren.push({
+        type: 'element',
+        tagName: 'a',
+        properties: {
+          className: ['message-file-link', 'message-inline-code-link'],
+          href: segment.href,
+          target: '_blank',
+          rel: 'noopener noreferrer',
+          title: segment.href,
+        },
+        children: [{ type: 'text', value: segment.value }],
+      })
+      continue
+    }
 
-function shouldLinkInlineCodeFileReference(ref: ParsedFileReference): boolean {
-  if (ref.line !== null) return true
+    if (segment.kind === 'file') {
+      nextChildren.push({
+        type: 'element',
+        tagName: 'a',
+        properties: {
+          className: ['message-file-link', 'message-inline-code-link'],
+          href: toBrowseUrl(segment.path, context.cwd, segment.line, segment.endLine),
+          target: '_blank',
+          rel: 'noopener noreferrer',
+          title: fileReferenceDisplayPath(segment.path, segment.line, segment.endLine),
+        },
+        children: [{ type: 'text', value: segment.displayPath }],
+      })
+    }
+  }
 
-  const normalizedPath = normalizePathSeparators(ref.path)
-  if (/^(?:\/|[A-Za-z]:[\\/]|\.{1,2}\/|~\/)/u.test(normalizedPath)) return true
-
-  const baseName = getBasename(normalizedPath)
-  return /\.[A-Za-z0-9]{1,12}$/u.test(baseName)
+  node.children = nextChildren
 }
 
 function wrapListItemChildren(node: MarkdownElement): void {
