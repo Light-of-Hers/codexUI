@@ -1,7 +1,8 @@
 import { existsSync } from 'node:fs'
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { Readable } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   BackendQueueProcessor,
@@ -562,6 +563,60 @@ describe('app-server runtime configuration', () => {
       expect(JSON.parse(responseChunks.join(''))).toEqual({ data: [] })
       expect(nextCalls).toBe(1)
       expect(existsSync(markerPath)).toBe(false)
+    } finally {
+      middleware.dispose()
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('returns directory and symlink metadata from composer file search route', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-composer-route-'))
+    const realDir = join(tempDir, 'real')
+    const nestedDir = join(realDir, 'nested')
+    const middleware = createCodexBridgeMiddleware()
+    try {
+      await mkdir(nestedDir, { recursive: true })
+      await writeFile(join(realDir, 'alpha.txt'), 'alpha')
+      await writeFile(join(nestedDir, 'beta.txt'), 'beta')
+      await symlink(join(realDir, 'alpha.txt'), join(tempDir, 'file-link.txt'))
+      await symlink(nestedDir, join(tempDir, 'dir-link'))
+
+      const responseChunks: string[] = []
+      const response = {
+        statusCode: 0,
+        setHeader: () => undefined,
+        write: (chunk?: unknown) => {
+          if (chunk) responseChunks.push(String(chunk))
+          return true
+        },
+        end: (chunk?: unknown) => {
+          if (chunk) responseChunks.push(String(chunk))
+        },
+        once: () => response,
+      }
+      const body = JSON.stringify({ cwd: tempDir, query: 'link', limit: 20 })
+      const request = Readable.from([body]) as Readable & {
+        url: string
+        method: string
+        headers: Record<string, string>
+      }
+      request.url = '/codex-api/composer-file-search'
+      request.method = 'POST'
+      request.headers = { 'content-type': 'application/json' }
+
+      await middleware(
+        request as never,
+        response as never,
+        () => { throw new Error('composer file search route should handle the request') },
+      )
+
+      expect(response.statusCode).toBe(200)
+      const payload = JSON.parse(responseChunks.join('')) as {
+        data: Array<{ path: string; kind?: string; isSymlink?: boolean }>
+      }
+      const byPath = new Map(payload.data.map((entry) => [entry.path, entry]))
+      expect(byPath.get('file-link.txt')).toMatchObject({ kind: 'file', isSymlink: true })
+      expect(byPath.get('dir-link')).toMatchObject({ kind: 'directory', isSymlink: true })
     } finally {
       middleware.dispose()
       await rm(tempDir, { recursive: true, force: true })

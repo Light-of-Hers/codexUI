@@ -5369,6 +5369,31 @@ Markdown files opened through the local editor expose a preview button that rend
 - Restore the preferred provider and model after manual verification.
 - Remove any temporary Moon Bridge catalog created only for testing.
 
+### Feature: Composer @ search keeps folders and symlinks
+
+#### Prerequisites
+- App server is running from this repository.
+- The workspace contains at least one folder and one symlink accessible from the composer search scope.
+- Light theme and dark theme are both available from Settings.
+
+#### Steps
+1. Run `./node_modules/.bin/vitest run src/server/composerFileSearch.test.ts src/server/codexAppServerBridge.inlinePayload.test.ts src/api/codexGateway.test.ts`.
+2. Open the composer in light theme and type `@` followed by a folder name.
+3. Confirm the suggestion list shows the folder with a folder-style icon.
+4. Type `@` followed by a symlink path or symlink target name.
+5. Confirm the suggestion list shows the symlink badge and keeps the correct path metadata.
+6. Repeat steps 2-5 in dark theme.
+
+#### Expected Results
+- `@` search returns files, folders, and symlinks from the workspace.
+- Folder results use the folder icon instead of a file icon.
+- Symlink results show the symlink badge and preserve the metadata returned by the server.
+- Composer mention text and helper behavior remain readable in both light and dark themes.
+
+#### Rollback/Cleanup
+- Stop only the temporary dev server started for this test.
+- Remove any temporary workspace used for composer mention checks.
+
 ### Feature: Intentional stop guard and Codex new-session default
 
 #### Prerequisites
