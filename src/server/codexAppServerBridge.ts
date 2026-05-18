@@ -4843,8 +4843,12 @@ class AppServerProcess {
     })
 
     proc.stderr.setEncoding('utf8')
-    proc.stderr.on('data', () => {
-      // Keep stderr silent in dev middleware; JSON-RPC errors are forwarded via responses.
+    proc.stderr.on('data', (chunk: string) => {
+      const message = chunk.trim()
+      if (!message) return
+      writeDebugLog('app-server-stderr', message.slice(0, 4000), {
+        pid: proc.pid ?? -1,
+      }).catch(() => {})
     })
 
     proc.on('exit', () => {
@@ -4908,6 +4912,7 @@ class AppServerProcess {
         console.warn('[DEBUG:AppServerProcess] notification method=%s', message.method)
         writeDebugLog('app-server-notification', message.method, {
           threadId: this.extractThreadIdFromParams(message.params ?? null),
+          params: message.method === 'error' ? message.params ?? null : undefined,
         }).catch(() => {})
       }
       this.emitNotification({
