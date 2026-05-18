@@ -10,6 +10,7 @@ import {
   createDefaultFreeModeState,
   createDefaultOpenCodeZenFreeModeState,
   getCursorModelMetadata,
+  getCursorModelSelection,
   getCursorModels,
   getFreeModeConfigArgs,
   getMoonBridgeModelMetadata,
@@ -103,6 +104,45 @@ describe('Cursor catalog loading', () => {
       provider: 'cursor',
       wireApi: undefined,
     })
+  })
+
+  it('uses the cursor catalog instead of a persisted OpenRouter model', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-cursor-selection-'))
+    const catalogPath = join(tempDir, 'models_catalog.json')
+    try {
+      await writeFile(
+        catalogPath,
+        JSON.stringify({
+          models: [
+            { slug: 'auto' },
+            { slug: 'composer-2-fast' },
+          ],
+        }),
+        'utf8',
+      )
+
+      vi.stubEnv('CODEXUI_CURSOR_MODEL_CATALOG', catalogPath)
+
+      expect(getCursorModelSelection('openrouter/free')).toEqual({
+        models: ['auto', 'composer-2-fast'],
+        currentModel: 'auto',
+      })
+      expect(normalizeFreeModeState({
+        enabled: false,
+        apiKey: null,
+        model: 'openrouter/free',
+        provider: 'cursor',
+        wireApi: 'responses',
+      })).toEqual({
+        enabled: true,
+        apiKey: null,
+        model: 'auto',
+        provider: 'cursor',
+        wireApi: undefined,
+      })
+    } finally {
+      await rm(tempDir, { recursive: true, force: true })
+    }
   })
 })
 

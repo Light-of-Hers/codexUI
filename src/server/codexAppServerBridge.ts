@@ -24,7 +24,7 @@ import {
   FREE_MODE_DEFAULT_MODEL,
   createDefaultFreeModeState,
   getCachedFreeModels,
-  getCursorModels,
+  getCursorModelSelection,
   getFreeModels,
   refreshFreeModelsInBackground,
   FREE_MODE_STATE_FILE,
@@ -6411,8 +6411,9 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
               models = getMoonBridgeModels()
               wireApi = null
             } else if (state.provider === CURSOR_PROVIDER_ID) {
-              models = state.model?.trim() ? [state.model.trim()] : ['gpt-5.5-medium']
-              currentModel = state.enabled ? (state.model?.trim() || 'gpt-5.5-medium') : null
+              const cursorSelection = getCursorModelSelection(state.model)
+              models = cursorSelection.models
+              currentModel = state.enabled ? cursorSelection.currentModel : null
               wireApi = null
             } else if (state.provider === OPENCODE_ZEN_PROVIDER_ID) {
               currentModel = state.enabled ? (state.model?.trim() || OPENCODE_ZEN_DEFAULT_MODEL) : null
@@ -6552,7 +6553,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
                         : moonModels[0] ?? ''
                     })()
                   : providerType === 'cursor'
-                    ? (current.model?.trim() || 'gpt-5.5-medium')
+                    ? getCursorModelSelection(current.model).currentModel
                   : OPENCODE_ZEN_DEFAULT_MODEL
             const state: FreeModeState = {
               enabled: true,
@@ -7184,13 +7185,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
               return
             }
             if (fmState.provider === CURSOR_PROVIDER_ID) {
-              const cursorModels = getCursorModels()
-              const currentModel = fmState.model?.trim() ?? ''
-              const data = cursorModels.length > 0
-                ? cursorModels
-                : currentModel
-                  ? [currentModel]
-                  : ['gpt-5.5-medium']
+              const data = getCursorModelSelection(fmState.model).models
               setJson(res, 200, { data, exclusive: true, providerId: CURSOR_PROVIDER_ID, source: 'cursor' })
               return
             }

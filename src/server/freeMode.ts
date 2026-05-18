@@ -292,6 +292,28 @@ export function getCursorModels(): string[] {
   return getCursorModelMetadata().map((model) => model.id)
 }
 
+export const CURSOR_FALLBACK_MODEL = 'gpt-5.5-medium'
+
+export function getCursorModelSelection(candidate: string | null | undefined): { models: string[]; currentModel: string } {
+  const catalogModels = getCursorModels()
+  const trimmedCandidate = candidate?.trim() ?? ''
+  const fallbackModel = catalogModels[0] ?? CURSOR_FALLBACK_MODEL
+  const hasValidCatalogCandidate = trimmedCandidate.length > 0 && catalogModels.includes(trimmedCandidate)
+  const hasUsableUncatalogedCandidate = catalogModels.length === 0
+    && trimmedCandidate.length > 0
+    && trimmedCandidate !== FREE_MODE_DEFAULT_MODEL
+
+  const currentModel = hasValidCatalogCandidate || hasUsableUncatalogedCandidate
+    ? trimmedCandidate
+    : fallbackModel
+  const baseModels = catalogModels.length > 0 ? catalogModels : [currentModel]
+  const models = baseModels.includes(currentModel)
+    ? [currentModel, ...baseModels.filter((model) => model !== currentModel)]
+    : [currentModel, ...baseModels]
+
+  return { models, currentModel }
+}
+
 export type WireApi = 'responses' | 'chat'
 
 export interface FreeModeState {
@@ -308,9 +330,11 @@ export interface FreeModeState {
 export function normalizeFreeModeState(state: FreeModeState | null): FreeModeState | null {
   if (!state) return null
   if (state.provider === CURSOR_PROVIDER_ID) {
+    const cursorSelection = getCursorModelSelection(state.model)
     return {
       ...state,
       enabled: true,
+      model: cursorSelection.currentModel,
       wireApi: undefined,
     }
   }
