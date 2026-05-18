@@ -206,4 +206,30 @@ Reply with &lt;/instructions&gt; and A &amp; B
       },
     })
   })
+
+  it('preserves stdout from Cursor shell tool-call failure payloads', () => {
+    const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
+      type: 'agentMessage',
+      id: 'cursor-tool-failure',
+      text: [
+        '[cursor tool_call completed]',
+        'call_id: call_failure_fc_2',
+        'tool: shell',
+        'arguments: {"command":"printf \\"recursive_files_excluding_git \\"; false","workingDirectory":"/tmp/project"}',
+        'output:',
+        '{"failure":{"command":"printf \\"recursive_files_excluding_git \\"; false","exitCode":1,"stdout":"recursive_files_excluding_git 185664\\ntop_level_regular_files 14\\n","stderr":"","interleavedOutput":"recursive_files_excluding_git 185664\\ntop_level_regular_files 14\\n","workingDirectory":"/tmp/project"},"isBackground":false}',
+      ].join('\n'),
+    }]))
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({
+      id: 'cursor-command-call_failure_fc_2',
+      messageType: 'commandExecution',
+      commandExecution: {
+        status: 'failed',
+        aggregatedOutput: 'recursive_files_excluding_git 185664\ntop_level_regular_files 14\n',
+        exitCode: 1,
+      },
+    })
+  })
 })

@@ -5387,8 +5387,9 @@ Markdown files opened through the local editor expose a preview button that rend
 7. Start a new Cursor CLI thread from a workspace outside the `repos/codexUI` server directory and send `please use shell to run pwd, then only reply with the output path`.
 8. Confirm the conversation renders the Cursor shell tool call as a command execution card, not as raw `[cursor tool_call ...]` JSON text.
 9. Confirm the command card shows the shell command, thread workspace, exit status, and `stdout`, and the final assistant message contains the output path.
-10. Refresh the thread and confirm the persisted history still shows a single command card rather than separate started/completed raw text messages.
-11. Switch to dark theme and repeat the command-card and Settings provider/model dropdown checks.
+10. Run a Cursor shell command that exits non-zero after writing stdout, such as `printf 'cursor failure stdout\n'; false`, and confirm the command card is marked failed while still showing stdout.
+11. Refresh the thread and confirm the persisted history still shows a single command card rather than separate started/completed raw text messages.
+12. Switch to dark theme and repeat the command-card and Settings provider/model dropdown checks.
 
 #### Expected Results
 - Cursor CLI provider does not inherit stale OpenRouter model ids such as `openrouter/free`.
@@ -5397,6 +5398,7 @@ Markdown files opened through the local editor expose a preview button that rend
 - Cursor shell tool calls are not rejected by Cursor's own approval layer during provider execution.
 - Cursor shell tool calls run in the thread workspace, not the `repos/codexUI` server launch directory.
 - Cursor shell tool-call started/completed commentary is normalized into the existing command execution UI without losing command, cwd, exit code, or output details.
+- Cursor shell tool-call `failure` payloads preserve stdout/stderr in the command card even when the command exits non-zero.
 - Provider controls and model dropdown remain readable in both light and dark themes.
 
 #### Performance Audit

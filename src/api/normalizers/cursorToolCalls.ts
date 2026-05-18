@@ -105,11 +105,15 @@ function outputRecord(value: Record<string, unknown> | null): Record<string, unk
   if (error && typeof error === 'object' && !Array.isArray(error)) {
     return error as Record<string, unknown>
   }
+  const failure = value.failure
+  if (failure && typeof failure === 'object' && !Array.isArray(failure)) {
+    return failure as Record<string, unknown>
+  }
   return value
 }
 
 function hasErrorOutput(value: Record<string, unknown> | null): boolean {
-  return Boolean(value?.error)
+  return Boolean(value?.error || value?.failure)
 }
 
 export function parseCursorToolCommandMessage(
