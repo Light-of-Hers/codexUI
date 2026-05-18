@@ -14,6 +14,7 @@ import {
   getFreeModeConfigArgs,
   getMoonBridgeModelMetadata,
   getMoonBridgeModels,
+  normalizeFreeModeState,
   shouldCreateDefaultFreeModeStateForMissingAuth,
 } from './freeMode.js'
 
@@ -86,6 +87,22 @@ describe('Cursor catalog loading', () => {
     } finally {
       await rm(tempDir, { recursive: true, force: true })
     }
+  })
+
+  it('normalizes cursor state to enabled when persisted disabled', () => {
+    expect(normalizeFreeModeState({
+      enabled: false,
+      apiKey: null,
+      model: 'gpt-5.5-medium',
+      provider: 'cursor',
+      wireApi: 'responses',
+    })).toEqual({
+      enabled: true,
+      apiKey: null,
+      model: 'gpt-5.5-medium',
+      provider: 'cursor',
+      wireApi: undefined,
+    })
   })
 })
 

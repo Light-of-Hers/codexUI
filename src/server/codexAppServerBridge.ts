@@ -37,6 +37,7 @@ import {
   getMoonBridgeModels,
   getFreeModeConfigArgs,
   getFreeModeEnvVars,
+  normalizeFreeModeState,
   shouldCreateDefaultFreeModeStateForMissingAuth,
   type FreeModeState,
 } from './freeMode.js'
@@ -3259,7 +3260,7 @@ function hasUsableCodexAuthSync(): boolean {
 
 function readFreeModeStateSync(statePath: string): FreeModeState | null {
   try {
-    return JSON.parse(readFileSync(statePath, 'utf8')) as FreeModeState
+    return normalizeFreeModeState(JSON.parse(readFileSync(statePath, 'utf8')) as FreeModeState)
   } catch {
     return null
   }
@@ -5773,7 +5774,7 @@ function readActiveFreeModeStateSync(): FreeModeState {
 
 async function persistFreeModeState(state: FreeModeState): Promise<void> {
   const statePath = join(getCodexHomeDir(), FREE_MODE_STATE_FILE)
-  await writeFile(statePath, JSON.stringify(state), { encoding: 'utf8', mode: 0o600 })
+  await writeFile(statePath, JSON.stringify(normalizeFreeModeState(state) ?? state), { encoding: 'utf8', mode: 0o600 })
 }
 
 class AppServerRuntime {

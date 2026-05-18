@@ -305,6 +305,18 @@ export interface FreeModeState {
   providerKeys?: Record<string, string>
 }
 
+export function normalizeFreeModeState(state: FreeModeState | null): FreeModeState | null {
+  if (!state) return null
+  if (state.provider === CURSOR_PROVIDER_ID) {
+    return {
+      ...state,
+      enabled: true,
+      wireApi: undefined,
+    }
+  }
+  return state
+}
+
 export function createDefaultOpenRouterFreeModeState(): FreeModeState | null {
   const apiKey = getRandomFreeKey()
   if (!apiKey) return null
