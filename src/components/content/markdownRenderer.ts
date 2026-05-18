@@ -923,7 +923,7 @@ function findNextMarkdownInlineToken(
 
 function splitPlainTextByLinks(text: string): InlineToken[] {
   const segments: InlineToken[] = []
-  const pattern = /https?:\/\/[^\s<>"'`，。；：！？、()[\]{}「」『』《》]+|file:\/\/[^\n<>"'`，。；：！？、[\]{}「」『』《》]+|["'](?:[A-Za-z]:[\\/]|~\/|\.{1,2}\/|\/)[^\n"']+["']|`(?:[A-Za-z]:[\\/]|~\/|\.{1,2}\/|\/)[^`\n]+`|(?<![\p{L}\p{N}._@()-])(?:[A-Za-z]:[\\/]|~\/|\.{1,2}\/|\/)[^\s<>"'`，。；：！？、()[\]{}「」『』《》]+|(?:[A-Za-z0-9._@()-]+[\\/])+[A-Za-z0-9._@()-]+\.[A-Za-z0-9]{1,12}(?::\d+(?:-\d+)?(?::\d+)?)?(?:#L\d+(?:-L?\d+)?(?:C\d+)?)?/gu
+  const pattern = /https?:\/\/[^\s<>"'`，。；：！？、()[\]{}「」『』《》]+|file:\/\/[^\n<>"'`，。；：！？、[\]{}「」『』《》]+|["'](?:[A-Za-z]:[\\/]|~\/|\.{1,2}\/|\/)[^\n"']+["']|`(?:[A-Za-z]:[\\/]|~\/|\.{1,2}\/|\/)[^`\n]+`|(?<![\p{L}\p{N}._@()-])(?:[A-Za-z]:[\\/]|~\/|\.{1,2}\/|\/)[^\s<>"'`，。；：！？、()[\]{}「」『』《》]+|(?:[A-Za-z0-9._@()-]+[\\/])+[A-Za-z0-9._@()-]+[\\/](?![A-Za-z0-9._@()-])|(?:[A-Za-z0-9._@()-]+[\\/])+[A-Za-z0-9._@()-]+\.[A-Za-z0-9]{1,12}(?::\d+(?:-\d+)?(?::\d+)?)?(?:#L\d+(?:-L?\d+)?(?:C\d+)?)?/gu
   let cursor = 0
 
   for (const match of text.matchAll(pattern)) {
@@ -973,7 +973,7 @@ function splitPlainTextByLinks(text: string): InlineToken[] {
         kind: 'file',
         value: token,
         path: ref.path,
-        displayPath: fileReferenceDisplayPath(ref.path, ref.line, ref.endLine),
+        displayPath: token,
         line: ref.line,
         endLine: ref.endLine,
       })
@@ -1182,6 +1182,7 @@ function parseFileReference(value: string): ParsedFileReference | null {
   } catch {
     // Keep best-effort path if decoding fails.
   }
+  pathValue = pathValue.replace(/[\\/]+$/u, '')
   if (!isFilePath(pathValue)) return null
   const normalizedRange = normalizeLineRange(line, endLine)
   return {

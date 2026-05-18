@@ -1585,6 +1585,7 @@ function parseFileReference(value: string): ParsedFileReference | null {
   }
 
   pathValue = normalizeFileUrlToPath(pathValue)
+  pathValue = pathValue.replace(/[\\/]+$/u, '')
   if (!isFilePath(pathValue)) return null
   const normalizedRange = normalizeLineRange(line, endLine)
   return {
@@ -2351,7 +2352,7 @@ function editMessage(messageId: string): void {
 
 function splitPlainTextByLinks(text: string, options: { applyMarkdownMarkers?: boolean } = {}): InlineSegment[] {
   const segments: InlineSegment[] = []
-  const pattern = /codex:\/\/threads\/[A-Za-z0-9-]+|https?:\/\/[^\s<>"'`，。；：！？、()[\]{}「」『』《》]+|file:\/\/[^\n<>"'`，。；：！？、[\]{}「」『』《》]+|["'](?:[A-Za-z]:[\\/]|~\/|\.{1,2}\/|\/)[^\n"']+["']|`(?:[A-Za-z]:[\\/]|~\/|\.{1,2}\/|\/)[^`\n]+`|(?<![\p{L}\p{N}._@()-])(?:[A-Za-z]:[\\/]|~\/|\.{1,2}\/|\/)[^\s<>"'`，。；：！？、()[\]{}「」『』《》]+|(?:[A-Za-z0-9._@()-]+[\\/])+[A-Za-z0-9._@()-]+\.[A-Za-z0-9]{1,12}(?::\d+(?:-\d+)?(?::\d+)?)?(?:#L\d+(?:-L?\d+)?(?:C\d+)?)?/gu
+  const pattern = /codex:\/\/threads\/[A-Za-z0-9-]+|https?:\/\/[^\s<>"'`，。；：！？、()[\]{}「」『』《》]+|file:\/\/[^\n<>"'`，。；：！？、[\]{}「」『』《》]+|["'](?:[A-Za-z]:[\\/]|~\/|\.{1,2}\/|\/)[^\n"']+["']|`(?:[A-Za-z]:[\\/]|~\/|\.{1,2}\/|\/)[^`\n]+`|(?<![\p{L}\p{N}._@()-])(?:[A-Za-z]:[\\/]|~\/|\.{1,2}\/|\/)[^\s<>"'`，。；：！？、()[\]{}「」『』《》]+|(?:[A-Za-z0-9._@()-]+[\\/])+[A-Za-z0-9._@()-]+[\\/](?![A-Za-z0-9._@()-])|(?:[A-Za-z0-9._@()-]+[\\/])+[A-Za-z0-9._@()-]+\.[A-Za-z0-9]{1,12}(?::\d+(?:-\d+)?(?::\d+)?)?(?:#L\d+(?:-L?\d+)?(?:C\d+)?)?/gu
   let cursor = 0
 
   for (const match of text.matchAll(pattern)) {
@@ -2407,7 +2408,7 @@ function splitPlainTextByLinks(text: string, options: { applyMarkdownMarkers?: b
           kind: 'file',
           value: token,
           path: ref.path,
-          displayPath: fileReferenceDisplayPath(ref.path, ref.line, ref.endLine),
+          displayPath: token,
           downloadName: getBasename(ref.path),
           line: ref.line,
           endLine: ref.endLine,

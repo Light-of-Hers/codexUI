@@ -166,6 +166,14 @@ const answer = 42
     expect(html).not.toContain('href="/codex-local-browse/home/ubuntu/Documents/New%20Project%20(2)/npx')
   })
 
+  it('links directory paths that appear inside inline code', () => {
+    const html = render('Open `.superpowers/plans/2026-05-18-codex-cursor/` next.')
+
+    expect(html).toMatch(/Open <code class="message-inline-code"[^>]*><a class="message-file-link message-inline-code-link"/u)
+    expect(html).toContain('href="/codex-local-browse/home/ubuntu/Documents/New%20Project%20(2)/.superpowers/plans/2026-05-18-codex-cursor"')
+    expect(html).toContain('>.superpowers/plans/2026-05-18-codex-cursor/</a></code> next.')
+  })
+
   it('renders local markdown images through the local image route', () => {
     const html = render('![diagram](/home/ubuntu/Documents/New Project (2)/diagram.png)')
 
