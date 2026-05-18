@@ -5463,3 +5463,25 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Rollback/Cleanup
 - Stop only the temporary dev server started for this test.
 - Restore the preferred provider and model after manual verification.
+
+### Feature: Codex provider keeps shared model selections
+
+#### Prerequisites
+- App server is running from this repository.
+- Moon Bridge is configured and exposes at least one model id that also appears in the Codex model list.
+- Light theme and dark theme are both available from Settings.
+
+#### Steps
+1. Run `./node_modules/.bin/vitest run src/composables/useDesktopState.test.ts`.
+2. In Settings, switch Provider to `Codex`.
+3. Open the composer model dropdown and choose a model id that also exists in the Moon Bridge catalog, such as `gpt-5.5` when available.
+4. Reopen Settings and confirm Provider still shows `Codex`.
+5. Switch to dark theme and repeat steps 2-4.
+
+#### Expected Results
+- The model dropdown updates to the selected model.
+- Choosing a shared model while Provider is `Codex` does not silently switch the new-thread provider to Moon Bridge.
+- Provider and model controls remain readable and usable in both light and dark themes.
+
+#### Rollback/Cleanup
+- Restore the preferred provider and model after manual verification.

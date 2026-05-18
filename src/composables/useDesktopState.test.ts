@@ -643,6 +643,41 @@ describe('provider model selection', () => {
       '__new-thread__': 'ring-2.6-1t-free',
     })
   })
+
+  it('keeps Codex model picks scoped to Codex even when the model also exists in Moon Bridge', async () => {
+    installTestWindow()
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({ groups: [], nextCursor: null })
+    gatewayMocks.getAvailableCollaborationModes.mockResolvedValue([{ value: 'default', label: 'Default' }])
+    gatewayMocks.getSkillsList.mockResolvedValue([])
+    gatewayMocks.getAccountRateLimits.mockResolvedValue(null)
+    gatewayMocks.getCurrentModelConfig.mockResolvedValue({
+      model: 'gpt-4.1',
+      providerId: 'codex',
+      reasoningEffort: 'medium',
+      speedMode: 'standard',
+    })
+    gatewayMocks.getAvailableModelIds.mockResolvedValue([
+      'gpt-4.1',
+      'gpt-5.5',
+    ])
+    gatewayMocks.getMoonBridgeModelIds.mockResolvedValue(['gpt-5.5'])
+
+    const state = useDesktopState()
+    await state.refreshAll({ includeSelectedThreadMessages: false, awaitAncillaryRefreshes: true })
+
+    expect(state.selectedProvider.value).toBe('codex')
+    expect(state.readModelIdForThread('').trim()).toBe('gpt-4.1')
+
+    state.setSelectedModelIdForThread('__new-thread__', 'gpt-5.5')
+
+    expect(state.selectedProvider.value).toBe('codex')
+    expect(state.readModelIdForThread('').trim()).toBe('gpt-5.5')
+    expect(JSON.parse(window.localStorage.getItem('codex-web-local.provider-by-context.v1') ?? '{}')).toEqual({})
+    expect(JSON.parse(window.localStorage.getItem('codex-web-local.selected-model-by-context.v1') ?? '{}')).toEqual({
+      '__new-thread__': 'gpt-5.5',
+      '__new-thread-provider__::codex': 'gpt-5.5',
+    })
+  })
 })
 
 describe('findAdjacentThreadId', () => {

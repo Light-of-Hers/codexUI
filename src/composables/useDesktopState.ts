@@ -1764,15 +1764,11 @@ export function useDesktopState() {
         if (providerModelId) return providerModelId
       }
 
-      const selectedModel = readSelectedModelForThreadContext(
+      return readSelectedModelForThreadContext(
         selectedModelIdByContext.value,
         threadId,
         selectedNewThreadProvider,
       )
-      if (selectedNewThreadProvider === 'codex' && inferProviderFromModel(selectedModel, moonBridgeModelIds.value)) {
-        return ''
-      }
-      return selectedModel
     }
 
     return readSelectedModelForThreadContext(
@@ -1793,12 +1789,13 @@ export function useDesktopState() {
       return
     }
 
-    if (inferredProvider) {
+    const currentNewThreadProvider = readSelectedProvider(selectedProviderByContext.value, '')
+    if (inferredProvider && currentNewThreadProvider === 'moon') {
       setSelectedProviderForThread('', inferredProvider)
       return
     }
 
-    if (modelId.trim().length > 0 && readSelectedProvider(selectedProviderByContext.value, '') === 'moon') {
+    if (modelId.trim().length > 0 && currentNewThreadProvider === 'moon') {
       setSelectedProviderForThread('', 'codex')
     }
   }
@@ -1888,8 +1885,10 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
       selectedModelIdByContext.value = nextModelMap
     }
     if (contextId === NEW_THREAD_COLLABORATION_MODE_CONTEXT) {
-      const inferredProvider = inferProviderFromModel(normalizedModelId, moonBridgeModelIds.value)
       const selectedNewThreadProvider = readSelectedProvider(selectedProviderByContext.value, '')
+      const inferredProvider = selectedNewThreadProvider === 'moon'
+        ? inferProviderFromModel(normalizedModelId, moonBridgeModelIds.value)
+        : null
       const effectiveNewThreadProvider = inferredProvider
         || selectedNewThreadProvider
       const newThreadProviderContextId = effectiveNewThreadProvider
