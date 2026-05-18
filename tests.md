@@ -5367,6 +5367,7 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Rollback/Cleanup
 - Stop only the temporary dev server started for this test.
 - Restore the preferred provider and model after manual verification.
+- Remove any temporary Moon Bridge catalog created only for testing.
 
 ### Feature: Cursor CLI provider catalog and tool-call execution
 
@@ -5383,7 +5384,7 @@ Markdown files opened through the local editor expose a preview button that rend
 4. Open Settings in light theme and select `Cursor CLI` from the provider dropdown.
 5. Confirm `/codex-api/free-mode/status` returns `provider: "cursor"`, `currentModel` from the Cursor catalog, and Cursor catalog models such as `auto`.
 6. Confirm `/codex-api/provider-models` returns `{ exclusive: true, source: "cursor" }` with only Cursor catalog model ids.
-7. Start a new Cursor CLI thread and send `please use shell to run pwd, then only reply with the output path`.
+7. Start a new Cursor CLI thread from a workspace outside the `repos/codexUI` server directory and send `please use shell to run pwd, then only reply with the output path`.
 8. Confirm the thread contains Cursor tool-call commentary items for `started` and `completed`, and the completed item contains `success.stdout`.
 9. Confirm the final assistant message contains the output path.
 10. Switch to dark theme and repeat the Settings provider/model dropdown checks.
@@ -5393,6 +5394,7 @@ Markdown files opened through the local editor expose a preview button that rend
 - Cursor model dropdown is clickable and populated from the Cursor catalog.
 - Cursor runtime uses `codex-cursor app-server` and starts `cursor-local-server` on demand.
 - Cursor shell tool calls are not rejected by Cursor's own approval layer during provider execution.
+- Cursor shell tool calls run in the thread workspace, not the `repos/codexUI` server launch directory.
 - Tool-call started/completed details are captured as commentary items and the final assistant text is persisted in the Codex thread.
 - Provider controls and model dropdown remain readable in both light and dark themes.
 
@@ -5406,7 +5408,6 @@ Markdown files opened through the local editor expose a preview button that rend
 - Archive any manual Cursor CLI smoke-test threads created during verification.
 - Stop only the temporary dev server started for this test.
 - Switch provider back to the preferred default after manual verification.
-- Remove any temporary Moon Bridge catalog created only for testing.
 
 ### Feature: Composer @ search keeps folders and symlinks
 
