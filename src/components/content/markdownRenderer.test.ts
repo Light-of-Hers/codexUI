@@ -121,6 +121,14 @@ const answer = 42
     expect(html).not.toContain('title="/深色主题"')
   })
 
+  it('does not link a lone root path fragment after inline code', () => {
+    const html = render('`agent`/Codex')
+
+    expect(html).toContain('<code class="message-inline-code"')
+    expect(html).toContain('>agent</code>/Codex')
+    expect(html).not.toContain('message-file-link')
+  })
+
   it('parses local markdown links with spaces in the target', () => {
     const html = render('MARK [hosting_manager.py](/home/ubuntu/Documents/New Project (2)/hosting_manager.py)')
 

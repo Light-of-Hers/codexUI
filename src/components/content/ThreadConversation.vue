@@ -1623,6 +1623,17 @@ function trimLinkWrappers(value: string): { core: string; leading: string; trail
   return { core, leading, trailing }
 }
 
+function shouldAutoLinkPlainTextFileReference(ref: ParsedFileReference): boolean {
+  if (ref.line !== null) return true
+
+  const normalizedPath = normalizePathSeparators(ref.path)
+  if (!normalizedPath.startsWith('/')) return true
+
+  const rest = normalizedPath.slice(1)
+  if (!rest || rest.includes('/')) return true
+  return /\.[A-Za-z0-9]{1,12}$/u.test(rest)
+}
+
 function countAsterisksBefore(value: string, endIndex: number, minIndex: number): number {
   let count = 0
   let index = endIndex - 1
@@ -2391,7 +2402,7 @@ function splitPlainTextByLinks(text: string, options: { applyMarkdownMarkers?: b
       }
     } else {
       const ref = parseFileReference(token)
-      if (ref) {
+      if (ref && shouldAutoLinkPlainTextFileReference(ref)) {
         segments.push({
           kind: 'file',
           value: token,

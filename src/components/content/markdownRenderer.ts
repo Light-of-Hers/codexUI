@@ -515,6 +515,17 @@ function linkInlineCodeFileReferences(node: MarkdownElement, context: MarkdownRe
   node.children = nextChildren
 }
 
+function shouldAutoLinkPlainTextFileReference(ref: ParsedFileReference): boolean {
+  if (ref.line !== null) return true
+
+  const normalizedPath = normalizePathSeparators(ref.path)
+  if (!normalizedPath.startsWith('/')) return true
+
+  const rest = normalizedPath.slice(1)
+  if (!rest || rest.includes('/')) return true
+  return /\.[A-Za-z0-9]{1,12}$/u.test(rest)
+}
+
 function wrapListItemChildren(node: MarkdownElement): void {
   const originalChildren = node.children ?? []
   if (originalChildren.length === 0) return
@@ -957,7 +968,7 @@ function splitPlainTextByLinks(text: string): InlineToken[] {
     }
 
     const ref = parseFileReference(token)
-    if (ref) {
+    if (ref && shouldAutoLinkPlainTextFileReference(ref)) {
       segments.push({
         kind: 'file',
         value: token,
