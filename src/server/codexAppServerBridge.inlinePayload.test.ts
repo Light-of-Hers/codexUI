@@ -654,6 +654,31 @@ describe('app-server runtime configuration', () => {
       await rm(tempDir, { recursive: true, force: true })
     }
   })
+
+  it('uses the Codex Cursor command for cursor provider runtimes', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-runtime-config-'))
+    try {
+      const codexCommand = join(tempDir, 'codex')
+      const cursorCommand = join(tempDir, 'codex-cursor')
+      await writeMockCommand(codexCommand)
+      await writeMockCommand(cursorCommand)
+      vi.stubEnv('CODEXUI_CODEX_COMMAND', codexCommand)
+      vi.stubEnv('CODEXUI_CODEX_CURSOR_COMMAND', cursorCommand)
+
+      const cursorConfig = buildAppServerConfigForState({
+        enabled: true,
+        apiKey: null,
+        model: 'gpt-5.5-medium',
+        provider: 'cursor',
+      })
+
+      expect(cursorConfig.command).toBe(cursorCommand)
+      expect(cursorConfig.args[0]).toBe('app-server')
+      expect(cursorConfig.args.some((arg) => arg.includes('model_provider'))).toBe(false)
+    } finally {
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('automation TOML handling', () => {
