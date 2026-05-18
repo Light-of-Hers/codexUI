@@ -101,6 +101,7 @@ export const MOONBRIDGE_PROVIDER_ID = 'moon'
 export const MOONBRIDGE_PROVIDER_NAME = 'Moon Bridge'
 export const MOONBRIDGE_MODEL_CATALOG_FILE = 'models_catalog.json'
 export const CURSOR_PROVIDER_ID = 'cursor'
+export const CURSOR_MODEL_CATALOG_FILE = 'models_catalog.json'
 
 export type MoonBridgeModelMetadata = {
   id: string
@@ -180,11 +181,23 @@ function getMoonBridgeDataHomeDir(): string {
   return explicit && explicit.length > 0 ? explicit : join(homedir(), '.local', 'share')
 }
 
+function getCursorDataHomeDir(): string {
+  const explicit = process.env.XDG_DATA_HOME?.trim()
+  return explicit && explicit.length > 0 ? explicit : join(homedir(), '.local', 'share')
+}
+
 export function getMoonBridgeModelCatalogPath(): string {
   const explicit = process.env.CODEXUI_MOONBRIDGE_MODEL_CATALOG?.trim()
     || process.env.CODEX_MOON_MODEL_CATALOG?.trim()
   if (explicit && explicit.length > 0) return explicit
   return join(getMoonBridgeDataHomeDir(), 'my-agent-configs', 'moonbridge', 'codex', MOONBRIDGE_MODEL_CATALOG_FILE)
+}
+
+export function getCursorModelCatalogPath(): string {
+  const explicit = process.env.CODEXUI_CURSOR_MODEL_CATALOG?.trim()
+    || process.env.CODEX_CURSOR_MODEL_CATALOG?.trim()
+  if (explicit && explicit.length > 0) return explicit
+  return join(getCursorDataHomeDir(), 'my-agent-configs', 'cursor', 'codex', CURSOR_MODEL_CATALOG_FILE)
 }
 
 function readMoonBridgeModelCatalogRows(value: unknown): unknown[] {
@@ -247,6 +260,36 @@ export function getMoonBridgeModelMetadata(): MoonBridgeModelMetadata[] {
 
 export function getMoonBridgeModels(): string[] {
   return getMoonBridgeModelMetadata().map((model) => model.id)
+}
+
+export function getCursorModelMetadata(): MoonBridgeModelMetadata[] {
+  try {
+    const raw = JSON.parse(readFileSync(getCursorModelCatalogPath(), 'utf8')) as unknown
+    const rows = readMoonBridgeModelCatalogRows(raw)
+    const models: MoonBridgeModelMetadata[] = []
+    for (const row of rows) {
+      if (!row || typeof row !== 'object' || Array.isArray(row)) continue
+      const record = row as Record<string, unknown>
+      const id = readMoonBridgeModelId(record)
+      if (!id || models.some((model) => model.id === id)) continue
+      models.push({
+        id,
+        contextWindow: readMoonBridgeTokenCount(
+          record.context_window
+            ?? record.contextWindow
+            ?? record.max_context_window
+            ?? record.maxContextWindow,
+        ),
+      })
+    }
+    return models
+  } catch {
+    return []
+  }
+}
+
+export function getCursorModels(): string[] {
+  return getCursorModelMetadata().map((model) => model.id)
 }
 
 export type WireApi = 'responses' | 'chat'

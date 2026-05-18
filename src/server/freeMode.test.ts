@@ -9,6 +9,8 @@ import {
   OPENCODE_ZEN_PROVIDER_ID,
   createDefaultFreeModeState,
   createDefaultOpenCodeZenFreeModeState,
+  getCursorModelMetadata,
+  getCursorModels,
   getFreeModeConfigArgs,
   getMoonBridgeModelMetadata,
   getMoonBridgeModels,
@@ -50,6 +52,36 @@ describe('Moon Bridge catalog loading', () => {
       expect(getMoonBridgeModelMetadata()).toEqual([
         { id: 'deepseek-v4-pro', contextWindow: 128000 },
         { id: 'deepseek-v4-flash', contextWindow: 64000 },
+      ])
+    } finally {
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('Cursor catalog loading', () => {
+  it('reads model slugs from the generated catalog', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-cursor-'))
+    const catalogPath = join(tempDir, 'models_catalog.json')
+    try {
+      await writeFile(
+        catalogPath,
+        JSON.stringify({
+          models: [
+            { slug: 'gpt-5.5-medium', context_window: 128000 },
+            { slug: 'gpt-5.4-mini', context_window: '32000' },
+            { slug: 'gpt-5.5-medium', context_window: 64000 },
+          ],
+        }),
+        'utf8',
+      )
+
+      vi.stubEnv('CODEXUI_CURSOR_MODEL_CATALOG', catalogPath)
+
+      expect(getCursorModels()).toEqual(['gpt-5.5-medium', 'gpt-5.4-mini'])
+      expect(getCursorModelMetadata()).toEqual([
+        { id: 'gpt-5.5-medium', contextWindow: 128000 },
+        { id: 'gpt-5.4-mini', contextWindow: 32000 },
       ])
     } finally {
       await rm(tempDir, { recursive: true, force: true })
