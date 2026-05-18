@@ -18,6 +18,7 @@ import type {
   UiThread,
 } from '../../types/codex'
 import { normalizePathForComparison, normalizePathForUi, toProjectName } from '../../pathUtils.js'
+import { isIncompleteCursorToolCallText, parseCursorToolCommandMessage } from './cursorToolCalls'
 
 function toIso(seconds: number): string {
   return new Date(seconds * 1000).toISOString()
@@ -396,6 +397,13 @@ export function toUiFileChanges(changes: unknown): UiFileChange[] {
 
 function toUiMessages(item: ThreadItem): UiMessage[] {
   if (item.type === 'agentMessage') {
+    const cursorToolCommand = parseCursorToolCommandMessage(item.id, item.text)
+    if (cursorToolCommand) {
+      return [cursorToolCommand]
+    }
+    if (isIncompleteCursorToolCallText(item.text)) {
+      return []
+    }
     return [
       {
         id: item.id,

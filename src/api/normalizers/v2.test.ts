@@ -133,4 +133,77 @@ Reply with &lt;/instructions&gt; and A &amp; B
       turnIndex: 12,
     })
   })
+
+  it('renders Cursor shell tool-call commentary as command execution', () => {
+    const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
+      type: 'agentMessage',
+      id: 'cursor-tool-1',
+      text: [
+        '[cursor tool_call completed]',
+        'call_id: call_1_fc_2',
+        'tool: shell',
+        'arguments: {"command":"ls -la","workingDirectory":"/tmp/project"}',
+        'output:',
+        '{"success":{"command":"ls -la","exitCode":0,"stdout":"total 1\\n-rw-r--r-- file\\n","stderr":"","interleavedOutput":"total 1\\n-rw-r--r-- file\\n","workingDirectory":"/tmp/project"}}',
+      ].join('\n'),
+    }]))
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({
+      id: 'cursor-command-call_1_fc_2',
+      role: 'system',
+      text: 'ls -la',
+      messageType: 'commandExecution',
+      commandExecution: {
+        command: 'ls -la',
+        cwd: '/tmp/project',
+        status: 'completed',
+        aggregatedOutput: 'total 1\n-rw-r--r-- file\n',
+        exitCode: 0,
+      },
+    })
+  })
+
+  it('hides incomplete Cursor shell tool-call commentary from persisted history', () => {
+    const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
+      type: 'agentMessage',
+      id: 'cursor-tool-started',
+      text: [
+        '[cursor tool_call started]',
+        'call_id: call_1_fc_2',
+        'tool: shell',
+        'arguments: {"command":"ls -la","workingDirectory":"/tmp/project"}',
+      ].join('\n'),
+    }]))
+
+    expect(messages).toEqual([])
+  })
+
+  it('marks Cursor shell tool-call errors as failed command executions', () => {
+    const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
+      type: 'agentMessage',
+      id: 'cursor-tool-error',
+      text: [
+        '[cursor tool_call completed]',
+        'call_id: call_error_fc_2',
+        'tool: shell',
+        'arguments: {"command":"false","workingDirectory":"/tmp/project"}',
+        'output:',
+        '{"error":{"message":"command failed"}}',
+      ].join('\n'),
+    }]))
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({
+      id: 'cursor-command-call_error_fc_2',
+      messageType: 'commandExecution',
+      commandExecution: {
+        command: 'false',
+        cwd: '/tmp/project',
+        status: 'failed',
+        aggregatedOutput: 'command failed',
+        exitCode: null,
+      },
+    })
+  })
 })

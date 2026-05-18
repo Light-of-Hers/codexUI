@@ -5385,9 +5385,10 @@ Markdown files opened through the local editor expose a preview button that rend
 5. Confirm `/codex-api/free-mode/status` returns `provider: "cursor"`, `currentModel` from the Cursor catalog, and Cursor catalog models such as `auto`.
 6. Confirm `/codex-api/provider-models` returns `{ exclusive: true, source: "cursor" }` with only Cursor catalog model ids.
 7. Start a new Cursor CLI thread from a workspace outside the `repos/codexUI` server directory and send `please use shell to run pwd, then only reply with the output path`.
-8. Confirm the thread contains Cursor tool-call commentary items for `started` and `completed`, and the completed item contains `success.stdout`.
-9. Confirm the final assistant message contains the output path.
-10. Switch to dark theme and repeat the Settings provider/model dropdown checks.
+8. Confirm the conversation renders the Cursor shell tool call as a command execution card, not as raw `[cursor tool_call ...]` JSON text.
+9. Confirm the command card shows the shell command, thread workspace, exit status, and `stdout`, and the final assistant message contains the output path.
+10. Refresh the thread and confirm the persisted history still shows a single command card rather than separate started/completed raw text messages.
+11. Switch to dark theme and repeat the command-card and Settings provider/model dropdown checks.
 
 #### Expected Results
 - Cursor CLI provider does not inherit stale OpenRouter model ids such as `openrouter/free`.
@@ -5395,13 +5396,14 @@ Markdown files opened through the local editor expose a preview button that rend
 - Cursor runtime uses `codex-cursor app-server` and starts `cursor-local-server` on demand.
 - Cursor shell tool calls are not rejected by Cursor's own approval layer during provider execution.
 - Cursor shell tool calls run in the thread workspace, not the `repos/codexUI` server launch directory.
-- Tool-call started/completed details are captured as commentary items and the final assistant text is persisted in the Codex thread.
+- Cursor shell tool-call started/completed commentary is normalized into the existing command execution UI without losing command, cwd, exit code, or output details.
 - Provider controls and model dropdown remain readable in both light and dark themes.
 
 #### Performance Audit
 - Cursor model selection reads the existing local model catalog once per status/provider-model request and does not add network calls.
 - `/codex-api/free-mode/status` now uses the same local catalog selection logic as `/codex-api/provider-models`, avoiding stale model fallback and duplicate provider discovery.
 - `cursor-local-server` still starts only through the provider runtime wrapper; no always-on local daemon was added.
+- Cursor tool-call display normalization runs only while normalizing a single agent message or completed realtime item; it adds no extra API requests and does not scan full session logs.
 - No browser profile was captured for this server-side/provider-runtime fix; use `PROFILE_BASE_URL=http://127.0.0.1:4173 PROFILE_WAIT_MS=7000 pnpm run profile:browser` if a later UI-rendering change touches the provider settings surface.
 
 #### Rollback/Cleanup

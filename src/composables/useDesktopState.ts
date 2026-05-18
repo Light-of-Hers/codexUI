@@ -41,6 +41,7 @@ import {
   type ThreadQueueState,
   type WorkspaceRootsState,
 } from '../api/codexGateway'
+import { isIncompleteCursorToolCallText, parseCursorToolCommandMessage } from '../api/normalizers/cursorToolCalls'
 import { normalizeFileChangeStatus, toUiFileChanges } from '../api/normalizers/v2'
 import type {
   CollaborationModeKind,
@@ -3792,6 +3793,11 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
       const id = readString(item.id)
       const text = readString(item.text)
       if (!id || !text) return null
+      const cursorToolCommand = parseCursorToolCommandMessage(id, text, { includeInProgress: true })
+      if (cursorToolCommand) {
+        return cursorToolCommand
+      }
+      if (isIncompleteCursorToolCallText(text)) return null
       return {
         id,
         role: 'assistant',
@@ -4186,7 +4192,14 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
 
     const completedAgentMessage = readAgentMessageCompleted(notification)
     if (completedAgentMessage) {
-      upsertLiveAgentMessage(notificationThreadId, completedAgentMessage)
+      if (completedAgentMessage.messageType === 'commandExecution') {
+        upsertLiveCommand(notificationThreadId, completedAgentMessage)
+        if (completedAgentMessage.commandExecution?.status === 'inProgress') {
+          setTurnActivityForThread(notificationThreadId, { label: 'Running command', details: [completedAgentMessage.commandExecution.command] })
+        }
+      } else {
+        upsertLiveAgentMessage(notificationThreadId, completedAgentMessage)
+      }
     }
 
     const completedImageView = readCompletedImageView(notification)
