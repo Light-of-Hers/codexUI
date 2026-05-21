@@ -83,6 +83,20 @@ describe('local browse markdown preview', () => {
     expect(editorHtml).toContain('· rust')
   })
 
+  it('uses GitHub-style syntax colors in local editor pages', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'codexui-local-github-editor-'))
+    const tsPath = join(tempDir, 'example.ts')
+    await writeFile(tsPath, 'const answer: number = 42\n', 'utf8')
+
+    const editorHtml = await createTextEditorHtml(tsPath)
+
+    expect(editorHtml).toContain("editor.setTheme(theme === 'dark' ? 'ace/theme/github_dark' : 'ace/theme/github')")
+    expect(editorHtml).toContain('--syntax-keyword: #cf222e;')
+    expect(editorHtml).toContain('--syntax-keyword: #ff7b72;')
+    expect(editorHtml).toContain('.ace_entity.ace_name.ace_function')
+    expect(editorHtml).toContain('.ace_marker-layer .ace_selected-word')
+  })
+
   it('binds Ctrl+S to saving in the local editor page', async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'codexui-local-save-shortcut-'))
     const textPath = join(tempDir, 'note.txt')
@@ -124,6 +138,9 @@ describe('local browse markdown preview', () => {
     expect(html).toContain('message-code-block')
     expect(html).toContain('message-scroll-anchor')
     expect(html).toContain('language-ts')
+    expect(html).toContain('--syntax-keyword: #d73a49;')
+    expect(html).toContain('--syntax-keyword: #ff7b72;')
+    expect(html).toContain('.hljs-title.function_')
     expect(html).toContain('message-math-source-display')
     expect(html).toContain('data-source-line="5"')
     expect(html).toContain('target.nodeType === Node.TEXT_NODE')

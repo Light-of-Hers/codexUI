@@ -736,38 +736,66 @@ function markdownPreviewStyles(): string {
   return `
     :root {
       color-scheme: light dark;
-      --preview-bg: #f8fafc;
-      --preview-fg: #0f172a;
-      --muted-fg: #64748b;
-      --border: #cbd5e1;
-      --soft-bg: #f1f5f9;
-      --blockquote-bg: rgba(241, 245, 249, 0.78);
+      --preview-bg: #ffffff;
+      --preview-fg: #24292f;
+      --muted-fg: #57606a;
+      --border: #d0d7de;
+      --soft-bg: #f6f8fa;
+      --blockquote-bg: #f6f8fa;
       --link-fg: #0969da;
       --link-hover: #1f6feb;
-      --code-bg: rgba(226, 232, 240, 0.74);
-      --code-fg: #0f172a;
-      --block-code-bg: #020617;
-      --block-code-fg: #e2e8f0;
+      --code-bg: rgba(175, 184, 193, 0.2);
+      --code-fg: #24292f;
+      --block-code-bg: #f6f8fa;
+      --block-code-fg: #24292f;
       --table-bg: #ffffff;
-      --table-head-bg: #f1f5f9;
+      --table-head-bg: #f6f8fa;
+      --syntax-keyword: #d73a49;
+      --syntax-entity: #6f42c1;
+      --syntax-constant: #005cc5;
+      --syntax-string: #032f62;
+      --syntax-variable: #e36209;
+      --syntax-comment: #6a737d;
+      --syntax-entity-tag: #22863a;
+      --syntax-subst: #24292f;
+      --syntax-markup-heading: #005cc5;
+      --syntax-markup-list: #735c0f;
+      --syntax-addition-fg: #22863a;
+      --syntax-addition-bg: #f0fff4;
+      --syntax-deletion-fg: #b31d28;
+      --syntax-deletion-bg: #ffeef0;
     }
     @media (prefers-color-scheme: dark) {
       :root {
         color-scheme: dark;
-        --preview-bg: #0b1020;
-        --preview-fg: #dbe6ff;
-        --muted-fg: #9ca3af;
-        --border: #334155;
-        --soft-bg: #111827;
-        --blockquote-bg: rgba(31, 41, 55, 0.72);
-        --link-fg: #8cc2ff;
-        --link-hover: #bfdbfe;
-        --code-bg: rgba(55, 65, 81, 0.78);
-        --code-fg: #f8fafc;
-        --block-code-bg: #020617;
-        --block-code-fg: #e5e7eb;
-        --table-bg: #0f172a;
-        --table-head-bg: #1f2937;
+        --preview-bg: #0d1117;
+        --preview-fg: #c9d1d9;
+        --muted-fg: #8b949e;
+        --border: #30363d;
+        --soft-bg: #161b22;
+        --blockquote-bg: #161b22;
+        --link-fg: #58a6ff;
+        --link-hover: #79c0ff;
+        --code-bg: rgba(110, 118, 129, 0.4);
+        --code-fg: #c9d1d9;
+        --block-code-bg: #0d1117;
+        --block-code-fg: #c9d1d9;
+        --table-bg: #0d1117;
+        --table-head-bg: #161b22;
+        --syntax-keyword: #ff7b72;
+        --syntax-entity: #d2a8ff;
+        --syntax-constant: #79c0ff;
+        --syntax-string: #a5d6ff;
+        --syntax-variable: #ffa657;
+        --syntax-comment: #8b949e;
+        --syntax-entity-tag: #7ee787;
+        --syntax-subst: #c9d1d9;
+        --syntax-markup-heading: #1f6feb;
+        --syntax-markup-list: #f2cc60;
+        --syntax-addition-fg: #aff5b4;
+        --syntax-addition-bg: #033a16;
+        --syntax-deletion-fg: #ffdcd7;
+        --syntax-deletion-bg: #67060c;
       }
     }
     * { box-sizing: border-box; }
@@ -905,8 +933,8 @@ function markdownPreviewStyles(): string {
       color: var(--block-code-fg);
     }
     .message-code-language {
-      border-bottom: 1px solid rgba(148, 163, 184, 0.22);
-      color: #94a3b8;
+      border-bottom: 1px solid var(--border);
+      color: var(--muted-fg);
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
       font-size: 11px;
       padding: 0.45rem 0.75rem;
@@ -925,24 +953,64 @@ function markdownPreviewStyles(): string {
     .message-code-pre .hljs {
       display: block;
       background: transparent;
-      color: inherit;
+      color: var(--block-code-fg);
       padding: 0;
     }
-    .hljs-comment,
-    .hljs-quote { color: #94a3b8; }
+    .hljs-doctag,
     .hljs-keyword,
-    .hljs-selector-tag,
-    .hljs-subst { color: #f472b6; }
-    .hljs-string,
-    .hljs-doctag { color: #86efac; }
-    .hljs-number,
-    .hljs-literal,
-    .hljs-variable,
+    .hljs-meta .hljs-keyword,
+    .hljs-template-tag,
     .hljs-template-variable,
-    .hljs-tag .hljs-attr { color: #fbbf24; }
+    .hljs-type,
+    .hljs-variable.language_ { color: var(--syntax-keyword); }
     .hljs-title,
-    .hljs-section,
-    .hljs-selector-id { color: #93c5fd; }
+    .hljs-title.class_,
+    .hljs-title.class_.inherited__,
+    .hljs-title.function_ { color: var(--syntax-entity); }
+    .hljs-attr,
+    .hljs-attribute,
+    .hljs-literal,
+    .hljs-meta,
+    .hljs-number,
+    .hljs-operator,
+    .hljs-variable,
+    .hljs-selector-attr,
+    .hljs-selector-class,
+    .hljs-selector-id { color: var(--syntax-constant); }
+    .hljs-regexp,
+    .hljs-string,
+    .hljs-meta .hljs-string { color: var(--syntax-string); }
+    .hljs-built_in,
+    .hljs-symbol { color: var(--syntax-variable); }
+    .hljs-comment,
+    .hljs-code,
+    .hljs-formula { color: var(--syntax-comment); }
+    .hljs-name,
+    .hljs-quote,
+    .hljs-selector-tag,
+    .hljs-selector-pseudo { color: var(--syntax-entity-tag); }
+    .hljs-subst { color: var(--syntax-subst); }
+    .hljs-section {
+      color: var(--syntax-markup-heading);
+      font-weight: 600;
+    }
+    .hljs-bullet { color: var(--syntax-markup-list); }
+    .hljs-emphasis {
+      color: var(--block-code-fg);
+      font-style: italic;
+    }
+    .hljs-strong {
+      color: var(--block-code-fg);
+      font-weight: 600;
+    }
+    .hljs-addition {
+      color: var(--syntax-addition-fg);
+      background-color: var(--syntax-addition-bg);
+    }
+    .hljs-deletion {
+      color: var(--syntax-deletion-fg);
+      background-color: var(--syntax-deletion-bg);
+    }
     .message-file-link {
       color: var(--link-fg);
       text-decoration: none;
@@ -1076,40 +1144,82 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     }
     :root {
       color-scheme: light dark;
-      --page-bg: #f8fafc;
-      --page-fg: #0f172a;
+      --page-bg: #f6f8fa;
+      --page-fg: #24292f;
       --toolbar-bg: #ffffff;
-      --toolbar-border: #cbd5e1;
-      --control-bg: #f1f5f9;
-      --control-fg: #0f172a;
-      --control-border: #cbd5e1;
-      --status-fg: #2563eb;
-      --preview-status-fg: #64748b;
+      --toolbar-border: #d0d7de;
+      --control-bg: #f6f8fa;
+      --control-fg: #24292f;
+      --control-border: #d0d7de;
+      --status-fg: #0969da;
+      --preview-status-fg: #57606a;
       --ace-bg: #ffffff;
-      --ace-gutter-bg: #f1f5f9;
-      --ace-gutter-fg: #64748b;
-      --ace-active-line: rgba(148, 163, 184, 0.16);
-      --ace-selection: rgba(37, 99, 235, 0.22);
+      --ace-fg: #24292f;
+      --ace-gutter-bg: #f6f8fa;
+      --ace-gutter-fg: #57606a;
+      --ace-gutter-active-bg: #eaeef2;
+      --ace-active-line: rgba(208, 215, 222, 0.42);
+      --ace-selection: rgba(9, 105, 218, 0.24);
+      --ace-selected-word-border: rgba(9, 105, 218, 0.42);
+      --ace-cursor: #24292f;
+      --ace-bracket-border: #d0d7de;
+      --ace-invisible: #afb8c1;
+      --syntax-keyword: #cf222e;
+      --syntax-entity: #8250df;
+      --syntax-constant: #0550ae;
+      --syntax-string: #0a3069;
+      --syntax-variable: #953800;
+      --syntax-comment: #6e7781;
+      --syntax-entity-tag: #116329;
+      --syntax-markup-heading: #0550ae;
+      --syntax-markup-list: #3b2300;
+      --syntax-addition-fg: #116329;
+      --syntax-addition-bg: #dafbe1;
+      --syntax-deletion-fg: #82071e;
+      --syntax-deletion-bg: #ffebe9;
+      --syntax-invalid-fg: #f6f8fa;
+      --syntax-invalid-bg: #82071e;
       --editor-font-family: "CodexLocalEditorLatin", "SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Roboto Mono", "Droid Sans Mono", "Courier New", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
       --editor-font-weight: 400;
     }
     @media (prefers-color-scheme: dark) {
       :root {
         color-scheme: dark;
-        --page-bg: #0b1020;
-        --page-fg: #dbe6ff;
-        --toolbar-bg: #0b1020;
-        --toolbar-border: #243a5a;
-        --control-bg: #1b2a4a;
-        --control-fg: #dbe6ff;
-        --control-border: #334455;
-        --status-fg: #8cc2ff;
-        --preview-status-fg: #9ca3af;
-        --ace-bg: #07101f;
-        --ace-gutter-bg: #07101f;
-        --ace-gutter-fg: #6f8eb5;
-        --ace-active-line: #10213c;
-        --ace-selection: rgba(140, 194, 255, 0.3);
+        --page-bg: #0d1117;
+        --page-fg: #c9d1d9;
+        --toolbar-bg: #161b22;
+        --toolbar-border: #30363d;
+        --control-bg: #21262d;
+        --control-fg: #c9d1d9;
+        --control-border: #30363d;
+        --status-fg: #58a6ff;
+        --preview-status-fg: #8b949e;
+        --ace-bg: #0d1117;
+        --ace-fg: #c9d1d9;
+        --ace-gutter-bg: #161b22;
+        --ace-gutter-fg: #8b949e;
+        --ace-gutter-active-bg: #21262d;
+        --ace-active-line: rgba(110, 118, 129, 0.18);
+        --ace-selection: rgba(56, 139, 253, 0.32);
+        --ace-selected-word-border: rgba(56, 139, 253, 0.48);
+        --ace-cursor: #c9d1d9;
+        --ace-bracket-border: #6e7681;
+        --ace-invisible: #6e7681;
+        --syntax-keyword: #ff7b72;
+        --syntax-entity: #d2a8ff;
+        --syntax-constant: #79c0ff;
+        --syntax-string: #a5d6ff;
+        --syntax-variable: #ffa657;
+        --syntax-comment: #8b949e;
+        --syntax-entity-tag: #7ee787;
+        --syntax-markup-heading: #1f6feb;
+        --syntax-markup-list: #f2cc60;
+        --syntax-addition-fg: #aff5b4;
+        --syntax-addition-bg: #033a16;
+        --syntax-deletion-fg: #ffdcd7;
+        --syntax-deletion-bg: #67060c;
+        --syntax-invalid-fg: #f0f6fc;
+        --syntax-invalid-bg: #8e1519;
       }
     }
     html, body { width: 100%; height: 100%; margin: 0; }
@@ -1156,12 +1266,63 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     .editor-shell[data-preview="true"] .preview-splitter { display: block; }
     #status { margin-left: 8px; color: var(--status-fg); }
     #previewStatus { color: var(--preview-status-fg); font-size: 12px; }
-    .ace_editor { background: var(--ace-bg) !important; color: var(--page-fg) !important; width: 100% !important; height: 100% !important; }
+    .ace_editor { background: var(--ace-bg) !important; color: var(--ace-fg) !important; width: 100% !important; height: 100% !important; }
     .ace_editor, .ace_editor .ace_content, .ace_editor .ace_text-layer { font-family: var(--editor-font-family) !important; font-weight: var(--editor-font-weight) !important; font-synthesis: none; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
     .ace_editor.ace_nobold .ace_line > span, .ace_editor.ace_nobold .ace_bold { font-weight: var(--editor-font-weight) !important; }
     .ace_gutter { background: var(--ace-gutter-bg) !important; color: var(--ace-gutter-fg) !important; }
+    .ace_gutter-active-line { background-color: var(--ace-gutter-active-bg) !important; color: var(--ace-fg) !important; }
+    .ace_cursor { color: var(--ace-cursor) !important; }
     .ace_marker-layer .ace_active-line { background: var(--ace-active-line) !important; }
     .ace_marker-layer .ace_selection { background: var(--ace-selection) !important; }
+    .ace_marker-layer .ace_selected-word { border: 1px solid var(--ace-selected-word-border) !important; }
+    .ace_marker-layer .ace_bracket { border: 1px solid var(--ace-bracket-border) !important; margin: -1px 0 0 -1px; }
+    .ace_invisible { color: var(--ace-invisible) !important; }
+    .ace_print-margin { background: var(--toolbar-border) !important; }
+    .ace_fold { background: var(--syntax-constant) !important; border-color: var(--ace-bg) !important; }
+    .ace_comment,
+    .ace_punctuation.ace_definition.ace_comment,
+    .ace_string.ace_comment { color: var(--syntax-comment) !important; font-style: normal !important; }
+    .ace_keyword,
+    .ace_storage,
+    .ace_storage.ace_type,
+    .ace_meta.ace_tag,
+    .ace_meta.ace_selector { color: var(--syntax-keyword) !important; }
+    .ace_string,
+    .ace_string.ace_quoted,
+    .ace_string.ace_interpolated,
+    .ace_string.ace_unquoted { color: var(--syntax-string) !important; }
+    .ace_string.ace_regexp,
+    .ace_regexp { color: var(--syntax-entity-tag) !important; }
+    .ace_constant,
+    .ace_constant.ace_numeric,
+    .ace_constant.ace_language,
+    .ace_constant.ace_character,
+    .ace_constant.ace_other,
+    .ace_support.ace_constant,
+    .ace_variable.ace_language { color: var(--syntax-constant) !important; }
+    .ace_entity.ace_name.ace_function,
+    .ace_support.ace_function,
+    .ace_function,
+    .ace_function.ace_buildin,
+    .ace_variable.ace_function { color: var(--syntax-entity) !important; }
+    .ace_entity.ace_name.ace_tag,
+    .ace_entity.ace_other.ace_attribute-name,
+    .ace_tag { color: var(--syntax-entity-tag) !important; }
+    .ace_variable,
+    .ace_variable.ace_parameter,
+    .ace_variable.ace_instance,
+    .ace_support.ace_variable,
+    .ace_property { color: var(--syntax-variable) !important; }
+    .ace_support.ace_class,
+    .ace_support.ace_type,
+    .ace_entity.ace_name.ace_class,
+    .ace_entity.ace_name.ace_type,
+    .ace_entity.ace_other.ace_inherited-class { color: var(--syntax-entity) !important; }
+    .ace_markup.ace_heading { color: var(--syntax-markup-heading) !important; }
+    .ace_markup.ace_list { color: var(--syntax-markup-list) !important; }
+    .ace_markup.ace_inserted { color: var(--syntax-addition-fg) !important; background-color: var(--syntax-addition-bg) !important; }
+    .ace_markup.ace_deleted { color: var(--syntax-deletion-fg) !important; background-color: var(--syntax-deletion-bg) !important; }
+    .ace_invalid { color: var(--syntax-invalid-fg) !important; background-color: var(--syntax-invalid-bg) !important; }
     .meta { opacity: 0.9; font-size: 12px; overflow-wrap: anywhere; font-family: var(--editor-font-family); }
     @media (max-width: 768px), (pointer: coarse) {
       .toolbar { gap: 10px; padding: 12px; }
@@ -1225,7 +1386,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     const applyEditorTheme = () => {
       const theme = colorSchemeQuery.matches ? 'dark' : 'light';
       document.documentElement.dataset.theme = theme;
-      editor.setTheme(theme === 'dark' ? 'ace/theme/tomorrow_night' : 'ace/theme/github');
+      editor.setTheme(theme === 'dark' ? 'ace/theme/github_dark' : 'ace/theme/github');
       editor.container.classList.add('ace_nobold');
     };
     applyEditorTheme();
