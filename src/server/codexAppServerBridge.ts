@@ -669,6 +669,51 @@ function toLocalImageProxyUrl(path: string): string {
   return `/codex-local-image?path=${encodeURIComponent(path)}`
 }
 
+const CURSOR_TOOL_PAYLOAD_LINE = /^\s*(?:└\s*)?payload:\s*(.+\.json)\s*$/m
+const CURSOR_TOOL_PAYLOAD_FILE = /^[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+\.json$/u
+
+function isCursorToolPayloadRecord(value: unknown): value is Record<string, unknown> {
+  const record = asRecord(value)
+  return Boolean(
+    record
+    && record.type === 'cursor_tool_call'
+    && typeof record.subtype === 'string'
+    && record.subtype.length > 0
+    && typeof record.call_id === 'string'
+    && record.call_id.length > 0
+    && typeof record.tool === 'string'
+    && record.tool.length > 0,
+  )
+}
+
+async function inlineCursorToolPayloadReference(value: string): Promise<{ value: string; changed: boolean }> {
+  const match = value.match(CURSOR_TOOL_PAYLOAD_LINE)
+  const payloadPath = match?.[1]?.trim()
+  if (!payloadPath || !isAbsolute(payloadPath)) return { value, changed: false }
+
+  const payloadRoot = resolve(getCursorToolPayloadsDir())
+  const resolvedPath = resolve(payloadPath)
+  if (resolvedPath !== payloadRoot && !resolvedPath.startsWith(`${payloadRoot}/`)) {
+    return { value, changed: false }
+  }
+  const relativePath = resolvedPath.slice(payloadRoot.length + 1)
+  if (!CURSOR_TOOL_PAYLOAD_FILE.test(relativePath)) {
+    return { value, changed: false }
+  }
+
+  try {
+    const raw = await readFile(resolvedPath, 'utf8')
+    const parsed = JSON.parse(raw) as unknown
+    if (!isCursorToolPayloadRecord(parsed)) return { value, changed: false }
+    return {
+      value: `${value}\n<codex-ui-data>${JSON.stringify(parsed)}</codex-ui-data>`,
+      changed: true,
+    }
+  } catch {
+    return { value, changed: false }
+  }
+}
+
 const INLINE_IMAGE_FIELD_NAMES = new Set([
   'b64_json',
   'image',
@@ -793,6 +838,8 @@ async function sanitizeInlinePayloadDeep(
   }
 
   if (typeof value === 'string') {
+    const cursorPayload = await inlineCursorToolPayloadReference(value)
+    if (cursorPayload.changed) return cursorPayload
     return sanitizeInlineImageString(value, context)
   }
 
@@ -3301,6 +3348,20 @@ function getCodexSessionIndexPath(): string {
 
 function getCodexAutomationsDir(): string {
   return join(getCodexHomeDir(), 'automations')
+}
+
+function getCursorToolPayloadsDir(): string {
+  return join(getCodexHomeDir(), 'cursor-tool-payloads')
+}
+
+function safeCursorToolPayloadThreadId(threadId: string): string {
+  const sanitized = threadId.replace(/[^A-Za-z0-9_-]/gu, '_')
+  return sanitized.length > 0 ? sanitized : 'unknown'
+}
+
+async function deleteCursorToolPayloadsForThread(threadId: string): Promise<void> {
+  if (!threadId) return
+  await rm(join(getCursorToolPayloadsDir(), safeCursorToolPayloadThreadId(threadId)), { recursive: true, force: true })
 }
 
 type ThreadAutomationStatus = 'ACTIVE' | 'PAUSED'
@@ -6731,6 +6792,14 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 	          setJson(res, 200, { result: { title: '' } })
 	          return
 	        }
+
+        if (body.method === 'thread/archive') {
+          const paramsRecord = asRecord(body.params)
+          const threadId = readNonEmptyString(paramsRecord?.threadId)
+          if (threadId) {
+            await deleteCursorToolPayloadsForThread(threadId).catch(() => undefined)
+          }
+        }
 
 	        if (body.method === 'account/rateLimits/read' && !(await hasUsableCodexAuth())) {
 	          setJson(res, 200, { result: null })

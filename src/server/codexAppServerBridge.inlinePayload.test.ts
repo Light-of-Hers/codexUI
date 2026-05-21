@@ -185,6 +185,60 @@ describe('thread inline media sanitization', () => {
     expect(existsSync(gifPath)).toBe(true)
   })
 
+  it('inlines valid Cursor tool payload references from the Codex payload directory', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'codex-home-'))
+    vi.stubEnv('CODEX_HOME', codexHome)
+    const payloadPath = join(codexHome, 'cursor-tool-payloads', 'thread-1', 'tool_1.json')
+    await mkdir(join(codexHome, 'cursor-tool-payloads', 'thread-1'), { recursive: true })
+    await writeFile(payloadPath, JSON.stringify({
+      type: 'cursor_tool_call',
+      subtype: 'completed',
+      call_id: 'tool_1',
+      tool: 'shell',
+      arguments: { command: 'pwd' },
+      output: { success: { exitCode: 0, stdout: '/tmp\n' } },
+    }), 'utf8')
+
+    const result = await sanitizeThreadTurnsInlinePayloads('thread/read', {
+      thread: {
+        turns: [{
+          id: 'turn-1',
+          items: [{
+            id: 'message-1',
+            type: 'agentMessage',
+            text: `Ran \`pwd\`\n  └ payload: ${payloadPath}`,
+          }],
+        }],
+      },
+    }) as { thread: { turns: Array<{ items: Array<{ text: string }> }> } }
+
+    expect(result.thread.turns[0].items[0].text).toContain('<codex-ui-data>')
+    expect(result.thread.turns[0].items[0].text).toContain('"type":"cursor_tool_call"')
+  })
+
+  it('does not inline non-Cursor JSON files that happen to match the payload line shape', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'codex-home-'))
+    vi.stubEnv('CODEX_HOME', codexHome)
+    const payloadPath = join(codexHome, 'cursor-tool-payloads', 'thread-1', 'note.json')
+    await mkdir(join(codexHome, 'cursor-tool-payloads', 'thread-1'), { recursive: true })
+    await writeFile(payloadPath, JSON.stringify({ type: 'note', text: 'not a tool call' }), 'utf8')
+
+    const result = await sanitizeThreadTurnsInlinePayloads('thread/read', {
+      thread: {
+        turns: [{
+          id: 'turn-1',
+          items: [{
+            id: 'message-1',
+            type: 'agentMessage',
+            text: `Please inspect this file:\n  └ payload: ${payloadPath}`,
+          }],
+        }],
+      },
+    }) as { thread: { turns: Array<{ items: Array<{ text: string }> }> } }
+
+    expect(result.thread.turns[0].items[0].text).not.toContain('<codex-ui-data>')
+  })
+
   it('externalizes nested replacement history image URLs', async () => {
     const result = await sanitizeThreadTurnsInlinePayloads('thread/read', {
       thread: {

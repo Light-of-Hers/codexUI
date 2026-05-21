@@ -139,12 +139,12 @@ Reply with &lt;/instructions&gt; and A &amp; B
       type: 'agentMessage',
       id: 'cursor-tool-1',
       text: [
-        '[cursor tool_call completed]',
+        'Cursor shell completed',
         'call_id: call_1_fc_2',
-        'tool: shell',
-        'arguments: {"command":"ls -la","workingDirectory":"/tmp/project"}',
-        'output:',
-        '{"success":{"command":"ls -la","exitCode":0,"stdout":"total 1\\n-rw-r--r-- file\\n","stderr":"","interleavedOutput":"total 1\\n-rw-r--r-- file\\n","workingDirectory":"/tmp/project"}}',
+        'args: {"command":"ls -la","workingDirectory":"/tmp/project"}',
+        'command: ls -la',
+        'cwd: /tmp/project',
+        'output: {"success":{"command":"ls -la","exitCode":0,"stdout":"total 1\\n-rw-r--r-- file\\n","stderr":"","interleavedOutput":"total 1\\n-rw-r--r-- file\\n","workingDirectory":"/tmp/project"}}',
       ].join('\n'),
     }]))
 
@@ -164,19 +164,90 @@ Reply with &lt;/instructions&gt; and A &amp; B
     })
   })
 
+  it('renders Cursor shell tool-call commentary from hidden full payload', () => {
+    const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
+      type: 'agentMessage',
+      id: 'cursor-tool-hidden',
+      text: [
+        'Ran `ls -la`',
+        '  └ total 1',
+        '    -rw-r--r-- file',
+        '  └ payload: /tmp/cursor-tool-payloads/thread/call_hidden_1.json',
+        '<codex-ui-data>{"type":"cursor_tool_call","subtype":"completed","call_id":"call_hidden_1","tool":"shell","arguments":{"command":"ls -la","workingDirectory":"/tmp/project"},"status":null,"output":{"success":{"command":"ls -la","exitCode":0,"stdout":"total 1\\n-rw-r--r-- file\\n","stderr":"","interleavedOutput":"total 1\\n-rw-r--r-- file\\n","workingDirectory":"/tmp/project"}}}</codex-ui-data>',
+      ].join('\n'),
+    }]))
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({
+      id: 'cursor-command-call_hidden_1',
+      role: 'system',
+      text: 'ls -la',
+      messageType: 'commandExecution',
+      commandExecution: {
+        command: 'ls -la',
+        cwd: '/tmp/project',
+        status: 'completed',
+        aggregatedOutput: 'total 1\n-rw-r--r-- file\n',
+        exitCode: 0,
+      },
+    })
+  })
+
+  it('does not render payload-path-only Cursor commentary as a fake tool card', () => {
+    const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
+      type: 'agentMessage',
+      id: 'cursor-tool-path-only',
+      text: [
+        'Ran `ls -la`',
+        '  └ total 1',
+        '  └ payload: /tmp/cursor-tool-payloads/thread/call_path_only.json',
+      ].join('\n'),
+    }]))
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({
+      id: 'cursor-tool-path-only',
+      role: 'assistant',
+      messageType: 'agentMessage',
+    })
+  })
+
   it('hides incomplete Cursor shell tool-call commentary from persisted history', () => {
     const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
       type: 'agentMessage',
       id: 'cursor-tool-started',
       text: [
-        '[cursor tool_call started]',
+        'Cursor shell running',
         'call_id: call_1_fc_2',
-        'tool: shell',
-        'arguments: {"command":"ls -la","workingDirectory":"/tmp/project"}',
+        'args: {"command":"ls -la","workingDirectory":"/tmp/project"}',
+        'command: ls -la',
       ].join('\n'),
     }]))
 
     expect(messages).toEqual([])
+  })
+
+  it('renders non-shell Cursor tool-call commentary without raw protocol text', () => {
+    const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
+      type: 'agentMessage',
+      id: 'cursor-read-tool',
+      text: [
+        'Cursor tool `read` completed',
+        'call_id: call_read_1',
+        'args: {"path":"src/index.ts"}',
+        'output: {"content":"export const ok = true\\n"}',
+      ].join('\n'),
+    }]))
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({
+      id: 'cursor-tool-call_read_1',
+      role: 'system',
+      messageType: 'cursorToolCall',
+    })
+    expect(messages[0]?.text).toContain('Cursor tool `read` completed.')
+    expect(messages[0]?.text).toContain('"path": "src/index.ts"')
+    expect(messages[0]?.text).not.toContain('[cursor tool_call')
   })
 
   it('marks Cursor shell tool-call errors as failed command executions', () => {
@@ -184,12 +255,12 @@ Reply with &lt;/instructions&gt; and A &amp; B
       type: 'agentMessage',
       id: 'cursor-tool-error',
       text: [
-        '[cursor tool_call completed]',
+        'Cursor shell completed (exit 1)',
         'call_id: call_error_fc_2',
-        'tool: shell',
-        'arguments: {"command":"false","workingDirectory":"/tmp/project"}',
-        'output:',
-        '{"error":{"message":"command failed"}}',
+        'args: {"command":"false","workingDirectory":"/tmp/project"}',
+        'command: false',
+        'cwd: /tmp/project',
+        'output: {"error":{"message":"command failed"}}',
       ].join('\n'),
     }]))
 
@@ -212,12 +283,12 @@ Reply with &lt;/instructions&gt; and A &amp; B
       type: 'agentMessage',
       id: 'cursor-tool-failure',
       text: [
-        '[cursor tool_call completed]',
+        'Cursor shell completed (exit 1)',
         'call_id: call_failure_fc_2',
-        'tool: shell',
-        'arguments: {"command":"printf \\"recursive_files_excluding_git \\"; false","workingDirectory":"/tmp/project"}',
-        'output:',
-        '{"failure":{"command":"printf \\"recursive_files_excluding_git \\"; false","exitCode":1,"stdout":"recursive_files_excluding_git 185664\\ntop_level_regular_files 14\\n","stderr":"","interleavedOutput":"recursive_files_excluding_git 185664\\ntop_level_regular_files 14\\n","workingDirectory":"/tmp/project"},"isBackground":false}',
+        'args: {"command":"printf \\"recursive_files_excluding_git \\"; false","workingDirectory":"/tmp/project"}',
+        'command: printf "recursive_files_excluding_git "; false',
+        'cwd: /tmp/project',
+        'output: {"failure":{"command":"printf \\"recursive_files_excluding_git \\"; false","exitCode":1,"stdout":"recursive_files_excluding_git 185664\\ntop_level_regular_files 14\\n","stderr":"","interleavedOutput":"recursive_files_excluding_git 185664\\ntop_level_regular_files 14\\n","workingDirectory":"/tmp/project"},"isBackground":false}',
       ].join('\n'),
     }]))
 

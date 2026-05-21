@@ -41,7 +41,12 @@ import {
   type ThreadQueueState,
   type WorkspaceRootsState,
 } from '../api/codexGateway'
-import { isIncompleteCursorToolCallText, parseCursorToolCommandMessage } from '../api/normalizers/cursorToolCalls'
+import {
+  cursorToolCallDisplayIdFromText,
+  isCursorToolCallText,
+  isIncompleteCursorToolCallText,
+  parseCursorToolMessage,
+} from '../api/normalizers/cursorToolCalls'
 import { normalizeFileChangeStatus, toUiFileChanges } from '../api/normalizers/v2'
 import type {
   CollaborationModeKind,
@@ -908,6 +913,12 @@ function removeRedundantLiveAgentMessages(previous: UiMessage[], incoming: UiMes
 function removePersistedLiveMessages(previous: UiMessage[], incoming: UiMessage[]): UiMessage[] {
   const incomingIds = new Set(incoming.map((message) => message.id))
   const next = previous.filter((message) => !incomingIds.has(message.id))
+  return next.length === previous.length ? previous : next
+}
+
+function removeLiveAgentMessagesByIds(previous: UiMessage[], ids: Set<string>): UiMessage[] {
+  if (ids.size === 0) return previous
+  const next = previous.filter((message) => !ids.has(message.id))
   return next.length === previous.length ? previous : next
 }
 
@@ -3782,7 +3793,7 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
     return null
   }
 
-  function readAgentMessageCompleted(notification: RpcNotification): UiMessage | null {
+  function readAgentMessageCompleted(notification: RpcNotification): { message: UiMessage; sourceItemId: string; sourceText: string } | null {
     const params = asRecord(notification.params)
     if (!params) return null
 
@@ -3792,16 +3803,20 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
       const id = readString(item.id)
       const text = readString(item.text)
       if (!id || !text) return null
-      const cursorToolCommand = parseCursorToolCommandMessage(id, text, { includeInProgress: true })
-      if (cursorToolCommand) {
-        return cursorToolCommand
+      const cursorToolMessage = parseCursorToolMessage(id, text, { includeInProgress: true })
+      if (cursorToolMessage) {
+        return { message: cursorToolMessage, sourceItemId: id, sourceText: text }
       }
       if (isIncompleteCursorToolCallText(text)) return null
       return {
-        id,
-        role: 'assistant',
-        text,
-        messageType: 'agentMessage.live',
+        message: {
+          id,
+          role: 'assistant',
+          text,
+          messageType: 'agentMessage.live',
+        },
+        sourceItemId: id,
+        sourceText: text,
       }
     }
 
@@ -4181,21 +4196,41 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
       const existing = (liveAgentMessagesByThreadId.value[notificationThreadId] ?? [])
         .find((message) => message.id === liveAgentMessageDelta.messageId)
       const nextText = `${existing?.text ?? ''}${liveAgentMessageDelta.delta}`
-      upsertLiveAgentMessage(notificationThreadId, {
-        id: liveAgentMessageDelta.messageId,
-        role: 'assistant',
-        text: nextText,
-        messageType: 'agentMessage.live',
-      })
+      if (isCursorToolCallText(nextText)) {
+        const next = removeLiveAgentMessagesByIds(
+          liveAgentMessagesByThreadId.value[notificationThreadId] ?? [],
+          new Set([liveAgentMessageDelta.messageId]),
+        )
+        setLiveAgentMessagesForThread(notificationThreadId, next)
+      } else {
+        upsertLiveAgentMessage(notificationThreadId, {
+          id: liveAgentMessageDelta.messageId,
+          role: 'assistant',
+          text: nextText,
+          messageType: 'agentMessage.live',
+        })
+      }
     }
 
-    const completedAgentMessage = readAgentMessageCompleted(notification)
-    if (completedAgentMessage) {
+    const completedAgentMessageResult = readAgentMessageCompleted(notification)
+    if (completedAgentMessageResult) {
+      const { message: completedAgentMessage, sourceItemId, sourceText } = completedAgentMessageResult
+      const rawCursorToolId = cursorToolCallDisplayIdFromText(sourceText)
+      const idsToRemove = new Set([sourceItemId, completedAgentMessage.id])
+      if (rawCursorToolId) idsToRemove.add(rawCursorToolId)
+      const nextLiveAgent = removeLiveAgentMessagesByIds(
+        liveAgentMessagesByThreadId.value[notificationThreadId] ?? [],
+        idsToRemove,
+      )
+      setLiveAgentMessagesForThread(notificationThreadId, nextLiveAgent)
+
       if (completedAgentMessage.messageType === 'commandExecution') {
         upsertLiveCommand(notificationThreadId, completedAgentMessage)
         if (completedAgentMessage.commandExecution?.status === 'inProgress') {
           setTurnActivityForThread(notificationThreadId, { label: 'Running command', details: [completedAgentMessage.commandExecution.command] })
         }
+      } else if (completedAgentMessage.messageType === 'cursorToolCall') {
+        upsertLiveAgentMessage(notificationThreadId, completedAgentMessage)
       } else {
         upsertLiveAgentMessage(notificationThreadId, completedAgentMessage)
       }

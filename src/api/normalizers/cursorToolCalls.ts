@@ -1,4 +1,4 @@
-import type { CommandExecutionData } from '../../types/codex'
+import type { CommandExecutionData, UiMessage } from '../../types/codex'
 
 export type CursorToolCommandMessage = {
   id: string
@@ -8,27 +8,45 @@ export type CursorToolCommandMessage = {
   commandExecution: CommandExecutionData
 }
 
+export type CursorToolDisplayMessage = UiMessage & {
+  messageType: 'cursorToolCall'
+}
+
 type ParsedCursorToolCall = {
   subtype: string
   callId: string
   tool: string
+  argumentsRaw: string
   arguments: Record<string, unknown> | null
+  outputRaw: string
   output: Record<string, unknown> | null
 }
 
 const CURSOR_TOOL_HEADER = /^\[cursor tool_call ([^\]]+)\]\n/
+const CURSOR_TOOL_COMPACT_HEADER = /^Cursor tool (`?.+?`?) (started|running|completed)(?: \(exit (-?\d+)\))?\n/
+const CURSOR_SHELL_COMPACT_HEADER = /^Cursor shell (running|completed)(?: \(exit (-?\d+)\))?\n/
+const CODEX_UI_DATA_BLOCK = /<codex-ui-data>([\s\S]*?)<\/codex-ui-data>/
+const CODEX_UI_DATA_BASE64_BLOCK = /\[codex-ui-data:base64\]([A-Za-z0-9+/=]+)\[\/codex-ui-data\]/
+const CURSOR_PAYLOAD_FILE_LINE = /^\s*(?:└\s*)?payload:\s*(.+\.json)\s*$/m
+
+export function isCursorToolCallText(value: string): boolean {
+  return parseCursorToolCallText(value) !== null
+}
 
 export function isIncompleteCursorToolCallText(value: string): boolean {
   const parsed = parseCursorToolCallText(value)
   if (!parsed) return false
-  return parsed.subtype !== 'completed' && parsed.output === null
+  return parsed.subtype !== 'completed' && parsed.outputRaw === ''
+}
+
+export function cursorToolCallDisplayIdFromText(value: string): string | null {
+  const parsed = parseCursorToolCallText(value)
+  if (!parsed) return null
+  return cursorToolDisplayId(parsed)
 }
 
 function parseJsonAfterLabel(value: string, label: string): Record<string, unknown> | null {
-  const start = value.indexOf(label)
-  if (start < 0) return null
-  const jsonStart = start + label.length
-  const jsonText = value.slice(jsonStart).trim()
+  const jsonText = parseTextAfterLabel(value, label)
   if (!jsonText) return null
   try {
     const parsed = JSON.parse(jsonText)
@@ -41,11 +59,7 @@ function parseJsonAfterLabel(value: string, label: string): Record<string, unkno
 }
 
 function parseJsonLineAfterLabel(value: string, label: string): Record<string, unknown> | null {
-  const start = value.indexOf(label)
-  if (start < 0) return null
-  const jsonStart = start + label.length
-  const lineEnd = value.indexOf('\n', jsonStart)
-  const jsonText = value.slice(jsonStart, lineEnd < 0 ? undefined : lineEnd).trim()
+  const jsonText = parseLineTextAfterLabel(value, label)
   if (!jsonText) return null
   try {
     const parsed = JSON.parse(jsonText)
@@ -57,24 +71,138 @@ function parseJsonLineAfterLabel(value: string, label: string): Record<string, u
   }
 }
 
+function parseTextAfterLabel(value: string, label: string): string {
+  const start = value.indexOf(label)
+  if (start < 0) return ''
+  return value.slice(start + label.length).trim()
+}
+
+function parseLineTextAfterLabel(value: string, label: string): string {
+  const start = value.indexOf(label)
+  if (start < 0) return ''
+  const jsonStart = start + label.length
+  const lineEnd = value.indexOf('\n', jsonStart)
+  return value.slice(jsonStart, lineEnd < 0 ? undefined : lineEnd).trim()
+}
+
 function readLineValue(value: string, label: string): string {
-  const match = value.match(new RegExp(`^${label}:\\s*(.+)$`, 'm'))
+  const match = value.match(new RegExp(`^\\s*(?:└\\s*)?${label}:\\s*(.+)$`, 'm'))
   return match?.[1]?.trim() ?? ''
 }
 
 function parseCursorToolCallText(value: string): ParsedCursorToolCall | null {
+  const hiddenPayload = parseHiddenCursorToolPayload(value)
+  if (hiddenPayload) return hiddenPayload
+
   const header = value.match(CURSOR_TOOL_HEADER)
-  if (!header) return null
-  const subtype = header[1]?.trim() ?? ''
+  if (header) {
+    const subtype = header[1]?.trim() ?? ''
+    const callId = readLineValue(value, 'call_id')
+    const tool = readLineValue(value, 'tool')
+    if (!subtype || !callId || !tool) return null
+    return {
+      subtype,
+      callId,
+      tool,
+      argumentsRaw: parseLineTextAfterLabel(value, 'arguments:'),
+      arguments: parseJsonLineAfterLabel(value, 'arguments:'),
+      outputRaw: parseTextAfterLabel(value, 'output:'),
+      output: parseJsonAfterLabel(value, 'output:'),
+    }
+  }
+
+  const compactToolHeader = value.match(CURSOR_TOOL_COMPACT_HEADER)
+  const compactShellHeader = value.match(CURSOR_SHELL_COMPACT_HEADER)
+  const compactHeader = compactToolHeader ?? compactShellHeader
+  if (!compactHeader) return null
+
+  const tool = compactToolHeader
+    ? compactToolHeader[1]?.replace(/^`|`$/g, '').trim() ?? ''
+    : 'shell'
+  const subtype = compactToolHeader
+    ? (compactToolHeader[2] ?? 'started')
+    : (compactShellHeader?.[1] === 'completed' ? 'completed' : 'started')
   const callId = readLineValue(value, 'call_id')
-  const tool = readLineValue(value, 'tool')
   if (!subtype || !callId || !tool) return null
   return {
     subtype,
     callId,
     tool,
-    arguments: parseJsonLineAfterLabel(value, 'arguments:'),
+    argumentsRaw: parseLineTextAfterLabel(value, 'args:') || parseLineTextAfterLabel(value, 'arguments:'),
+    arguments: parseJsonLineAfterLabel(value, 'args:') || parseJsonLineAfterLabel(value, 'arguments:'),
+    outputRaw: parseTextAfterLabel(value, 'output:'),
     output: parseJsonAfterLabel(value, 'output:'),
+  }
+}
+
+function parseHiddenCursorToolPayload(value: string): ParsedCursorToolCall | null {
+  const payloadText = readCodexUiPayloadText(value)
+  if (!payloadText) return null
+  let payload: Record<string, unknown>
+  try {
+    const parsed = JSON.parse(payloadText)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+    payload = parsed as Record<string, unknown>
+  } catch {
+    return null
+  }
+  if (payload.type !== 'cursor_tool_call') return null
+
+  const subtype = readString(payload.subtype)
+  const callId = readString(payload.call_id)
+  const tool = readString(payload.tool)
+  if (!subtype || !callId || !tool) return null
+
+  const argumentsValue = payload.arguments
+  const outputValue = payload.output
+  const argumentsRecord = argumentsValue && typeof argumentsValue === 'object' && !Array.isArray(argumentsValue)
+    ? argumentsValue as Record<string, unknown>
+    : null
+  const outputRecord = outputValue && typeof outputValue === 'object' && !Array.isArray(outputValue)
+    ? outputValue as Record<string, unknown>
+    : null
+
+  return {
+    subtype,
+    callId,
+    tool,
+    argumentsRaw: argumentsRecord ? JSON.stringify(argumentsRecord) : '',
+    arguments: argumentsRecord,
+    outputRaw: outputRecord ? JSON.stringify(outputRecord) : '',
+    output: outputRecord,
+  }
+}
+
+export function cursorToolPayloadPathFromText(value: string): string {
+  const match = value.match(CURSOR_PAYLOAD_FILE_LINE)
+  return match?.[1]?.trim() ?? ''
+}
+
+function readCodexUiPayloadText(value: string): string {
+  const base64Match = value.match(CODEX_UI_DATA_BASE64_BLOCK)
+  if (base64Match?.[1]) {
+    return decodeBase64Utf8(base64Match[1])
+  }
+  const xmlMatch = value.match(CODEX_UI_DATA_BLOCK)
+  return xmlMatch?.[1] ?? ''
+}
+
+function decodeBase64Utf8(value: string): string {
+  try {
+    if (typeof atob === 'function') {
+      const binary = atob(value)
+      const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0))
+      return new TextDecoder().decode(bytes)
+    }
+  } catch {
+    // Fall through to Buffer for Node-based tests and server-side normalization.
+  }
+
+  try {
+    const bufferCtor = (globalThis as { Buffer?: { from(value: string, encoding: 'base64'): { toString(encoding: 'utf8'): string } } }).Buffer
+    return bufferCtor?.from(value, 'base64').toString('utf8') ?? ''
+  } catch {
+    return ''
   }
 }
 
@@ -116,6 +244,55 @@ function hasErrorOutput(value: Record<string, unknown> | null): boolean {
   return Boolean(value?.error || value?.failure)
 }
 
+function cursorToolDisplayId(parsed: ParsedCursorToolCall): string {
+  const prefix = parsed.tool === 'shell' ? 'cursor-command' : 'cursor-tool'
+  return parsed.callId ? `${prefix}-${parsed.callId}` : prefix
+}
+
+function cursorToolStatus(parsed: ParsedCursorToolCall): string {
+  if (parsed.subtype === 'completed' || parsed.outputRaw) return 'completed'
+  return parsed.subtype || 'started'
+}
+
+function formatJsonBlock(value: Record<string, unknown> | null, raw: string): string {
+  if (value) return JSON.stringify(value, null, 2)
+  return raw
+}
+
+function formatGenericCursorToolMessage(parsed: ParsedCursorToolCall): string {
+  const lines = [`Cursor tool \`${parsed.tool}\` ${cursorToolStatus(parsed)}.`]
+  const args = formatJsonBlock(parsed.arguments, parsed.argumentsRaw)
+  if (args) {
+    lines.push('', 'Arguments:', '```json', args, '```')
+  }
+  const output = formatJsonBlock(parsed.output, parsed.outputRaw)
+  if (output) {
+    lines.push('', 'Output:', '```json', output, '```')
+  }
+  return lines.join('\n')
+}
+
+export function parseCursorToolMessage(
+  id: string,
+  text: string,
+  options: { includeInProgress?: boolean } = {},
+): CursorToolCommandMessage | CursorToolDisplayMessage | null {
+  const command = parseCursorToolCommandMessage(id, text, options)
+  if (command) return command
+
+  const parsed = parseCursorToolCallText(text)
+  if (!parsed) return null
+  const completed = parsed.subtype === 'completed' || parsed.outputRaw !== ''
+  if (!completed && !options.includeInProgress) return null
+
+  return {
+    id: cursorToolDisplayId(parsed),
+    role: 'system',
+    text: formatGenericCursorToolMessage(parsed),
+    messageType: 'cursorToolCall',
+  }
+}
+
 export function parseCursorToolCommandMessage(
   id: string,
   text: string,
@@ -141,7 +318,7 @@ export function parseCursorToolCommandMessage(
   if (!completed && !options.includeInProgress) return null
 
   return {
-    id: parsed.callId ? `cursor-command-${parsed.callId}` : id,
+    id: parsed.callId ? cursorToolDisplayId(parsed) : id,
     role: 'system',
     text: command,
     messageType: 'commandExecution',
