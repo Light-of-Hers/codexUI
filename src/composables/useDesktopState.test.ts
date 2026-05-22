@@ -577,6 +577,16 @@ describe('Codex CLI availability', () => {
 })
 
 describe('provider model selection', () => {
+  it('does not reuse the new-thread model for an existing thread without a session model', () => {
+    expect(readSelectedModelForThreadContext({
+      '__new-thread__': 'gpt-5.5',
+    }, 'thread-a', 'codex')).toBe('')
+
+    expect(readSelectedModelForThreadContext({
+      '__new-thread__': 'gpt-5.5',
+    }, '', 'codex')).toBe('gpt-5.5')
+  })
+
   it('ignores global selected-model localStorage when OpenCode Zen is the active provider', async () => {
     installTestWindow({
       'codex-web-local.selected-model-by-context.v1': JSON.stringify({
@@ -694,6 +704,92 @@ describe('provider model selection', () => {
       '__new-thread__': 'gpt-5.5',
       '__new-thread-provider__::codex': 'gpt-5.5',
     })
+  })
+})
+
+describe('session composer model state', () => {
+  it('keeps reasoning effort scoped to the composer thread context', () => {
+    installTestWindow()
+
+    const state = useDesktopState()
+
+    state.setSelectedReasoningEffortForThread('__new-thread__', 'high')
+    expect(state.readReasoningEffortForThread('__new-thread__')).toBe('high')
+    expect(state.selectedReasoningEffort.value).toBe('high')
+
+    state.primeSelectedThread('thread-a')
+    expect(state.readReasoningEffortForThread('thread-a')).toBe('')
+    expect(state.selectedReasoningEffort.value).toBe('')
+
+    state.setSelectedReasoningEffortForThread('thread-a', 'none')
+    expect(state.readReasoningEffortForThread('thread-a')).toBe('none')
+    expect(state.selectedReasoningEffort.value).toBe('none')
+
+    state.primeSelectedThread('')
+    expect(state.readReasoningEffortForThread('__new-thread__')).toBe('high')
+    expect(state.selectedReasoningEffort.value).toBe('high')
+  })
+
+  it('hydrates model, provider, and reasoning effort from resumed thread metadata', async () => {
+    installTestWindow()
+    gatewayMocks.resumeThread.mockResolvedValue({
+      model: 'ark-code-latest',
+      modelProvider: 'moon',
+      reasoningEffort: 'high',
+      messages: [],
+      inProgress: false,
+      activeTurnId: '',
+      hasMoreOlder: false,
+      turnIndexByTurnId: {},
+    })
+
+    const state = useDesktopState()
+    state.primeSelectedThread('thread-a')
+
+    await state.loadMessages('thread-a')
+
+    expect(gatewayMocks.resumeThread).toHaveBeenCalledWith('thread-a', undefined, undefined)
+    expect(state.readModelIdForThread('thread-a')).toBe('ark-code-latest')
+    expect(state.selectedModelId.value).toBe('ark-code-latest')
+    expect(state.selectedProvider.value).toBe('moon')
+    expect(state.readReasoningEffortForThread('thread-a')).toBe('high')
+    expect(state.selectedReasoningEffort.value).toBe('high')
+  })
+
+  it('does not let provider refresh overwrite an existing thread model or reasoning effort', async () => {
+    installTestWindow({
+      'codex-web-local.selected-model-by-context.v1': JSON.stringify({
+        'thread-a': 'ark-code-latest',
+      }),
+      'codex-web-local.provider-by-context.v1': JSON.stringify({
+        'thread-a': 'moon',
+      }),
+      'codex-web-local.reasoning-effort-by-context.v1': JSON.stringify({
+        'thread-a': 'high',
+      }),
+    })
+    gatewayMocks.getAvailableCollaborationModes.mockResolvedValue([{ value: 'default', label: 'Default' }])
+    gatewayMocks.getSkillsList.mockResolvedValue([])
+    gatewayMocks.getAccountRateLimits.mockResolvedValue(null)
+    gatewayMocks.getCurrentModelConfig.mockResolvedValue({
+      model: 'gpt-5.5',
+      providerId: 'moon',
+      reasoningEffort: 'none',
+      speedMode: 'standard',
+    })
+    gatewayMocks.getAvailableModelIds.mockResolvedValue(['gpt-5.5'])
+
+    const state = useDesktopState()
+    state.primeSelectedThread('thread-a')
+
+    await state.refreshAncillaryState({ providerChanged: true, includeProviderModels: true })
+
+    expect(state.readModelIdForThread('thread-a')).toBe('ark-code-latest')
+    expect(state.selectedModelId.value).toBe('ark-code-latest')
+    expect(state.selectedProvider.value).toBe('moon')
+    expect(state.readReasoningEffortForThread('thread-a')).toBe('high')
+    expect(state.selectedReasoningEffort.value).toBe('high')
+    expect(state.availableModelIds.value).toContain('ark-code-latest')
   })
 })
 

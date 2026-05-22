@@ -161,18 +161,23 @@ describe('thread history persistence payloads', () => {
 
   it('passes explicit model provider overrides to thread lifecycle RPCs', async () => {
     const { requests } = mockRpcFetchWithResponder((request) => {
-      if (request.method === 'thread/start') return { ...emptyThreadResult('thread-started'), modelProvider: 'moon' }
-      if (request.method === 'thread/resume') return { ...emptyThreadResult('thread-1'), modelProvider: 'moon' }
-      if (request.method === 'thread/fork') return { ...emptyThreadResult('thread-forked'), modelProvider: 'moon' }
+      if (request.method === 'thread/start') return { ...emptyThreadResult('thread-started'), modelProvider: 'moon', reasoningEffort: 'high' }
+      if (request.method === 'thread/resume') return { ...emptyThreadResult('thread-1'), modelProvider: 'moon', reasoningEffort: 'low' }
+      if (request.method === 'thread/fork') return { ...emptyThreadResult('thread-forked'), modelProvider: 'moon', reasoningEffort: 'xhigh' }
       return {}
     })
 
-    await startThread('/tmp/project', 'glm-5.1', 'moon')
-    await resumeThread('thread-1', 'glm-5.1', 'moon')
-    await forkThread('thread-1', '/tmp/project', 'glm-5.1', 'moon')
+    const startedThread = await startThread('/tmp/project', 'glm-5.1', 'moon')
+    const resumedThread = await resumeThread('thread-1', 'glm-5.1', 'moon')
+    const forkedThread = await forkThread('thread-1', '/tmp/project', 'glm-5.1', 'moon')
 
     expect(requests.map((request) => request.params.modelProvider)).toEqual(['moon', 'moon', 'moon'])
     expect(requests.map((request) => request.params.model)).toEqual(['glm-5.1', 'glm-5.1', 'glm-5.1'])
+    expect([startedThread.reasoningEffort, resumedThread.reasoningEffort, forkedThread.reasoningEffort]).toEqual([
+      'high',
+      'low',
+      'xhigh',
+    ])
   })
 })
 

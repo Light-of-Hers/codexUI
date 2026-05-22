@@ -5675,3 +5675,29 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - Restore the preferred provider and model after manual verification.
+
+### Feature: Session switch preserves composer model context
+
+#### Prerequisites
+- App server is running from this repository.
+- At least one existing Moon Bridge session uses Provider `Moon Bridge`, Model `ark-code-latest`, and a non-default reasoning effort.
+- At least one existing Codex session uses a different model/reasoning effort.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Run `./node_modules/.bin/vitest run src/composables/useDesktopState.test.ts src/api/codexGateway.test.ts`.
+2. Open the Moon Bridge session in light theme.
+3. Confirm the composer shows Provider `Moon Bridge`, Model `ark-code-latest`, and that session's reasoning effort.
+4. Switch to the Codex session and confirm the composer changes to that session's own model/reasoning effort.
+5. Switch back to the Moon Bridge session and confirm the composer does not flash or reset to `gpt-5.5` and `None`.
+6. Send a follow-up message in the Moon Bridge session.
+7. Repeat steps 2-6 in dark theme.
+
+#### Expected Results
+- Existing sessions do not inherit the new-session model fallback.
+- `thread/resume` metadata hydrates the session's model, provider, and reasoning effort before the composer is used.
+- Background provider/model refresh does not overwrite an existing session with the current global config.
+- The next turn in the Moon Bridge session still uses `ark-code-latest`.
+
+#### Rollback/Cleanup
+- Restore the preferred provider, model, and reasoning effort after manual verification.

@@ -88,6 +88,7 @@ const THREAD_TERMINAL_OPEN_STORAGE_KEY = 'codex-web-local.thread-terminal-open.v
 const SELECTED_THREAD_STORAGE_KEY = 'codex-web-local.selected-thread-id.v1'
 const SELECTED_MODEL_BY_CONTEXT_STORAGE_KEY = 'codex-web-local.selected-model-by-context.v1'
 const LEGACY_SELECTED_MODEL_STORAGE_KEY = 'codex-web-local.selected-model-id.v1'
+const SELECTED_REASONING_EFFORT_BY_CONTEXT_STORAGE_KEY = 'codex-web-local.reasoning-effort-by-context.v1'
 const PROJECT_ORDER_STORAGE_KEY = 'codex-web-local.project-order.v1'
 const PROJECT_DISPLAY_NAME_STORAGE_KEY = 'codex-web-local.project-display-name.v1'
 const COLLABORATION_MODE_STORAGE_KEY = 'codex-web-local.collaboration-mode-by-context.v1'
@@ -318,6 +319,7 @@ function readSelectedModel(
   const contextId = toThreadContextId(threadId)
   const contextModelId = normalizeStoredModelId(state[contextId])
   if (contextModelId) return contextModelId
+  if (contextId !== NEW_THREAD_COLLABORATION_MODE_CONTEXT) return ''
   return normalizeStoredModelId(state[NEW_THREAD_COLLABORATION_MODE_CONTEXT])
 }
 
@@ -346,6 +348,75 @@ function saveSelectedModelMap(state: Record<string, string>): void {
       window.localStorage.setItem(SELECTED_MODEL_BY_CONTEXT_STORAGE_KEY, JSON.stringify(state))
     }
     window.localStorage.removeItem(LEGACY_SELECTED_MODEL_STORAGE_KEY)
+  } catch {
+    // Keep in-memory selection working even if localStorage writes fail.
+  }
+}
+
+function normalizeStoredReasoningEffort(value: unknown): ReasoningEffort | '' {
+  return typeof value === 'string' && REASONING_EFFORT_OPTIONS.includes(value as ReasoningEffort)
+    ? (value as ReasoningEffort)
+    : ''
+}
+
+function loadSelectedReasoningEffortMap(): Record<string, ReasoningEffort> {
+  if (typeof window === 'undefined') return createStringKeyedRecord<ReasoningEffort>()
+
+  try {
+    const raw = window.localStorage.getItem(SELECTED_REASONING_EFFORT_BY_CONTEXT_STORAGE_KEY)
+    if (!raw) return createStringKeyedRecord<ReasoningEffort>()
+
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return createStringKeyedRecord<ReasoningEffort>()
+    }
+
+    const next = createStringKeyedRecord<ReasoningEffort>()
+    for (const [contextId, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof contextId !== 'string' || contextId.length === 0) continue
+      const normalizedEffort = normalizeStoredReasoningEffort(value)
+      if (normalizedEffort) {
+        next[contextId] = normalizedEffort
+      }
+    }
+    return next
+  } catch {
+    return createStringKeyedRecord<ReasoningEffort>()
+  }
+}
+
+function readSelectedReasoningEffort(
+  state: Record<string, ReasoningEffort>,
+  threadId: string,
+): ReasoningEffort | '' {
+  const contextId = toThreadContextId(threadId)
+  return normalizeStoredReasoningEffort(state[contextId])
+}
+
+function writeSelectedReasoningEffortForContext(
+  state: Record<string, ReasoningEffort>,
+  threadId: string,
+  effort: ReasoningEffort | '',
+): Record<string, ReasoningEffort> {
+  const contextId = toThreadContextId(threadId)
+  const normalizedEffort = normalizeStoredReasoningEffort(effort)
+  if (!normalizedEffort) {
+    return omitStringKeyedRecordKey(state, contextId)
+  }
+
+  const next = cloneStringKeyedRecord(state)
+  next[contextId] = normalizedEffort
+  return next
+}
+
+function saveSelectedReasoningEffortMap(state: Record<string, ReasoningEffort>): void {
+  if (typeof window === 'undefined') return
+  try {
+    if (Object.keys(state).length === 0) {
+      window.localStorage.removeItem(SELECTED_REASONING_EFFORT_BY_CONTEXT_STORAGE_KEY)
+    } else {
+      window.localStorage.setItem(SELECTED_REASONING_EFFORT_BY_CONTEXT_STORAGE_KEY, JSON.stringify(state))
+    }
   } catch {
     // Keep in-memory selection working even if localStorage writes fail.
   }
@@ -1588,13 +1659,16 @@ export function useDesktopState() {
     loadSelectedCollaborationModeMap(),
   )
   const selectedModelIdByContext = ref<Record<string, string>>(loadSelectedModelMap())
+  const selectedReasoningEffortByContext = ref<Record<string, ReasoningEffort>>(loadSelectedReasoningEffortMap())
   const selectedProviderByContext = ref<Record<string, ProviderId>>(loadSelectedProviderMap())
   const selectedCollaborationMode = ref<CollaborationModeKind>(
     readSelectedCollaborationMode(selectedCollaborationModeByContext.value, selectedThreadId.value),
   )
   const selectedModelId = ref(readSelectedModel(selectedModelIdByContext.value, selectedThreadId.value))
   const selectedProvider = ref<ProviderId>(readSelectedProvider(selectedProviderByContext.value, selectedThreadId.value))
-  const selectedReasoningEffort = ref<ReasoningEffort | ''>('medium')
+  const selectedReasoningEffort = ref<ReasoningEffort | ''>(
+    readSelectedReasoningEffort(selectedReasoningEffortByContext.value, selectedThreadId.value),
+  )
   const selectedSpeedMode = ref<SpeedMode>('standard')
   const activeProviderId = ref('')
   const codexCliMissingError = ref('')
@@ -1811,6 +1885,10 @@ export function useDesktopState() {
     )
   }
 
+  function readReasoningEffortForThread(threadId: string): ReasoningEffort | '' {
+    return readSelectedReasoningEffort(selectedReasoningEffortByContext.value, threadId)
+  }
+
   function syncThreadProviderFromModel(threadId: string, modelId: string): void {
     const inferredProvider = inferProviderFromModel(modelId, moonBridgeModelIds.value)
     const normalizedThreadId = threadId.trim()
@@ -1833,11 +1911,38 @@ export function useDesktopState() {
     }
   }
 
-function applyThreadModelStateWithProviderPriority(threadId: string, modelId: string, providerId?: unknown): void {
+  function setSelectedReasoningEffortForThread(threadId: string, effort: ReasoningEffort | ''): void {
+    const normalizedEffort = normalizeStoredReasoningEffort(effort)
+    if (effort && !normalizedEffort) return
+
+    selectedReasoningEffortByContext.value = writeSelectedReasoningEffortForContext(
+      selectedReasoningEffortByContext.value,
+      threadId,
+      normalizedEffort,
+    )
+
+    if (toThreadContextId(threadId) === toThreadContextId(selectedThreadId.value)) {
+      selectedReasoningEffort.value = readReasoningEffortForThread(selectedThreadId.value)
+    }
+
+    saveSelectedReasoningEffortMap(selectedReasoningEffortByContext.value)
+  }
+
+  function applyThreadModelStateWithProviderPriority(
+    threadId: string,
+    modelId: string,
+    providerId?: unknown,
+    reasoningEffort?: unknown,
+  ): void {
     const normalizedThreadId = threadId.trim()
     if (!normalizedThreadId) return
 
     setThreadModelId(normalizedThreadId, modelId)
+
+    const normalizedReasoningEffort = normalizeStoredReasoningEffort(reasoningEffort)
+    if (normalizedReasoningEffort) {
+      setSelectedReasoningEffortForThread(normalizedThreadId, normalizedReasoningEffort)
+    }
 
     // When the thread has an explicit modelProvider (non-empty), use it directly.
     // Empty providerId means codex thread (default), so skip inference entirely.
@@ -1848,7 +1953,7 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
     if (normalizedProvider !== 'codex') {
       setThreadProviderId(normalizedThreadId, normalizedProvider)
     }
- }
+  }
 
   function readThreadRpcProviderId(threadId: string): string {
     return toRpcModelProviderId(readSelectedProvider(selectedProviderByContext.value, threadId))
@@ -1879,6 +1984,7 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
     }
     selectedModelId.value = readModelIdForThread(nextThreadId)
     ensureAvailableModelIds(selectedModelId.value)
+    selectedReasoningEffort.value = readReasoningEffortForThread(nextThreadId)
     selectedCollaborationMode.value = readSelectedCollaborationMode(
       selectedCollaborationModeByContext.value,
       nextThreadId,
@@ -2203,10 +2309,7 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
   }
 
   function setSelectedReasoningEffort(effort: ReasoningEffort | ''): void {
-    if (effort && !REASONING_EFFORT_OPTIONS.includes(effort)) {
-      return
-    }
-    selectedReasoningEffort.value = effort
+    setSelectedReasoningEffortForThread(selectedThreadId.value, effort)
   }
 
   async function updateSelectedSpeedMode(mode: SpeedMode): Promise<void> {
@@ -2311,6 +2414,8 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
       const normalizedProviderId = normalizeProviderContextId(currentConfig.providerId)
       const isProviderBacked = normalizedProviderId !== 'codex'
       activeProviderId.value = normalizedProviderId
+      const selectedContextId = toThreadContextId(selectedThreadId.value)
+      const selectedContextIsNewThread = selectedContextId === NEW_THREAD_COLLABORATION_MODE_CONTEXT
       const normalizedSelectedModelId = readModelIdForThread(selectedThreadId.value)
       const modelIds = await getAvailableModelIds({
         includeProviderModels: options?.includeProviderModels !== false || isProviderBacked,
@@ -2330,9 +2435,12 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
         }
       }
       availableModelIds.value = nextModelIds
+      if (!selectedContextIsNewThread) {
+        ensureAvailableModelIds(normalizedSelectedModelId)
+      }
 
       const currentModelInNewList = normalizedSelectedModelId && modelIds.includes(normalizedSelectedModelId)
-      if (!normalizedSelectedModelId || !currentModelInNewList || options?.providerChanged) {
+      if (selectedContextIsNewThread && (!normalizedSelectedModelId || !currentModelInNewList || options?.providerChanged)) {
         if (options?.providerChanged && nextModelIds.length > 0) {
           if (providerScopedModelId && modelIds.includes(providerScopedModelId)) {
             setSelectedModelId(providerScopedModelId)
@@ -2351,25 +2459,36 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
           setSelectedModelId('')
         }
       } else if (selectedModelId.value.trim() !== normalizedSelectedModelId) {
-        setSelectedModelId(normalizedSelectedModelId)
+        selectedModelId.value = normalizedSelectedModelId
+        ensureAvailableModelIds(normalizedSelectedModelId)
       }
       const nextSelectedModelId = readModelIdForThread(selectedThreadId.value).trim()
       if (selectedModelId.value !== nextSelectedModelId) {
         selectedModelId.value = nextSelectedModelId
         ensureAvailableModelIds(nextSelectedModelId)
       }
-      if (providerModelContextId && nextSelectedModelId.length > 0) {
+      if (selectedContextIsNewThread && providerModelContextId && nextSelectedModelId.length > 0) {
         const nextModelMap = cloneStringKeyedRecord(selectedModelIdByContext.value)
         nextModelMap[providerModelContextId] = nextSelectedModelId
         selectedModelIdByContext.value = nextModelMap
         saveSelectedModelMap(selectedModelIdByContext.value)
       }
 
-      if (
-        currentConfig.reasoningEffort &&
-        REASONING_EFFORT_OPTIONS.includes(currentConfig.reasoningEffort)
-      ) {
-        selectedReasoningEffort.value = currentConfig.reasoningEffort
+      const normalizedConfigReasoningEffort = normalizeStoredReasoningEffort(currentConfig.reasoningEffort)
+      if (selectedContextIsNewThread) {
+        if (
+          normalizedConfigReasoningEffort &&
+          !readReasoningEffortForThread(NEW_THREAD_COLLABORATION_MODE_CONTEXT)
+        ) {
+          setSelectedReasoningEffortForThread(
+            NEW_THREAD_COLLABORATION_MODE_CONTEXT,
+            normalizedConfigReasoningEffort,
+          )
+        } else {
+          selectedReasoningEffort.value = readReasoningEffortForThread(selectedThreadId.value)
+        }
+      } else {
+        selectedReasoningEffort.value = readReasoningEffortForThread(selectedThreadId.value)
       }
       selectedSpeedMode.value = currentConfig.speedMode
     } catch (unknownError) {
@@ -2554,6 +2673,15 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
       selectedModelId.value = readModelIdForThread(selectedThreadId.value)
       ensureAvailableModelIds(selectedModelId.value)
       saveSelectedModelMap(nextSelectedModelMap)
+    }
+    const nextSelectedReasoningEffortMap = pruneThreadContextStateMap(
+      selectedReasoningEffortByContext.value,
+      activeThreadIds,
+    )
+    if (nextSelectedReasoningEffortMap !== selectedReasoningEffortByContext.value) {
+      selectedReasoningEffortByContext.value = nextSelectedReasoningEffortMap
+      selectedReasoningEffort.value = readReasoningEffortForThread(selectedThreadId.value)
+      saveSelectedReasoningEffortMap(nextSelectedReasoningEffortMap)
     }
     const nextSelectedProviderMap = pruneThreadContextStateMap(
       selectedProviderByContext.value,
@@ -4918,6 +5046,12 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
         const detail = resumedThread ?? await getThreadDetail(threadId)
 
         if (resumedThread) {
+          applyThreadModelStateWithProviderPriority(
+            threadId,
+            resumedThread.model,
+            resumedThread.modelProvider,
+            resumedThread.reasoningEffort,
+          )
           resumedThreadById.value = {
             ...resumedThreadById.value,
             [threadId]: true,
@@ -5202,7 +5336,12 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
       if (!nextThreadId) return ''
 
       insertOptimisticThread(nextThreadId, sourceCwd, sourceTitle)
-      applyThreadModelStateWithProviderPriority(nextThreadId, forkedThread.model, forkedThread.modelProvider || sourceProvider)
+      applyThreadModelStateWithProviderPriority(
+        nextThreadId,
+        forkedThread.model,
+        forkedThread.modelProvider || sourceProvider,
+        forkedThread.reasoningEffort,
+      )
       resumedThreadById.value = {
         ...resumedThreadById.value,
         [nextThreadId]: true,
@@ -5257,7 +5396,12 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
       const forkedCwd = forked.cwd.trim() || sourceThread?.cwd?.trim() || ''
       const forkedThreadTitle = toForkedThreadTitle(sourceThread?.title || sourceThread?.preview || 'Untitled thread')
       insertOptimisticThread(forkedThreadId, forkedCwd, forkedThreadTitle)
-      applyThreadModelStateWithProviderPriority(forkedThreadId, forked.model, forked.modelProvider || sourceProvider)
+      applyThreadModelStateWithProviderPriority(
+        forkedThreadId,
+        forked.model,
+        forked.modelProvider || sourceProvider,
+        forked.reasoningEffort,
+      )
       setPersistedMessagesForThread(forkedThreadId, forked.messages)
       loadedMessagesByThreadId.value = {
         ...loadedMessagesByThreadId.value,
@@ -5407,13 +5551,14 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
     error.value = ''
     shouldAutoScrollOnNextAgentEvent = true
     setTurnSummaryForThread(threadId, null)
+    const selectedReasoningEffortForThread = readReasoningEffortForThread(threadId)
     setTurnActivityForThread(
       threadId,
       {
         label: 'Thinking',
         details: buildPendingTurnDetails(
           readModelIdForThread(threadId),
-          selectedReasoningEffort.value,
+          selectedReasoningEffortForThread,
           collaborationModeOverride === 'plan'
             ? 'plan'
             : collaborationModeOverride === 'default'
@@ -5457,6 +5602,7 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
     const nextText = text.trim()
     const targetCwd = cwd.trim()
     const selectedModel = readModelIdForThread(NEW_THREAD_COLLABORATION_MODE_CONTEXT).trim()
+    const selectedReasoningEffortForNewThread = readReasoningEffortForThread(NEW_THREAD_COLLABORATION_MODE_CONTEXT)
     const selectedMode = readSelectedCollaborationMode(
       selectedCollaborationModeByContext.value,
       NEW_THREAD_COLLABORATION_MODE_CONTEXT,
@@ -5476,7 +5622,12 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
           readThreadRpcProviderId('') || undefined,
         )
         threadId = startedThread.threadId
-        applyThreadModelStateWithProviderPriority(threadId, startedThread.model, startedThread.modelProvider || selectedProviderForNewThread)
+        applyThreadModelStateWithProviderPriority(
+          threadId,
+          startedThread.model,
+          startedThread.modelProvider || selectedProviderForNewThread,
+          selectedReasoningEffortForNewThread || startedThread.reasoningEffort,
+        )
         setSelectedCollaborationModeForThread(threadId, selectedMode)
       } catch (unknownError) {
         if (selectedModel && selectedModel !== MODEL_FALLBACK_ID && isUnsupportedChatGptModelError(unknownError)) {
@@ -5487,7 +5638,12 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
             readThreadRpcProviderId('') || undefined,
           )
           threadId = fallbackThread.threadId
-          applyThreadModelStateWithProviderPriority(threadId, fallbackThread.model, fallbackThread.modelProvider || selectedProviderForNewThread)
+          applyThreadModelStateWithProviderPriority(
+            threadId,
+            fallbackThread.model,
+            fallbackThread.modelProvider || selectedProviderForNewThread,
+            selectedReasoningEffortForNewThread || fallbackThread.reasoningEffort,
+          )
           setSelectedCollaborationModeForThread(threadId, selectedMode)
         } else {
           throw unknownError
@@ -5510,7 +5666,7 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
           label: 'Thinking',
           details: buildPendingTurnDetails(
             readModelIdForThread(threadId),
-            selectedReasoningEffort.value,
+            readReasoningEffortForThread(threadId),
             selectedMode,
           ),
         },
@@ -5596,6 +5752,11 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
         readModelIdForThread(threadId) || undefined,
         readThreadRpcProviderId(threadId) || undefined,
       )
+      applyThreadModelStateWithProviderPriority(
+        threadId,
+        resumedThread.model,
+        resumedThread.modelProvider,
+      )
     }
 
     const steeredTurnId = await steerThreadTurn(
@@ -5633,7 +5794,7 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
     fileAttachments: FileAttachment[] = [],
     collaborationModeOverride?: CollaborationModeKind,
   ): Promise<void> {
-    const reasoningEffort = selectedReasoningEffort.value
+    const reasoningEffort = readReasoningEffortForThread(threadId)
     const collaborationMode = collaborationModeOverride === 'plan' ? 'plan' : collaborationModeOverride === 'default'
       ? 'default'
       : selectedCollaborationMode.value
@@ -5667,6 +5828,11 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
           threadId,
           readModelIdForThread(threadId) || undefined,
           readThreadRpcProviderId(threadId) || undefined,
+        )
+        applyThreadModelStateWithProviderPriority(
+          threadId,
+          resumedThread.model,
+          resumedThread.modelProvider,
         )
       }
       const modelId = readModelIdForThread(threadId)
@@ -6309,11 +6475,13 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
     steerQueuedMessage,
     setSelectedCollaborationMode,
     readModelIdForThread,
+    readReasoningEffortForThread,
     setSelectedModelIdForThread,
     setSelectedModelId,
     setSelectedProviderForComposerContext,
     setSelectedProvider,
 
+    setSelectedReasoningEffortForThread,
     setSelectedReasoningEffort,
     updateSelectedSpeedMode,
     respondToPendingServerRequest,
