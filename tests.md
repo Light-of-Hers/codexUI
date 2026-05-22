@@ -5507,3 +5507,29 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - Restore the preferred provider and model after manual verification.
+
+### Feature: Mobile pending tool calls render in the conversation
+
+#### Prerequisites
+- App server is running from this repository.
+- A mobile-width viewport is available, for example 375x812.
+- A thread can trigger a pending request such as command approval, MCP elicitation, `item/tool/requestUserInput`, or `item/tool/call`.
+- Light theme and dark theme are both available from Settings.
+
+#### Steps
+1. Open the target thread in a mobile-width viewport in light theme.
+2. Trigger a pending tool call or approval request.
+3. Confirm the pending request panel appears at the bottom of the conversation timeline.
+4. Confirm the bottom composer area does not show a second duplicate pending request panel.
+5. Use the action controls in the in-conversation panel and confirm the request is submitted normally.
+6. Repeat steps 1-5 in dark theme.
+7. Repeat with a desktop-width viewport and confirm the pending request panel still appears only in the bottom composer area.
+
+#### Expected Results
+- Mobile users can see and answer pending tool calls directly in the conversation timeline.
+- The same request is not duplicated between the conversation and composer areas.
+- Desktop behavior remains unchanged.
+- The pending request panel remains readable and actionable in light and dark themes.
+
+#### Rollback/Cleanup
+- Decline, cancel, or complete any disposable pending request created for the check.

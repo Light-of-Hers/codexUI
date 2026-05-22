@@ -580,6 +580,16 @@
         </div>
       </li>
       </template>
+      <li
+        v-if="isMobile && latestPendingRequest"
+        class="conversation-item conversation-item-request"
+      >
+        <ThreadPendingRequestPanel
+          :request="latestPendingRequest"
+          :request-count="pendingRequests.length"
+          @respond-server-request="forwardServerRequestReply"
+        />
+      </li>
       <li v-if="liveOverlay" class="conversation-item conversation-item-overlay">
         <div class="message-row">
           <div class="message-stack">
@@ -765,8 +775,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import type { UiFileChange, UiLiveOverlay, UiMessage, UiPlanStep, UiServerRequest } from '../../types/codex'
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import type { UiFileChange, UiLiveOverlay, UiMessage, UiPlanStep, UiServerRequest, UiServerRequestReply } from '../../types/codex'
 import { useFeedbackDiagnostics } from '../../composables/useFeedbackDiagnostics'
 import { useMobile } from '../../composables/useMobile'
 import { useUiLanguage } from '../../composables/useUiLanguage'
@@ -780,6 +790,8 @@ import IconTablerX from '../icons/IconTablerX.vue'
 
 type HighlightJsModule = (typeof import('highlight.js'))['default']
 type MarkdownRendererModule = typeof import('./markdownRenderer')
+
+const ThreadPendingRequestPanel = defineAsyncComponent(() => import('./ThreadPendingRequestPanel.vue'))
 
 const expandedCommandIds = ref<Set<string>>(new Set())
 const collapsedAutoCommandIds = ref<Set<string>>(new Set())
@@ -1233,8 +1245,12 @@ const emit = defineEmits<{
   forkThread: [payload: { threadId: string; turnIndex: number }]
   rollback: [payload: { turnId: string }]
   implementPlan: [payload: { turnId: string }]
-  respondServerRequest: [payload: { id: number; result?: unknown; error?: { code?: number; message: string } }]
+  respondServerRequest: [payload: UiServerRequestReply]
 }>()
+
+function forwardServerRequestReply(payload: UiServerRequestReply): void {
+  emit('respondServerRequest', payload)
+}
 
 const conversationListRef = ref<HTMLElement | null>(null)
 const bottomAnchorRef = ref<HTMLElement | null>(null)
@@ -1369,6 +1385,10 @@ const isLoadingMore = ref(false)
 
 const visibleMessages = computed(() => props.messages.slice(renderWindowStart.value))
 const hasMoreAbove = computed(() => renderWindowStart.value > 0 || props.hasMorePersistedAbove === true)
+const latestPendingRequest = computed(() => {
+  const rows = props.pendingRequests
+  return rows.length > 0 ? rows[rows.length - 1] : null
+})
 
 const showJumpToLatestButton = computed(
   () => !autoFollowOutput.value && (props.messages.length > 0 || props.pendingRequests.length > 0 || Boolean(props.liveOverlay)),

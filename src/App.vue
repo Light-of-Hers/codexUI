@@ -1009,14 +1009,14 @@
                     @terminal-focus-change="onTerminalFocusChange"
                   />
                   <ThreadPendingRequestPanel
-                    v-if="selectedThreadPendingRequest"
+                    v-if="selectedThreadPendingRequest && !isMobile"
                     :request="selectedThreadPendingRequest"
                     :request-count="selectedThreadServerRequests.length"
                     :has-queue-above="selectedThreadQueuedMessages.length > 0"
                     @respond-server-request="onRespondServerRequest"
                   />
                   <ThreadComposer
-                    v-else
+                    v-else-if="!selectedThreadPendingRequest"
                     ref="threadComposerRef"
                     :active-thread-id="composerThreadContextId"
                     :cwd="composerCwd"
