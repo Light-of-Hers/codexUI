@@ -5054,7 +5054,10 @@ onBeforeUnmount(() => {
 }
 
 .plan-card-markdown :deep(.message-code-block) {
-  @apply overflow-hidden rounded-xl border border-slate-200 bg-slate-950/95 text-slate-100;
+  @apply overflow-hidden rounded-xl border;
+  border-color: var(--message-code-border, #d0d7de);
+  background: var(--message-code-bg, #f6f8fa);
+  color: var(--message-code-fg, #24292f);
   font-family: var(--conversation-code-font-family);
   font-weight: var(--conversation-code-font-weight);
   font-synthesis: none;
@@ -5063,7 +5066,9 @@ onBeforeUnmount(() => {
 }
 
 .plan-card-markdown :deep(.message-code-language) {
-  @apply border-b border-slate-800 bg-slate-900/90 px-3 py-2 text-[11px] font-medium uppercase tracking-[0.08em] text-slate-400;
+  @apply border-b px-3 py-2 text-[11px] font-medium uppercase tracking-[0.08em];
+  border-color: var(--message-code-header-border, #d0d7de);
+  color: var(--message-code-header-fg, #57606a);
   font-family: inherit;
   font-weight: inherit;
   font-synthesis: inherit;
@@ -5303,7 +5308,10 @@ onBeforeUnmount(() => {
 }
 
 .message-code-block {
-  @apply overflow-hidden rounded-xl border border-slate-200 bg-slate-950 text-slate-100;
+  @apply overflow-hidden rounded-xl border;
+  border-color: var(--message-code-border, #d0d7de);
+  background: var(--message-code-bg, #f6f8fa);
+  color: var(--message-code-fg, #24292f);
   font-family: var(--conversation-code-font-family);
   font-weight: var(--conversation-code-font-weight);
   font-synthesis: none;
@@ -5312,7 +5320,9 @@ onBeforeUnmount(() => {
 }
 
 .message-code-language {
-  @apply border-b border-slate-800 px-3 py-2 text-[11px] font-mono uppercase tracking-[0.08em] text-slate-400;
+  @apply border-b px-3 py-2 text-[11px] font-mono uppercase tracking-[0.08em];
+  border-color: var(--message-code-header-border, #d0d7de);
+  color: var(--message-code-header-fg, #57606a);
   font-family: inherit;
   font-weight: inherit;
   font-synthesis: inherit;
@@ -5326,7 +5336,8 @@ onBeforeUnmount(() => {
 }
 
 .message-code-pre :deep(.hljs) {
-  @apply block bg-transparent p-0 text-inherit;
+  @apply block bg-transparent p-0;
+  color: var(--message-code-fg, #24292f);
   font-family: inherit;
   font-weight: inherit;
   font-synthesis: inherit;

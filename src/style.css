@@ -472,11 +472,14 @@
 }
 
 :root.dark .thread-composer-preview.thread-composer-preview .message-code-block {
-  @apply border-zinc-700 bg-zinc-950 text-zinc-100;
+  border-color: var(--message-code-border);
+  background: var(--message-code-bg);
+  color: var(--message-code-fg);
 }
 
 :root.dark .thread-composer-preview.thread-composer-preview .message-code-language {
-  @apply border-zinc-800 text-zinc-400;
+  border-color: var(--message-code-header-border);
+  color: var(--message-code-header-fg);
 }
 
 :root.dark .thread-composer-preview.thread-composer-preview .message-file-link {
@@ -1080,7 +1083,29 @@
 }
 
 .message-code-block {
-  @apply overflow-hidden rounded-xl border border-slate-200 bg-slate-950 text-slate-100;
+  --message-code-bg: #f6f8fa;
+  --message-code-fg: #24292f;
+  --message-code-border: #d0d7de;
+  --message-code-header-fg: #57606a;
+  --message-code-header-border: #d0d7de;
+  --syntax-keyword: #d73a49;
+  --syntax-entity: #6f42c1;
+  --syntax-constant: #005cc5;
+  --syntax-string: #032f62;
+  --syntax-variable: #e36209;
+  --syntax-comment: #6a737d;
+  --syntax-entity-tag: #22863a;
+  --syntax-subst: #24292f;
+  --syntax-markup-heading: #005cc5;
+  --syntax-markup-list: #735c0f;
+  --syntax-addition-fg: #22863a;
+  --syntax-addition-bg: #f0fff4;
+  --syntax-deletion-fg: #b31d28;
+  --syntax-deletion-bg: #ffeef0;
+  @apply overflow-hidden rounded-xl border;
+  border-color: var(--message-code-border);
+  background: var(--message-code-bg);
+  color: var(--message-code-fg);
   font-family: var(--codex-code-font-family);
   font-weight: var(--codex-code-font-weight);
   font-synthesis: none;
@@ -1089,7 +1114,9 @@
 }
 
 .message-code-language {
-  @apply border-b border-slate-800 px-3 py-2 text-[11px] font-mono uppercase tracking-[0.08em] text-slate-400;
+  @apply border-b px-3 py-2 text-[11px] font-mono uppercase tracking-[0.08em];
+  border-color: var(--message-code-header-border);
+  color: var(--message-code-header-fg);
   font-family: inherit;
   font-weight: inherit;
   font-synthesis: inherit;
@@ -1103,7 +1130,8 @@
 }
 
 .message-code-pre .hljs {
-  @apply block bg-transparent p-0 text-inherit;
+  @apply block bg-transparent p-0;
+  color: var(--message-code-fg);
   font-family: inherit;
   font-weight: inherit;
   font-synthesis: inherit;
@@ -1113,6 +1141,93 @@
   font-family: inherit;
   font-weight: inherit;
   font-synthesis: inherit;
+}
+
+.message-code-pre .hljs-doctag,
+.message-code-pre .hljs-keyword,
+.message-code-pre .hljs-meta .hljs-keyword,
+.message-code-pre .hljs-template-tag,
+.message-code-pre .hljs-template-variable,
+.message-code-pre .hljs-type,
+.message-code-pre .hljs-variable.language_ {
+  color: var(--syntax-keyword);
+}
+
+.message-code-pre .hljs-title,
+.message-code-pre .hljs-title.class_,
+.message-code-pre .hljs-title.class_.inherited__,
+.message-code-pre .hljs-title.function_ {
+  color: var(--syntax-entity);
+}
+
+.message-code-pre .hljs-attr,
+.message-code-pre .hljs-attribute,
+.message-code-pre .hljs-literal,
+.message-code-pre .hljs-meta,
+.message-code-pre .hljs-number,
+.message-code-pre .hljs-operator,
+.message-code-pre .hljs-variable,
+.message-code-pre .hljs-selector-attr,
+.message-code-pre .hljs-selector-class,
+.message-code-pre .hljs-selector-id {
+  color: var(--syntax-constant);
+}
+
+.message-code-pre .hljs-regexp,
+.message-code-pre .hljs-string,
+.message-code-pre .hljs-meta .hljs-string {
+  color: var(--syntax-string);
+}
+
+.message-code-pre .hljs-built_in,
+.message-code-pre .hljs-symbol {
+  color: var(--syntax-variable);
+}
+
+.message-code-pre .hljs-comment,
+.message-code-pre .hljs-code,
+.message-code-pre .hljs-formula {
+  color: var(--syntax-comment);
+}
+
+.message-code-pre .hljs-name,
+.message-code-pre .hljs-quote,
+.message-code-pre .hljs-selector-tag,
+.message-code-pre .hljs-selector-pseudo {
+  color: var(--syntax-entity-tag);
+}
+
+.message-code-pre .hljs-subst {
+  color: var(--syntax-subst);
+}
+
+.message-code-pre .hljs-section {
+  color: var(--syntax-markup-heading);
+  font-weight: 600;
+}
+
+.message-code-pre .hljs-bullet {
+  color: var(--syntax-markup-list);
+}
+
+.message-code-pre .hljs-emphasis {
+  color: var(--message-code-fg);
+  font-style: italic;
+}
+
+.message-code-pre .hljs-strong {
+  color: var(--message-code-fg);
+  font-weight: 600;
+}
+
+.message-code-pre .hljs-addition {
+  color: var(--syntax-addition-fg);
+  background-color: var(--syntax-addition-bg);
+}
+
+.message-code-pre .hljs-deletion {
+  color: var(--syntax-deletion-fg);
+  background-color: var(--syntax-deletion-bg);
 }
 
 @media (max-width: 768px), (pointer: coarse) {
@@ -1198,11 +1313,33 @@
 }
 
 :root.dark .message-code-block {
-  @apply border-zinc-700 bg-zinc-950 text-zinc-100;
+  --message-code-bg: #0d1117;
+  --message-code-fg: #c9d1d9;
+  --message-code-border: #30363d;
+  --message-code-header-fg: #8b949e;
+  --message-code-header-border: #30363d;
+  --syntax-keyword: #ff7b72;
+  --syntax-entity: #d2a8ff;
+  --syntax-constant: #79c0ff;
+  --syntax-string: #a5d6ff;
+  --syntax-variable: #ffa657;
+  --syntax-comment: #8b949e;
+  --syntax-entity-tag: #7ee787;
+  --syntax-subst: #c9d1d9;
+  --syntax-markup-heading: #1f6feb;
+  --syntax-markup-list: #f2cc60;
+  --syntax-addition-fg: #aff5b4;
+  --syntax-addition-bg: #033a16;
+  --syntax-deletion-fg: #ffdcd7;
+  --syntax-deletion-bg: #67060c;
+  border-color: var(--message-code-border);
+  background: var(--message-code-bg);
+  color: var(--message-code-fg);
 }
 
 :root.dark .message-code-language {
-  @apply border-zinc-800 text-zinc-400;
+  border-color: var(--message-code-header-border);
+  color: var(--message-code-header-fg);
 }
 
 :root.dark .message-divider {

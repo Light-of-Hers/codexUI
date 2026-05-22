@@ -5529,6 +5529,28 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Rollback/Cleanup
 - Restore the preferred provider and model after manual verification.
 
+### Feature: Conversation GitHub-style code block highlighting
+
+#### Prerequisites
+- App server is running from this repository.
+- A chat thread or composer preview can render a fenced code block with a language tag such as `ts`, `js`, `py`, or `rs`.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Open a thread containing a fenced code block in light theme.
+2. Confirm the code block uses a GitHub-like light surface with distinct keyword, string, comment, number, function, tag, and diff colors.
+3. Switch to dark theme and confirm the same code block uses GitHub dark syntax colors.
+4. Open composer Markdown preview with a fenced code block and repeat the light and dark checks.
+5. Confirm plan-card Markdown code blocks, when present, use the same colors as regular conversation code blocks.
+
+#### Expected Results
+- Conversation code blocks use GitHub-style light and dark highlighting rather than the old always-dark slate block.
+- Code block language labels, borders, foreground text, and syntax colors remain readable in both themes.
+- Composer preview and plan-card Markdown code blocks match the conversation code block styling.
+
+#### Rollback/Cleanup
+- No cleanup is required.
+
 ### Feature: Mobile pending tool calls render in the conversation
 
 #### Prerequisites
