@@ -2505,10 +2505,13 @@ function readSessionMessageText(payload: Record<string, unknown>): string {
 
 function buildSessionItemOrder(sessionLogRaw: string, turnIds: Set<string>): Map<string, SessionItemSlot[]> {
   let currentTurnId = ''
+  let orphanResponseTurnId = ''
   const orderByTurnId = new Map<string, SessionItemSlot[]>()
   const callIdToCommand = new Map<string, SessionRecoveredCommand>()
+  const lines = sessionLogRaw.split('\n')
 
-  for (const line of sessionLogRaw.split('\n')) {
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex]!
     if (!line.trim()) continue
     let row: Record<string, unknown> | null = null
     try {
@@ -2520,24 +2523,35 @@ function buildSessionItemOrder(sessionLogRaw: string, turnIds: Set<string>): Map
     if (row.type === 'turn_context') {
       const p = asRecord(row.payload)
       currentTurnId = readNonEmptyString(p?.turn_id) || currentTurnId
+      orphanResponseTurnId = ''
       continue
     }
     if (row.type === 'event_msg') {
       const p = asRecord(row.payload)
       if (p?.type === 'task_started') {
         currentTurnId = readNonEmptyString(p.turn_id) || currentTurnId
+        orphanResponseTurnId = ''
+      } else if (p?.type === 'task_complete') {
+        currentTurnId = ''
+        orphanResponseTurnId = ''
       }
       continue
     }
 
-    if (row.type !== 'response_item' || !currentTurnId || !turnIds.has(currentTurnId)) continue
+    if (row.type !== 'response_item') continue
+    let targetTurnId = currentTurnId
+    if (!targetTurnId) {
+      orphanResponseTurnId ||= `rollout-${String(lineIndex + 1)}`
+      targetTurnId = orphanResponseTurnId
+    }
+    if (!targetTurnId || !turnIds.has(targetTurnId)) continue
     const payload = asRecord(row.payload)
     if (!payload) continue
 
-    let slots = orderByTurnId.get(currentTurnId)
+    let slots = orderByTurnId.get(targetTurnId)
     if (!slots) {
       slots = []
-      orderByTurnId.set(currentTurnId, slots)
+      orderByTurnId.set(targetTurnId, slots)
     }
 
     if (payload.type === 'message' && payload.role === 'assistant') {

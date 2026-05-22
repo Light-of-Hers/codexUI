@@ -31,14 +31,16 @@ This file tracks manual regression and feature verification steps.
 2. Confirm command execution entries appear in the conversation at their original position between the surrounding user and assistant messages.
 3. For a thread whose stored `thread/read` result has one merged assistant message, confirm command execution entries still appear between the matching assistant text fragments when the session JSONL preserves those fragments.
 4. For a thread whose stored `thread/read` result already contains command execution entries grouped before the assistant text, confirm those existing command cards are reordered between the matching assistant text fragments.
-5. Load older messages in the same thread, if available, and confirm recovered command entries remain visible after pagination.
-6. Switch to light theme and dark theme, then repeat the same thread rendering check.
+5. For a thread that contains `response_item` entries after `task_complete`, confirm recovered command cards appear in the matching `rollout-*` section rather than the previous completed turn.
+6. Load older messages in the same thread, if available, and confirm recovered command entries remain visible after pagination.
+7. Switch to light theme and dark theme, then repeat the same thread rendering check.
 
 #### Expected Results
 - Historical `exec_command` calls recovered from session JSONL render as command execution cards in `thread/read` results.
 - Command cards preserve command text, output, exit code, and duration when available.
 - When session assistant text fragments can be matched to a merged stored assistant message, recovered command cards are interleaved between those fragments instead of being grouped before or after the whole message.
 - Existing recovered command cards are reused and reordered instead of duplicated.
+- Command cards recovered from orphan post-completion `response_item` entries stay with the matching synthesized `rollout-*` assistant messages.
 - Recovered command entries stay ordered with the surrounding conversation items and are not dropped by older-message pagination.
 
 #### Rollback/Cleanup

@@ -669,6 +669,100 @@ describe('thread session skill recovery', () => {
     expect(items[4]).toBe(result.thread.turns[0].items[2])
   })
 
+  it('assigns commands after task completion to the matching rollout turn', () => {
+    const result = {
+      thread: {
+        id: 'thread-1',
+        path: '/tmp/session.jsonl',
+        turns: [
+          {
+            id: 'turn-1',
+            items: [
+              {
+                id: 'user-1',
+                type: 'userMessage',
+                content: [{ type: 'text', text: 'continue', text_elements: [] }],
+              },
+              {
+                id: 'agent-1',
+                type: 'agentMessage',
+                text: 'Initial answer.',
+              },
+            ],
+          },
+          {
+            id: 'rollout-4',
+            items: [{
+              id: 'agent-rollout',
+              type: 'agentMessage',
+              text: 'I will inspect the repo.\nThe repo is clean.',
+            }],
+          },
+        ],
+      },
+    }
+    const sessionLog = [
+      JSON.stringify({ type: 'turn_context', payload: { turn_id: 'turn-1' } }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'Initial answer.' }],
+        },
+      }),
+      JSON.stringify({ type: 'event_msg', payload: { type: 'task_complete', turn_id: 'turn-1' } }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'I will inspect the repo.' }],
+        },
+      }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'function_call',
+          name: 'exec_command',
+          call_id: 'call-status',
+          arguments: JSON.stringify({ cmd: 'git status --short' }),
+        },
+      }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'The repo is clean.' }],
+        },
+      }),
+    ].join('\n')
+
+    const merged = mergeRecoveredTurnItemsIntoThreadResult(
+      result,
+      (_threadId, turns) => turns,
+      sessionLog,
+    ) as typeof result
+    const firstTurnItems = merged.thread.turns[0].items
+    const rolloutItems = merged.thread.turns[1].items
+
+    expect(firstTurnItems.map((item) => item.type)).toEqual(['userMessage', 'agentMessage'])
+    expect(rolloutItems.map((item) => item.type)).toEqual([
+      'agentMessage',
+      'commandExecution',
+      'agentMessage',
+    ])
+    expect(rolloutItems.map((item) => {
+      const record = item as Record<string, unknown>
+      return record.type === 'agentMessage' ? record.text : record.command
+    })).toEqual([
+      'I will inspect the repo.',
+      'git status --short',
+      '\nThe repo is clean.',
+    ])
+  })
+
   it('adds selected skill inputs from session JSONL to matching user messages', () => {
     const turns = [{
       id: 'turn-1',
