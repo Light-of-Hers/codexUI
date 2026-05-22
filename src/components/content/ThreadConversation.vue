@@ -1072,6 +1072,24 @@ function onCodeBlockSelectAllKeydown(event: KeyboardEvent, block: HTMLElement): 
   event.stopPropagation()
 }
 
+function closestCodeBlockFromNode(node: Node | null): HTMLElement | null {
+  if (!node) return null
+  const element = node instanceof Element ? node : node.parentElement
+  const block = element?.closest('.message-code-block') ?? null
+  return block instanceof HTMLElement ? block : null
+}
+
+function findActiveCodeBlock(eventTarget: EventTarget | null): HTMLElement | null {
+  const targetBlock = eventTarget instanceof Node ? closestCodeBlockFromNode(eventTarget) : null
+  if (targetBlock) return targetBlock
+
+  const activeBlock = closestCodeBlockFromNode(document.activeElement)
+  if (activeBlock) return activeBlock
+
+  const selection = window.getSelection()
+  return closestCodeBlockFromNode(selection?.anchorNode ?? null)
+}
+
 function isPlanMessage(message: UiMessage): boolean {
   return message.messageType === 'plan' || message.messageType === 'plan.live'
 }
@@ -3080,6 +3098,12 @@ function onConversationClick(event: MouseEvent): void {
     return
   }
 
+  const codeBlock = target.closest('.message-code-block')
+  if (codeBlock instanceof HTMLElement) {
+    codeBlock.focus({ preventScroll: true })
+    return
+  }
+
   const image = target.closest('img.message-markdown-image')
   if (!(image instanceof HTMLImageElement)) return
   if (image.closest('button.message-image-button')) return
@@ -3093,11 +3117,8 @@ function onConversationClick(event: MouseEvent): void {
 }
 
 function onConversationKeydown(event: KeyboardEvent): void {
-  const target = event.target
-  if (!(target instanceof Element)) return
-
-  const block = target.closest('.message-code-block')
-  if (!(block instanceof HTMLElement)) return
+  const block = findActiveCodeBlock(event.target)
+  if (!block) return
   onCodeBlockSelectAllKeydown(event, block)
 }
 
