@@ -504,7 +504,7 @@
                 <div
                   v-else
                   class="message-text-flow message-markdown-body"
-                  v-memo="[message.id, message.text, props.cwd, highlightCacheVersion, markdownRendererVersion]"
+                  v-memo="[message.id, message.text, props.cwd, linkBasePathCacheKey, highlightCacheVersion, markdownRendererVersion]"
                   v-html="renderProgressiveMarkdownContent(message.text, 'message', markdownRendererVersion)"
                 ></div>
               </article>
@@ -842,6 +842,14 @@ import { useFeedbackDiagnostics } from '../../composables/useFeedbackDiagnostics
 import { useMobile } from '../../composables/useMobile'
 import { useUiLanguage } from '../../composables/useUiLanguage'
 import { getHighlightLanguageForPath, normalizeHighlightLanguage } from '../../utils/codeLanguage.js'
+import {
+  fileReferenceDisplayPath as formatFileReferenceDisplayPath,
+  getBasename as getFileBasename,
+  parseFileReference as parseLocalFileReference,
+  shouldAutoLinkPlainTextFileReference as shouldAutoLinkLocalFileReference,
+  toBrowseUrl as buildBrowseUrl,
+  toRenderableImageUrl as buildRenderableImageUrl,
+} from '../../utils/fileLinkResolver.js'
 
 import IconTablerArrowUp from '../icons/IconTablerArrowUp.vue'
 import IconTablerCopy from '../icons/IconTablerCopy.vue'
@@ -1412,6 +1420,7 @@ const props = defineProps<{
   isLoading: boolean
   activeThreadId: string
   cwd: string
+  linkBasePaths?: string[]
   hasMorePersistedAbove?: boolean
   isLoadingPersistedAbove?: boolean
   loadEarlierMessages?: (threadId: string) => Promise<void>
@@ -1423,6 +1432,8 @@ const emit = defineEmits<{
   implementPlan: [payload: { turnId: string }]
   respondServerRequest: [payload: UiServerRequestReply]
 }>()
+
+const linkBasePathCacheKey = computed(() => (props.linkBasePaths ?? []).join('\u0001'))
 
 function forwardServerRequestReply(payload: UiServerRequestReply): void {
   emit('respondServerRequest', payload)
@@ -2683,14 +2694,14 @@ function splitPlainTextByLinks(text: string, options: { applyMarkdownMarkers?: b
         segments.push({ kind: 'text', value: trailing })
       }
     } else {
-      const ref = parseFileReference(token)
-      if (ref && shouldAutoLinkPlainTextFileReference(ref)) {
+      const ref = parseLocalFileReference(token)
+      if (ref && shouldAutoLinkLocalFileReference(ref)) {
         segments.push({
           kind: 'file',
           value: token,
           path: ref.path,
           displayPath: token,
-          downloadName: getBasename(ref.path),
+          downloadName: getFileBasename(ref.path),
           line: ref.line,
           endLine: ref.endLine,
         })
@@ -2885,14 +2896,14 @@ function splitTextByFileUrls(text: string): InlineSegment[] {
     } else if (/^https?:\/\//u.test(target)) {
       segments.push({ kind: 'url', value: label || target, href: target })
     } else {
-      const ref = parseFileReference(target)
+      const ref = parseLocalFileReference(target)
       if (ref) {
         segments.push({
           kind: 'file',
           value: target,
           path: ref.path,
           displayPath: label || target,
-          downloadName: getBasename(ref.path),
+          downloadName: getFileBasename(ref.path),
           line: ref.line,
           endLine: ref.endLine,
         })
@@ -3001,52 +3012,19 @@ function getInlineSegments(text: string): InlineSegment[] {
 }
 
 function toRenderableImageUrl(value: string): string {
-  const normalized = value.trim()
-  if (!normalized) return ''
-  if (
-    normalized.startsWith('data:') ||
-    normalized.startsWith('blob:') ||
-    normalized.startsWith('http://') ||
-    normalized.startsWith('https://') ||
-    normalized.startsWith('/codex-local-image?')
-  ) {
-    return normalized
-  }
-
-  if (normalized.startsWith('file://')) {
-    return `/codex-local-image?path=${encodeURIComponent(normalized)}`
-  }
-
-  const looksLikeUnixAbsolute = normalized.startsWith('/')
-  const looksLikeWindowsAbsolute = /^[A-Za-z]:[\\/]/u.test(normalized)
-  if (looksLikeUnixAbsolute || looksLikeWindowsAbsolute) {
-    return `/codex-local-image?path=${encodeURIComponent(normalized)}`
-  }
-
-  return normalized
+  return buildRenderableImageUrl(value, {
+    cwd: props.cwd,
+    basePaths: props.linkBasePaths ?? [],
+  })
 }
 
 function toBrowseUrl(pathValue: string, line: number | null = null, endLine: number | null = line): string {
-  const normalized = pathValue.trim()
-  if (!normalized) return '#'
-  const looksLikeAbsolutePath = (candidate: string): boolean => (
-    candidate.startsWith('/') || /^[A-Za-z]:[\\/]/u.test(candidate)
-  )
-
-  const parsed = parseFileReference(normalized)
-  const candidatePath = parsed?.path ?? normalized
-  const resolved = resolveRelativePath(candidatePath, props.cwd)
-
-  if (looksLikeAbsolutePath(resolved)) {
-    const normalizedResolved = resolved.startsWith('/') ? resolved : `/${resolved}`
-    return appendLineQuery(
-      `/codex-local-browse${encodeURI(normalizedResolved)}`,
-      parsed?.line ?? line,
-      parsed?.endLine ?? endLine,
-    )
-  }
-
-  return '#'
+  return buildBrowseUrl(pathValue, {
+    cwd: props.cwd,
+    basePaths: props.linkBasePaths ?? [],
+    line,
+    endLine,
+  })
 }
 
 const fileLinkContextMenuStyle = computed(() => ({
@@ -3853,7 +3831,7 @@ function renderInlineCodeAsHtml(value: string): string {
   const content = splitPlainTextByLinks(value, { applyMarkdownMarkers: false })
     .map((segment) => {
       if (segment.kind === 'file') {
-        return `<a class="message-file-link message-inline-code-link" href="${escapeHtml(toBrowseUrl(segment.path, segment.line, segment.endLine))}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(fileReferenceDisplayPath(segment.path, segment.line, segment.endLine))}">${escapeHtml(segment.displayPath)}</a>`
+        return `<a class="message-file-link message-inline-code-link" href="${escapeHtml(toBrowseUrl(segment.path, segment.line, segment.endLine))}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(formatFileReferenceDisplayPath(segment.path, segment.line, segment.endLine))}">${escapeHtml(segment.displayPath)}</a>`
       }
       if (segment.kind === 'url') {
         return `<a class="message-file-link message-inline-code-link" href="${escapeHtml(segment.href)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(segment.href)}">${escapeHtml(segment.value)}</a>`
@@ -3880,7 +3858,7 @@ function renderInlineSegmentsAsHtml(text: string): string {
         return `<s class="message-strikethrough-text">${escapeHtml(segment.value)}</s>`
       }
       if (segment.kind === 'file') {
-        return `<a class="message-file-link" href="${escapeHtml(toBrowseUrl(segment.path, segment.line, segment.endLine))}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(fileReferenceDisplayPath(segment.path, segment.line, segment.endLine))}">${escapeHtml(segment.displayPath)}</a>`
+        return `<a class="message-file-link" href="${escapeHtml(toBrowseUrl(segment.path, segment.line, segment.endLine))}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(formatFileReferenceDisplayPath(segment.path, segment.line, segment.endLine))}">${escapeHtml(segment.displayPath)}</a>`
       }
       if (segment.kind === 'url') {
         return `<a class="message-file-link" href="${escapeHtml(segment.href)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(segment.href)}">${escapeHtml(segment.value)}</a>`
@@ -3987,7 +3965,7 @@ function renderMessageBlockAsHtml(block: MessageBlock): string {
 }
 
 function renderMarkdownBlocksAsHtml(text: string): string {
-  const cacheKey = `${props.cwd}\u0000${highlightCacheVersion.value}\u0000${text}`
+  const cacheKey = `${props.cwd}\u0000${linkBasePathCacheKey.value}\u0000${highlightCacheVersion.value}\u0000${text}`
   const cached = markdownHtmlCache.get(cacheKey)
   if (cached && cached.text === text && cached.cwd === props.cwd && cached.highlightVersion === highlightCacheVersion.value) {
     markdownHtmlCache.delete(cacheKey)
@@ -4021,6 +3999,7 @@ function renderProgressiveMarkdownContent(
   }
   return addCodeBlockCopyButtons(renderer.renderMarkdownContent(text, {
     cwd: props.cwd,
+    basePaths: props.linkBasePaths ?? [],
     kind,
     highlightVersion: highlightCacheVersion.value,
   }).html)

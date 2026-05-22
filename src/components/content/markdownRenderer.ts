@@ -9,9 +9,19 @@ import remarkRehype from 'remark-rehype'
 import { all as lowlightAll } from 'lowlight'
 import { unified } from 'unified'
 import { HIGHLIGHT_LANGUAGE_ALIASES } from '../../utils/codeLanguage.js'
+import {
+  fileReferenceDisplayPath as formatFileReferenceDisplayPath,
+  normalizeFileUrlToPath as normalizeFileUrlPath,
+  parseFileReference as parseLocalFileReference,
+  shouldAutoLinkPlainTextFileReference as shouldAutoLinkLocalFileReference,
+  toBrowseUrl as buildBrowseUrl,
+  toRenderableImageUrl as buildRenderableImageUrl,
+  trimLinkWrappers as trimFileLinkWrappers,
+} from '../../utils/fileLinkResolver.js'
 
 type MarkdownRenderContext = {
   cwd: string
+  basePaths?: readonly string[]
   kind: 'message' | 'plan'
   highlightVersion: number
 }
@@ -104,7 +114,8 @@ export function renderMarkdownContent(
   processorFactory: (renderContext: MarkdownRenderContext) => ReturnType<typeof createMarkdownProcessor> = createMarkdownProcessor,
 ): MarkdownRenderResult {
   const normalizedText = normalizeMarkdownText(text)
-  const cacheKey = `${context.kind}\u0000${context.cwd}\u0000${context.highlightVersion}\u0000${normalizedText}`
+  const basePathCacheKey = (context.basePaths ?? []).join('\u0001')
+  const cacheKey = `${context.kind}\u0000${context.cwd}\u0000${basePathCacheKey}\u0000${context.highlightVersion}\u0000${normalizedText}`
   const cached = markdownRenderCache.get(cacheKey)
   if (cached) {
     markdownRenderCache.delete(cacheKey)
@@ -440,9 +451,9 @@ function transformElement(node: MarkdownElement, parent: MarkdownNode, index: nu
       linkInlineCodeFileReferences(node, context)
     }
   } else if (tagName === 'a') {
-    enhanceAnchor(node, context.cwd)
+    enhanceAnchor(node, context)
   } else if (tagName === 'img') {
-    enhanceImage(node, context.cwd)
+    enhanceImage(node, context)
   } else if (tagName === 'hr') {
     addClass(node, 'message-divider')
     addClass(node, 'message-scroll-anchor')
@@ -502,10 +513,15 @@ function linkInlineCodeFileReferences(node: MarkdownElement, context: MarkdownRe
         tagName: 'a',
         properties: {
           className: ['message-file-link', 'message-inline-code-link'],
-          href: toBrowseUrl(segment.path, context.cwd, segment.line, segment.endLine),
+          href: buildBrowseUrl(segment.path, {
+            cwd: context.cwd,
+            basePaths: context.basePaths,
+            line: segment.line,
+            endLine: segment.endLine,
+          }),
           target: '_blank',
           rel: 'noopener noreferrer',
-          title: fileReferenceDisplayPath(segment.path, segment.line, segment.endLine),
+          title: formatFileReferenceDisplayPath(segment.path, segment.line, segment.endLine),
         },
         children: [{ type: 'text', value: segment.displayPath }],
       })
@@ -679,11 +695,11 @@ function extractCodeLanguage(code: MarkdownElement | null): string {
   return languageClass ? languageClass.slice('language-'.length) : ''
 }
 
-function enhanceAnchor(node: MarkdownElement, cwd: string): void {
+function enhanceAnchor(node: MarkdownElement, context: MarkdownRenderContext): void {
   const href = getPropertyString(node, 'href').trim()
   if (!href) return
 
-  const resolved = resolveMarkdownHref(href, cwd)
+  const resolved = resolveMarkdownHref(href, context)
   if (!resolved) return
 
   setProperty(node, 'href', resolved.href)
@@ -695,11 +711,14 @@ function enhanceAnchor(node: MarkdownElement, cwd: string): void {
   addClass(node, 'message-file-link')
 }
 
-function enhanceImage(node: MarkdownElement, cwd: string): void {
+function enhanceImage(node: MarkdownElement, context: MarkdownRenderContext): void {
   const src = getPropertyString(node, 'src').trim()
   if (!src) return
 
-  const renderedSrc = toRenderableImageUrl(src, cwd)
+  const renderedSrc = buildRenderableImageUrl(src, {
+    cwd: context.cwd,
+    basePaths: context.basePaths,
+  })
   if (!renderedSrc) return
 
   setProperty(node, 'src', renderedSrc)
@@ -713,7 +732,7 @@ function enhanceImage(node: MarkdownElement, cwd: string): void {
   }
 }
 
-function resolveMarkdownHref(href: string, cwd: string): { href: string; title: string } | null {
+function resolveMarkdownHref(href: string, context: MarkdownRenderContext): { href: string; title: string } | null {
   const normalized = href.trim()
   if (!normalized) return null
 
@@ -724,11 +743,14 @@ function resolveMarkdownHref(href: string, cwd: string): { href: string; title: 
     }
   }
 
-  const ref = parseFileReference(normalized)
+  const ref = parseLocalFileReference(normalized)
   if (!ref) return null
 
   return {
-    href: toBrowseUrl(normalized, cwd),
+    href: buildBrowseUrl(normalized, {
+      cwd: context.cwd,
+      basePaths: context.basePaths,
+    }),
     title: normalized,
   }
 }
@@ -765,10 +787,15 @@ function splitTextNode(text: string, context: MarkdownRenderContext): MarkdownNo
         tagName: 'a',
         properties: {
           className: ['message-file-link'],
-          href: toBrowseUrl(segment.path, context.cwd, segment.line, segment.endLine),
+          href: buildBrowseUrl(segment.path, {
+            cwd: context.cwd,
+            basePaths: context.basePaths,
+            line: segment.line,
+            endLine: segment.endLine,
+          }),
           target: '_blank',
           rel: 'noopener noreferrer',
-          title: fileReferenceDisplayPath(segment.path, segment.line, segment.endLine),
+          title: formatFileReferenceDisplayPath(segment.path, segment.line, segment.endLine),
         },
         children: [{ type: 'text', value: segment.displayPath }],
       })
@@ -776,7 +803,10 @@ function splitTextNode(text: string, context: MarkdownRenderContext): MarkdownNo
     }
 
     if (segment.kind === 'image') {
-      const imageSrc = toRenderableImageUrl(segment.url, context.cwd)
+      const imageSrc = buildRenderableImageUrl(segment.url, {
+        cwd: context.cwd,
+        basePaths: context.basePaths,
+      })
       if (!imageSrc) {
         nodes.push({ type: 'text', value: segment.markdown })
         continue
@@ -838,7 +868,7 @@ function splitTextByMarkdownInlineTokens(text: string): InlineToken[] {
         href: parsed.target,
       })
     } else {
-      const ref = parseFileReference(parsed.target)
+      const ref = parseLocalFileReference(parsed.target)
       if (ref) {
         segments.push({
           kind: 'file',
@@ -943,7 +973,7 @@ function splitPlainTextByLinks(text: string): InlineToken[] {
       token = token.slice(0, -1)
     }
 
-    const wrapped = trimLinkWrappers(token)
+    const wrapped = trimFileLinkWrappers(token)
     token = wrapped.core
     const leading = wrapped.leading
     const trailing = wrapped.trailing + trailingPunctuation
@@ -955,7 +985,7 @@ function splitPlainTextByLinks(text: string): InlineToken[] {
     const href = token.startsWith('http://') || token.startsWith('https://')
       ? token
       : token.startsWith('file://')
-        ? normalizeFileUrlToPath(token)
+        ? normalizeFileUrlPath(token)
         : ''
 
     if (href && /^https?:\/\//u.test(href)) {
@@ -967,8 +997,8 @@ function splitPlainTextByLinks(text: string): InlineToken[] {
       continue
     }
 
-    const ref = parseFileReference(token)
-    if (ref && shouldAutoLinkPlainTextFileReference(ref)) {
+    const ref = parseLocalFileReference(token)
+    if (ref && shouldAutoLinkLocalFileReference(ref)) {
       segments.push({
         kind: 'file',
         value: token,

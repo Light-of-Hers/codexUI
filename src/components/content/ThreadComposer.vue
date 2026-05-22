@@ -207,6 +207,75 @@
         </button>
       </div>
 
+      <div v-if="canManageBasePaths" class="thread-composer-base-paths">
+        <span class="thread-composer-base-paths-label">{{ t('Base paths') }}</span>
+        <div class="thread-composer-base-path-list">
+          <span v-for="basePath in linkBasePathValues" :key="basePath" class="thread-composer-base-path-chip">
+            <IconTablerFolderOpen class="thread-composer-base-path-chip-icon" />
+            <span class="thread-composer-base-path-chip-name" :title="basePath">{{ basePath }}</span>
+            <button
+              class="thread-composer-base-path-chip-remove"
+              type="button"
+              :aria-label="t('Remove base path {path}', { path: basePath })"
+              :title="t('Remove base path')"
+              :disabled="isInteractionDisabled"
+              @click="removeLinkBasePath(basePath)"
+            >
+              <IconTablerX class="thread-composer-base-path-chip-remove-icon" />
+            </button>
+          </span>
+          <div ref="basePathSearchRootRef" class="thread-composer-base-path-add">
+            <button
+              class="thread-composer-base-path-add-button"
+              type="button"
+              :aria-expanded="isBasePathSearchOpen"
+              :aria-label="t('Add base path')"
+              :title="t('Add base path')"
+              :disabled="isInteractionDisabled || !(cwd ?? '').trim()"
+              @click="toggleBasePathSearch"
+            >
+              <IconTablerSearch class="thread-composer-base-path-add-icon" />
+              <span>{{ t('Add') }}</span>
+            </button>
+            <div v-if="isBasePathSearchOpen" class="thread-composer-base-path-search">
+              <div class="thread-composer-base-path-search-input-wrap">
+                <IconTablerSearch class="thread-composer-base-path-search-icon" />
+                <input
+                  ref="basePathSearchInputRef"
+                  v-model="basePathSearchQuery"
+                  class="thread-composer-base-path-search-input"
+                  type="text"
+                  :placeholder="t('Search folders...')"
+                  @input="onBasePathSearchInput"
+                  @keydown="onBasePathSearchKeydown"
+                />
+              </div>
+              <div class="thread-composer-base-path-search-results">
+                <template v-if="basePathSuggestions.length > 0">
+                  <button
+                    v-for="(item, index) in basePathSuggestions"
+                    :key="item.path"
+                    class="thread-composer-base-path-search-row"
+                    :class="{ 'is-active': index === basePathHighlightedIndex }"
+                    type="button"
+                    @mousedown.prevent="addLinkBasePathFromSuggestion(item)"
+                  >
+                    <IconTablerFolderOpen class="thread-composer-base-path-search-row-icon" />
+                    <span class="thread-composer-base-path-search-row-text">
+                      <span class="thread-composer-base-path-search-row-name">{{ getBasePathSuggestionName(item.path) }}</span>
+                      <span class="thread-composer-base-path-search-row-path">{{ resolveBasePathSuggestionPath(item.path) }}</span>
+                    </span>
+                  </button>
+                </template>
+                <div v-else class="thread-composer-base-path-search-empty">
+                  {{ isBasePathSearching ? t('Searching folders...') : t('No matching folders') }}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div
         v-if="isMarkdownPreviewVisible"
         class="thread-composer-preview"
@@ -486,6 +555,12 @@ import { useDictation } from '../../composables/useDictation'
 import { useMobile } from '../../composables/useMobile'
 import { useUiLanguage } from '../../composables/useUiLanguage'
 import {
+  getBasename as getFileBasename,
+  normalizeLinkBasePath,
+  normalizeLinkBasePaths,
+  resolveFileLinkPath,
+} from '../../utils/fileLinkResolver.js'
+import {
   createComposerPrompt,
   getComposerPrompts,
   removeComposerPrompt,
@@ -504,6 +579,8 @@ import IconTablerMaximize from '../icons/IconTablerMaximize.vue'
 import IconTablerMicrophone from '../icons/IconTablerMicrophone.vue'
 import IconTablerMinimize from '../icons/IconTablerMinimize.vue'
 import IconTablerPlayerStopFilled from '../icons/IconTablerPlayerStopFilled.vue'
+import IconTablerSearch from '../icons/IconTablerSearch.vue'
+import IconTablerX from '../icons/IconTablerX.vue'
 import ComposerDropdown from './ComposerDropdown.vue'
 import ComposerSearchDropdown from './ComposerSearchDropdown.vue'
 
@@ -554,6 +631,7 @@ const props = defineProps<{
   models: string[]
   selectedModel: string
   selectedReasoningEffort: ReasoningEffort | ''
+  linkBasePaths?: string[]
   selectedSpeedMode: SpeedMode
   skills?: SkillItem[]
   threadTokenUsage?: UiThreadTokenUsage | null
@@ -600,6 +678,7 @@ const emit = defineEmits<{
   'update:selected-collaboration-mode': [mode: CollaborationModeKind]
   'update:selected-model': [modelId: string]
   'update:selected-reasoning-effort': [effort: ReasoningEffort | '']
+  'update:link-base-paths': [basePaths: string[]]
   'update:selected-speed-mode': [mode: SpeedMode]
 }>()
 const { t } = useUiLanguage()
@@ -683,8 +762,15 @@ const photoLibraryInputRef = ref<HTMLInputElement | null>(null)
 const cameraCaptureInputRef = ref<HTMLInputElement | null>(null)
 const folderPickerInputRef = ref<HTMLInputElement | null>(null)
 const inputRef = ref<HTMLTextAreaElement | null>(null)
+const basePathSearchRootRef = ref<HTMLElement | null>(null)
+const basePathSearchInputRef = ref<HTMLInputElement | null>(null)
 const { isMobile } = useMobile()
 const isAttachMenuOpen = ref(false)
+const isBasePathSearchOpen = ref(false)
+const isBasePathSearching = ref(false)
+const basePathSearchQuery = ref('')
+const basePathSuggestions = ref<ComposerFileSuggestion[]>([])
+const basePathHighlightedIndex = ref(0)
 const activeMentionKind = ref<'file' | 'skill' | null>(null)
 const mentionStartIndex = ref<number | null>(null)
 const mentionQuery = ref('')
@@ -697,6 +783,8 @@ let composerOverflowMeasurementQueued = false
 const draftGeneration = ref(0)
 let fileMentionSearchToken = 0
 let fileMentionDebounceTimer: ReturnType<typeof setTimeout> | null = null
+let basePathSearchToken = 0
+let basePathSearchDebounceTimer: ReturnType<typeof setTimeout> | null = null
 let isHoldPressActive = false
 let dragDepth = 0
 let attachmentSessionToken = 0
@@ -726,6 +814,8 @@ const isPlanModeWaitingForModel = computed(() =>
 )
 
 const selectedSkillPaths = computed(() => selectedSkills.value.map((s) => s.path))
+const linkBasePathValues = computed(() => normalizeLinkBasePaths(props.linkBasePaths ?? []))
+const canManageBasePaths = computed(() => Boolean(props.activeThreadId))
 const isFileMentionOpen = computed(() => activeMentionKind.value === 'file')
 const isSkillMentionOpen = computed(() => activeMentionKind.value === 'skill')
 const skillDropdownOptions = computed(() =>
@@ -1139,6 +1229,7 @@ async function refreshDraftPreviewHtml(): Promise<void> {
     if (renderToken !== draftPreviewRenderToken || !isMarkdownPreviewVisible.value) return
     const rendered = renderMarkdownContent(draft.value, {
       cwd: props.cwd ?? '',
+      basePaths: linkBasePathValues.value,
       kind: 'message',
       highlightVersion: 0,
     }).html.trim()
@@ -1375,6 +1466,140 @@ function removeImage(id: string): void {
 
 function removeSkill(path: string): void {
   selectedSkills.value = selectedSkills.value.filter((s) => s.path !== path)
+}
+
+function emitLinkBasePaths(basePaths: readonly string[]): void {
+  emit('update:link-base-paths', normalizeLinkBasePaths(basePaths))
+}
+
+function removeLinkBasePath(basePath: string): void {
+  const normalizedTarget = normalizeLinkBasePath(basePath)
+  if (!normalizedTarget) return
+  emitLinkBasePaths(linkBasePathValues.value.filter((pathValue) => pathValue !== normalizedTarget))
+}
+
+function resolveBasePathSuggestionPath(pathValue: string): string {
+  const resolved = resolveFileLinkPath(pathValue, {
+    cwd: props.cwd ?? '',
+    basePaths: [],
+  })
+  return normalizeLinkBasePath(resolved)
+}
+
+function getBasePathSuggestionName(pathValue: string): string {
+  return getFileBasename(resolveBasePathSuggestionPath(pathValue) || pathValue)
+}
+
+function closeBasePathSearch(): void {
+  isBasePathSearchOpen.value = false
+  isBasePathSearching.value = false
+  basePathSuggestions.value = []
+  basePathHighlightedIndex.value = 0
+  basePathSearchToken += 1
+  if (basePathSearchDebounceTimer) {
+    clearTimeout(basePathSearchDebounceTimer)
+    basePathSearchDebounceTimer = null
+  }
+}
+
+function openBasePathSearch(): void {
+  if (isInteractionDisabled.value || !(props.cwd ?? '').trim()) return
+  isBasePathSearchOpen.value = true
+  void nextTick(() => basePathSearchInputRef.value?.focus())
+  void queueBasePathSearch()
+}
+
+function toggleBasePathSearch(): void {
+  if (isBasePathSearchOpen.value) {
+    closeBasePathSearch()
+    return
+  }
+  openBasePathSearch()
+}
+
+function onBasePathSearchInput(): void {
+  void queueBasePathSearch()
+}
+
+async function queueBasePathSearch(): Promise<void> {
+  if (!isBasePathSearchOpen.value) return
+  const cwd = (props.cwd ?? '').trim()
+  if (!cwd) {
+    basePathSuggestions.value = []
+    return
+  }
+  if (basePathSearchDebounceTimer) {
+    clearTimeout(basePathSearchDebounceTimer)
+  }
+  const token = ++basePathSearchToken
+  isBasePathSearching.value = true
+  basePathSearchDebounceTimer = setTimeout(async () => {
+    try {
+      const rows = await searchComposerFiles(cwd, basePathSearchQuery.value.trim(), 40)
+      if (!isBasePathSearchOpen.value || token !== basePathSearchToken) return
+      const existing = new Set(linkBasePathValues.value)
+      const next: ComposerFileSuggestion[] = []
+      const seen = new Set<string>()
+      for (const row of rows) {
+        if (row.kind !== 'directory') continue
+        const resolved = resolveBasePathSuggestionPath(row.path)
+        if (!resolved || existing.has(resolved) || seen.has(resolved)) continue
+        seen.add(resolved)
+        next.push(row)
+      }
+      basePathSuggestions.value = next
+      basePathHighlightedIndex.value = 0
+    } catch {
+      if (!isBasePathSearchOpen.value || token !== basePathSearchToken) return
+      basePathSuggestions.value = []
+    } finally {
+      if (isBasePathSearchOpen.value && token === basePathSearchToken) {
+        isBasePathSearching.value = false
+      }
+    }
+  }, 120)
+}
+
+function addLinkBasePathFromSuggestion(suggestion: ComposerFileSuggestion): void {
+  const resolved = resolveBasePathSuggestionPath(suggestion.path)
+  if (!resolved) return
+  emitLinkBasePaths([...linkBasePathValues.value, resolved])
+  basePathSearchQuery.value = ''
+  closeBasePathSearch()
+}
+
+function onBasePathSearchKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    closeBasePathSearch()
+    return
+  }
+
+  if (event.key === 'ArrowDown') {
+    event.preventDefault()
+    const count = basePathSuggestions.value.length
+    if (count > 0) {
+      basePathHighlightedIndex.value = (basePathHighlightedIndex.value + 1) % count
+    }
+    return
+  }
+
+  if (event.key === 'ArrowUp') {
+    event.preventDefault()
+    const count = basePathSuggestions.value.length
+    if (count > 0) {
+      basePathHighlightedIndex.value = (basePathHighlightedIndex.value - 1 + count) % count
+    }
+    return
+  }
+
+  if (event.key === 'Enter') {
+    event.preventDefault()
+    const selected = basePathSuggestions.value[basePathHighlightedIndex.value]
+    if (selected) {
+      addLinkBasePathFromSuggestion(selected)
+    }
+  }
 }
 
 function skillMarkdownPath(path: string): string {
@@ -2049,12 +2274,18 @@ function onSkillDropdownToggle(path: string, checked: boolean): void {
 }
 
 function onDocumentClick(event: MouseEvent): void {
-  if (!isAttachMenuOpen.value) return
-  const root = attachMenuRootRef.value
-  if (!root) return
   const target = event.target as Node | null
-  if (!target || root.contains(target)) return
-  isAttachMenuOpen.value = false
+  if (!target) return
+
+  const attachRoot = attachMenuRootRef.value
+  if (isAttachMenuOpen.value && attachRoot && !attachRoot.contains(target)) {
+    isAttachMenuOpen.value = false
+  }
+
+  const basePathRoot = basePathSearchRootRef.value
+  if (isBasePathSearchOpen.value && basePathRoot && !basePathRoot.contains(target)) {
+    closeBasePathSearch()
+  }
 }
 
 onMounted(() => {
@@ -2082,6 +2313,9 @@ onBeforeUnmount(() => {
   window.removeEventListener('blur', onDictationPressEnd)
   if (fileMentionDebounceTimer) {
     clearTimeout(fileMentionDebounceTimer)
+  }
+  if (basePathSearchDebounceTimer) {
+    clearTimeout(basePathSearchDebounceTimer)
   }
 })
 
@@ -2119,6 +2353,9 @@ watch(
     if (isFileMentionOpen.value) {
       void queueFileMentionSearch()
     }
+    if (isBasePathSearchOpen.value) {
+      void queueBasePathSearch()
+    }
   },
 )
 
@@ -2139,7 +2376,7 @@ watch(isInteractionDisabled, (disabled) => {
 })
 
 watch(
-  [draft, () => props.cwd],
+  [draft, () => props.cwd, linkBasePathValues],
   () => {
     if (!isMarkdownPreviewVisible.value) return
     void refreshDraftPreviewHtml()
@@ -2250,6 +2487,98 @@ watch(
 
 .thread-composer-file-chip-remove {
   @apply ml-0.5 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border-0 bg-transparent text-zinc-400 transition hover:bg-zinc-200 hover:text-zinc-700 text-xs leading-none p-0;
+}
+
+.thread-composer-base-paths {
+  @apply mt-2 flex flex-wrap items-center gap-2 border-t border-zinc-100 pt-2;
+}
+
+.thread-composer-base-paths-label {
+  @apply text-[11px] font-medium uppercase tracking-wide text-zinc-500;
+}
+
+.thread-composer-base-path-list {
+  @apply flex min-w-0 flex-1 flex-wrap items-center gap-1.5;
+}
+
+.thread-composer-base-path-chip {
+  @apply inline-flex min-w-0 max-w-full items-center gap-1 rounded-md border border-sky-200 bg-sky-50 px-2 py-0.5 text-xs text-sky-800;
+}
+
+.thread-composer-base-path-chip-icon {
+  @apply h-3.5 w-3.5 shrink-0 text-sky-600;
+}
+
+.thread-composer-base-path-chip-name {
+  @apply max-w-72 truncate font-medium;
+}
+
+.thread-composer-base-path-chip-remove {
+  @apply ml-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-0 bg-transparent p-0 text-sky-600 transition hover:bg-sky-200 hover:text-sky-900 disabled:opacity-50;
+}
+
+.thread-composer-base-path-chip-remove-icon {
+  @apply h-3 w-3;
+}
+
+.thread-composer-base-path-add {
+  @apply relative inline-flex;
+}
+
+.thread-composer-base-path-add-button {
+  @apply inline-flex h-6 items-center gap-1 rounded-md border border-zinc-200 bg-white px-2 text-xs font-medium text-zinc-600 transition hover:border-zinc-300 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50;
+}
+
+.thread-composer-base-path-add-icon {
+  @apply h-3.5 w-3.5;
+}
+
+.thread-composer-base-path-search {
+  @apply absolute bottom-full left-0 z-30 mb-2 w-[min(28rem,calc(100vw-2rem))] overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-lg;
+}
+
+.thread-composer-base-path-search-input-wrap {
+  @apply flex items-center gap-2 border-b border-zinc-100 px-2 py-1.5;
+}
+
+.thread-composer-base-path-search-icon {
+  @apply h-4 w-4 shrink-0 text-zinc-400;
+}
+
+.thread-composer-base-path-search-input {
+  @apply h-7 min-w-0 flex-1 border-0 bg-transparent text-sm text-zinc-900 outline-none placeholder:text-zinc-400;
+}
+
+.thread-composer-base-path-search-results {
+  @apply max-h-64 overflow-y-auto py-1;
+}
+
+.thread-composer-base-path-search-row {
+  @apply flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-zinc-700 transition hover:bg-zinc-100;
+}
+
+.thread-composer-base-path-search-row.is-active {
+  @apply bg-zinc-100;
+}
+
+.thread-composer-base-path-search-row-icon {
+  @apply h-4 w-4 shrink-0 text-zinc-500;
+}
+
+.thread-composer-base-path-search-row-text {
+  @apply flex min-w-0 flex-col;
+}
+
+.thread-composer-base-path-search-row-name {
+  @apply truncate font-medium text-zinc-800;
+}
+
+.thread-composer-base-path-search-row-path {
+  @apply truncate text-xs text-zinc-500;
+}
+
+.thread-composer-base-path-search-empty {
+  @apply px-3 py-2 text-sm text-zinc-500;
 }
 
 .thread-composer-skill-chips {

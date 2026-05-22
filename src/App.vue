@@ -944,6 +944,7 @@
                   :selected-collaboration-mode="selectedCollaborationMode"
                   :models="availableModelIds" :selected-model="composerSelectedModelId"
                   :selected-reasoning-effort="composerSelectedReasoningEffort"
+                  :link-base-paths="composerLinkBasePaths"
                   :selected-speed-mode="selectedSpeedMode"
                   :is-updating-speed-mode="isUpdatingSpeedMode"
                   :disabled="freeModeLoading"
@@ -959,6 +960,7 @@
                   @update:selected-collaboration-mode="onSelectCollaborationMode"
                   @update:selected-model="onSelectModel"
                   @update:selected-reasoning-effort="onSelectReasoningEffort"
+                  @update:link-base-paths="onUpdateLinkBasePaths"
                   @update:selected-speed-mode="onSelectSpeedMode" />
               </div>
             </div>
@@ -977,6 +979,7 @@
                 <div class="content-thread">
                   <ThreadConversation ref="threadConversationRef" :messages="filteredMessages" :is-loading="isLoadingMessages"
                     :active-thread-id="composerThreadContextId" :cwd="composerCwd"
+                    :link-base-paths="composerLinkBasePaths"
                     :live-overlay="liveOverlay"
                     :pending-requests="selectedThreadServerRequests"
                     :has-more-persisted-above="hasMoreOlderMessages"
@@ -1026,6 +1029,7 @@
                     :models="availableModelIds"
                     :selected-model="composerSelectedModelId"
                     :selected-reasoning-effort="composerSelectedReasoningEffort"
+                    :link-base-paths="composerLinkBasePaths"
                     :selected-speed-mode="selectedSpeedMode"
                     :is-updating-speed-mode="isUpdatingSpeedMode"
                     :disabled="freeModeLoading"
@@ -1042,6 +1046,7 @@
                     @update:selected-collaboration-mode="onSelectCollaborationMode"
                     @submit="onSubmitThreadMessage" @update:selected-model="onSelectModel"
                     @update:selected-reasoning-effort="onSelectReasoningEffort"
+                    @update:link-base-paths="onUpdateLinkBasePaths"
                     @update:selected-speed-mode="onSelectSpeedMode"
                     @interrupt="onInterruptTurn" />
                 </div>
@@ -1415,7 +1420,9 @@ const {
   setSelectedCollaborationMode,
   readModelIdForThread,
   readReasoningEffortForThread,
+  readLinkBasePathsForThread,
   setSelectedModelIdForThread,
+  setLinkBasePathsForThread,
   setSelectedProviderForComposerContext,
   refreshMoonBridgeModelIds,
   refreshAncillaryState,
@@ -1688,6 +1695,7 @@ const liveOverlay = computed(() => selectedLiveOverlay.value)
 const composerThreadContextId = computed(() => (isHomeRoute.value ? '__new-thread__' : selectedThreadId.value))
 const composerSelectedModelId = computed(() => readModelIdForThread(composerThreadContextId.value))
 const composerSelectedReasoningEffort = computed(() => readReasoningEffortForThread(composerThreadContextId.value))
+const composerLinkBasePaths = computed(() => readLinkBasePathsForThread(composerThreadContextId.value))
 const selectedThreadPendingRequest = computed<UiServerRequest | null>(() => {
   const rows = selectedThreadServerRequests.value
   return rows.length > 0 ? rows[rows.length - 1] : null
@@ -3887,6 +3895,10 @@ function onSelectModel(modelId: string): void {
 
 function onSelectReasoningEffort(effort: ReasoningEffort | ''): void {
   setSelectedReasoningEffortForThread(composerThreadContextId.value, effort)
+}
+
+function onUpdateLinkBasePaths(basePaths: string[]): void {
+  setLinkBasePathsForThread(composerThreadContextId.value, basePaths)
 }
 
 function onSelectSpeedMode(mode: SpeedMode): void {

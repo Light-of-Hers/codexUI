@@ -9,9 +9,11 @@ import {
   isThreadUnreadByLastRead,
   normalizeProviderId,
   removeThreadFromGroups,
+  readLinkBasePathsForThreadContext,
   useDesktopState,
   readSelectedProvider,
   readSelectedModelForThreadContext,
+  writeLinkBasePathsForContext,
   writeSelectedProviderForContext,
 } from './useDesktopState'
 import type { UiProjectGroup } from '../types/codex'
@@ -708,6 +710,33 @@ describe('provider model selection', () => {
 })
 
 describe('session composer model state', () => {
+  it('stores link base paths by composer thread context', () => {
+    installTestWindow()
+
+    const state = useDesktopState()
+
+    state.setLinkBasePathsForThread('__new-thread__', ['/root/work/my-agent-configs/', 'relative'])
+    expect(state.readLinkBasePathsForThread('__new-thread__')).toEqual(['/root/work/my-agent-configs'])
+    expect(JSON.parse(window.localStorage.getItem('codex-web-local.link-base-paths-by-context.v1') ?? '{}')).toEqual({
+      '__new-thread__': ['/root/work/my-agent-configs'],
+    })
+
+    state.primeSelectedThread('thread-a')
+    expect(state.readLinkBasePathsForThread('thread-a')).toEqual([])
+
+    state.setLinkBasePathsForThread('thread-a', ['/tmp/context'])
+    expect(state.readLinkBasePathsForThread('thread-a')).toEqual(['/tmp/context'])
+    expect(state.readLinkBasePathsForThread('__new-thread__')).toEqual(['/root/work/my-agent-configs'])
+  })
+
+  it('normalizes link base path helper maps', () => {
+    const next = writeLinkBasePathsForContext({}, 'thread-a', ['/tmp/context/', '/tmp/context', 'relative'])
+
+    expect(readLinkBasePathsForThreadContext(next, 'thread-a')).toEqual(['/tmp/context'])
+    expect(readLinkBasePathsForThreadContext(next, 'thread-b')).toEqual([])
+    expect(writeLinkBasePathsForContext(next, 'thread-a', [])).toEqual({})
+  })
+
   it('keeps reasoning effort scoped to the composer thread context', () => {
     installTestWindow()
 
