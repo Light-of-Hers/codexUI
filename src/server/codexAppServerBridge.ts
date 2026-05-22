@@ -961,6 +961,64 @@ function trimThreadTurnsInRpcResult(method: string, result: unknown): unknown {
   }
 }
 
+export function mergeRecoveredTurnItemsIntoThreadResult(
+  result: unknown,
+  mergeItemsIntoTurns: (threadId: string, turns: unknown[]) => unknown[],
+  sessionLogRaw?: string | null,
+): unknown {
+  const record = asRecord(result)
+  const thread = asRecord(record?.thread)
+  const turns = Array.isArray(thread?.turns) ? thread.turns : null
+  if (!record || !thread || !turns || turns.length === 0) return result
+
+  const threadId = readNonEmptyString(thread.id)
+  if (!threadId) return result
+
+  let mergedTurns = mergeItemsIntoTurns(threadId, turns)
+  if (sessionLogRaw) {
+    mergedTurns = mergeSessionCommandsIntoTurns(mergedTurns, sessionLogRaw)
+  }
+  if (
+    mergedTurns === turns ||
+    (mergedTurns.length === turns.length && mergedTurns.every((turn, index) => turn === turns[index]))
+  ) {
+    return result
+  }
+
+  return {
+    ...record,
+    thread: {
+      ...thread,
+      turns: mergedTurns,
+    },
+  }
+}
+
+async function readSessionLogRawFromThreadResult(result: unknown): Promise<string | null> {
+  const record = asRecord(result)
+  const thread = asRecord(record?.thread)
+  const sessionPath = readNonEmptyString(thread?.path)
+  if (!sessionPath || !isAbsolute(sessionPath)) return null
+
+  try {
+    return await readFile(sessionPath, 'utf8')
+  } catch {
+    return null
+  }
+}
+
+async function mergeRecoveredTurnItemsIntoThreadResultFromSession(
+  appServer: AppServerProcess,
+  result: unknown,
+): Promise<unknown> {
+  const sessionLogRaw = await readSessionLogRawFromThreadResult(result)
+  return mergeRecoveredTurnItemsIntoThreadResult(
+    result,
+    (threadId, turns) => appServer.mergeItemsIntoTurns(threadId, turns),
+    sessionLogRaw,
+  )
+}
+
 function getErrorMessage(payload: unknown, fallback: string): string {
   if (payload instanceof Error && payload.message.trim().length > 0) {
     return payload.message
@@ -6836,7 +6894,10 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 	          }
 	          throw error
 	        }
-        const trimmedResult = trimThreadTurnsInRpcResult(body.method, rpcResult)
+        const recoveredResult = THREAD_METHODS_WITH_TURNS.has(body.method)
+          ? await mergeRecoveredTurnItemsIntoThreadResultFromSession(appServer, rpcResult)
+          : rpcResult
+        const trimmedResult = trimThreadTurnsInRpcResult(body.method, recoveredResult)
         const sanitizedResult = await sanitizeThreadTurnsInlinePayloads(body.method, trimmedResult)
         const result = THREAD_METHODS_WITH_TURNS.has(body.method)
           ? await mergeSessionSkillInputsIntoThreadResult(sanitizedResult)
@@ -6867,7 +6928,8 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           }
 
           const threadReadResult = await appServer.readThreadForTurnPage(threadId)
-          const record = asRecord(threadReadResult)
+          const recoveredThreadReadResult = await mergeRecoveredTurnItemsIntoThreadResultFromSession(appServer, threadReadResult)
+          const record = asRecord(recoveredThreadReadResult)
           const thread = asRecord(record?.thread)
           if (!record || !thread) {
             setJson(res, 502, { error: 'thread/read returned an invalid thread response' })

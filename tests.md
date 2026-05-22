@@ -19,6 +19,27 @@ This file tracks manual regression and feature verification steps.
 #### Rollback/Cleanup
 - <cleanup action, if any>
 
+### Feature: Historical session command rendering
+
+#### Prerequisites
+- App server is running from this repository.
+- A historical thread exists whose session JSONL contains `exec_command` tool calls that are not present in the stored `thread/read` turn items.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Open the historical thread from the sidebar or by direct `#/thread/<id>` route.
+2. Confirm command execution entries appear in the conversation at their original position between the surrounding user and assistant messages.
+3. Load older messages in the same thread, if available, and confirm recovered command entries remain visible after pagination.
+4. Switch to light theme and dark theme, then repeat the same thread rendering check.
+
+#### Expected Results
+- Historical `exec_command` calls recovered from session JSONL render as command execution cards in `thread/read` results.
+- Command cards preserve command text, output, exit code, and duration when available.
+- Recovered command entries stay ordered with the surrounding conversation items and are not dropped by older-message pagination.
+
+#### Rollback/Cleanup
+- No cleanup is required.
+
 ### Feature: GitHub-style local editor syntax highlighting
 
 #### Prerequisites

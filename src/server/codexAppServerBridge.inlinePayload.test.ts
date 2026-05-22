@@ -8,6 +8,7 @@ import {
   BackendQueueProcessor,
   buildAppServerConfigForState,
   createCodexBridgeMiddleware,
+  mergeRecoveredTurnItemsIntoThreadResult,
   mergeSessionSkillInputsIntoTurns,
   parseAutomationToml,
   sanitizeThreadTurnsInlinePayloads,
@@ -306,6 +307,82 @@ describe('thread inline media sanitization', () => {
 })
 
 describe('thread session skill recovery', () => {
+  it('merges command executions recovered from session JSONL into thread/read turns', () => {
+    const result = {
+      thread: {
+        id: 'thread-1',
+        path: '/tmp/session.jsonl',
+        turns: [{
+          id: 'turn-1',
+          items: [
+            {
+              id: 'user-1',
+              type: 'userMessage',
+              content: [{ type: 'text', text: 'list files', text_elements: [] }],
+            },
+            {
+              id: 'agent-1',
+              type: 'agentMessage',
+              text: 'done',
+            },
+          ],
+        }],
+      },
+    }
+    const sessionLog = [
+      JSON.stringify({ type: 'turn_context', payload: { turn_id: 'turn-1' } }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'function_call',
+          name: 'exec_command',
+          call_id: 'call-1',
+          arguments: JSON.stringify({ cmd: 'ls -la' }),
+        },
+      }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'function_call_output',
+          call_id: 'call-1',
+          output: [
+            'Chunk ID: abc',
+            'Process exited with code 0',
+            'Wall time: 0.123 seconds',
+            'Output:',
+            'total 1',
+          ].join('\n'),
+        },
+      }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'done' }],
+        },
+      }),
+    ].join('\n')
+
+    const merged = mergeRecoveredTurnItemsIntoThreadResult(
+      result,
+      (_threadId, turns) => turns,
+      sessionLog,
+    ) as typeof result
+    const items = merged.thread.turns[0].items
+
+    expect(items.map((item) => item.type)).toEqual(['userMessage', 'commandExecution', 'agentMessage'])
+    expect(items[1]).toMatchObject({
+      id: 'session-cmd-call-1',
+      type: 'commandExecution',
+      command: 'ls -la',
+      status: 'completed',
+      aggregatedOutput: 'total 1',
+      exitCode: 0,
+      durationMs: 123,
+    })
+  })
+
   it('adds selected skill inputs from session JSONL to matching user messages', () => {
     const turns = [{
       id: 'turn-1',
