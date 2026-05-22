@@ -5703,3 +5703,27 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - Restore the preferred provider, model, and reasoning effort after manual verification.
+
+### Feature: Session switch restores persisted model state
+
+#### Prerequisites
+- App server is running from this repository.
+- At least one session has persisted `turn_context` data with Provider `Moon Bridge`, Model `ark-code-latest`, and a non-default reasoning effort.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Run `./node_modules/.bin/vitest run src/server/codexAppServerBridge.inlinePayload.test.ts src/api/codexGateway.test.ts`.
+2. Open the target session in light theme.
+3. Switch to a different session, then switch back to the target session.
+4. Confirm the composer still shows Provider `Moon Bridge`, Model `ark-code-latest`, and the persisted reasoning effort instead of resetting to `gpt-5.5` and `None`.
+5. Send a follow-up message and confirm the next turn uses the same model state.
+6. Repeat steps 2-5 in dark theme.
+
+#### Expected Results
+- Session switches hydrate `model`, `modelProvider`, and `reasoningEffort` from persisted session data.
+- The composer no longer flashes back to the current global config when a session is selected.
+- The follow-up turn keeps using the persisted Moon Bridge session state.
+- The behavior stays consistent in both light and dark themes.
+
+#### Rollback/Cleanup
+- Restore the preferred provider, model, and reasoning effort after manual verification.

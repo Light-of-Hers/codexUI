@@ -179,6 +179,33 @@ describe('thread history persistence payloads', () => {
       'xhigh',
     ])
   })
+
+  it('reads lifecycle model metadata from nested thread snapshots', async () => {
+    mockRpcFetchWithResponder((request) => {
+      if (request.method === 'thread/resume') {
+        return {
+          thread: {
+            id: 'thread-1',
+            cwd: '/tmp/project',
+            preview: '',
+            turns: [],
+            createdAt: 0,
+            updatedAt: 0,
+            model: 'ark-code-latest',
+            modelProvider: 'moon',
+            reasoningEffort: 'xhigh',
+          },
+        }
+      }
+      return {}
+    })
+
+    const resumedThread = await resumeThread('thread-1')
+
+    expect(resumedThread.model).toBe('ark-code-latest')
+    expect(resumedThread.modelProvider).toBe('moon')
+    expect(resumedThread.reasoningEffort).toBe('xhigh')
+  })
 })
 
 describe('listDirectoryComposioConnectors', () => {

@@ -268,14 +268,149 @@ type SessionRecoveredSkillInput = {
   path: string
 }
 
+type SessionRecoveredModelState = {
+  model: string
+  modelProvider: string
+  reasoningEffort: ReasoningEffort | ''
+}
+
+type SessionModelStateCacheEntry = {
+  size: number
+  mtimeMs: number
+  modelState: SessionRecoveredModelState
+}
+
 type SessionSkillInputCacheEntry = {
   size: number
   mtimeMs: number
   skillsByTurnId: Map<string, SessionRecoveredSkillInput[]>
 }
 
+const SESSION_MODEL_STATE_CACHE_LIMIT = 256
 const SESSION_SKILL_INPUT_CACHE_LIMIT = 64
+const sessionModelStateCache = new Map<string, SessionModelStateCacheEntry>()
 const sessionSkillInputCache = new Map<string, SessionSkillInputCacheEntry>()
+
+function normalizeSessionReasoningEffort(value: unknown): ReasoningEffort | '' {
+  const normalized = readNonEmptyString(value).trim().toLowerCase()
+  if (
+    normalized === 'none'
+    || normalized === 'minimal'
+    || normalized === 'low'
+    || normalized === 'medium'
+    || normalized === 'high'
+    || normalized === 'xhigh'
+  ) {
+    return normalized
+  }
+  return ''
+}
+
+export function buildSessionModelState(sessionLogRaw: string): SessionRecoveredModelState {
+  const state: SessionRecoveredModelState = {
+    model: '',
+    modelProvider: '',
+    reasoningEffort: '',
+  }
+
+  for (const line of sessionLogRaw.split('\n')) {
+    if (!line.trim()) continue
+    let row: Record<string, unknown> | null = null
+    try {
+      row = JSON.parse(line) as Record<string, unknown>
+    } catch {
+      continue
+    }
+
+    const payloadRecord = asRecord(row.payload)
+    if (!payloadRecord) continue
+
+    if (row.type === 'session_meta') {
+      state.modelProvider = readNonEmptyString(payloadRecord.model_provider)
+        || readNonEmptyString(payloadRecord.modelProvider)
+        || state.modelProvider
+      continue
+    }
+
+    if (row.type !== 'turn_context') continue
+    const collaborationMode = asRecord(payloadRecord.collaboration_mode)
+    const collaborationSettings = asRecord(collaborationMode?.settings)
+
+    state.model = readNonEmptyString(payloadRecord.model)
+      || readNonEmptyString(collaborationSettings?.model)
+      || state.model
+    state.modelProvider = readNonEmptyString(payloadRecord.model_provider)
+      || readNonEmptyString(payloadRecord.modelProvider)
+      || readNonEmptyString(collaborationSettings?.model_provider)
+      || readNonEmptyString(collaborationSettings?.modelProvider)
+      || state.modelProvider
+    state.reasoningEffort = normalizeSessionReasoningEffort(payloadRecord.effort)
+      || normalizeSessionReasoningEffort(payloadRecord.reasoning_effort)
+      || normalizeSessionReasoningEffort(payloadRecord.reasoningEffort)
+      || normalizeSessionReasoningEffort(collaborationSettings?.reasoning_effort)
+      || normalizeSessionReasoningEffort(collaborationSettings?.reasoningEffort)
+      || state.reasoningEffort
+  }
+
+  return state
+}
+
+async function readCachedSessionModelState(sessionPath: string): Promise<SessionRecoveredModelState> {
+  const sessionStat = await stat(sessionPath)
+  const cached = sessionModelStateCache.get(sessionPath)
+  if (cached && cached.size === sessionStat.size && cached.mtimeMs === sessionStat.mtimeMs) {
+    return cached.modelState
+  }
+
+  const sessionLogRaw = await readFile(sessionPath, 'utf8')
+  const modelState = buildSessionModelState(sessionLogRaw)
+  sessionModelStateCache.set(sessionPath, {
+    size: sessionStat.size,
+    mtimeMs: sessionStat.mtimeMs,
+    modelState,
+  })
+  if (sessionModelStateCache.size > SESSION_MODEL_STATE_CACHE_LIMIT) {
+    const oldestKey = sessionModelStateCache.keys().next().value
+    if (oldestKey) sessionModelStateCache.delete(oldestKey)
+  }
+  return modelState
+}
+
+export async function mergeSessionModelStateIntoThreadResult(result: unknown): Promise<unknown> {
+  const record = asRecord(result)
+  const thread = asRecord(record?.thread)
+  const sessionPath = readNonEmptyString(thread?.path)
+  if (!record || !thread || !sessionPath || !isAbsolute(sessionPath)) return result
+
+  let modelState: SessionRecoveredModelState
+  try {
+    modelState = await readCachedSessionModelState(sessionPath)
+  } catch {
+    return result
+  }
+  if (!modelState.model && !modelState.modelProvider && !modelState.reasoningEffort) return result
+
+  const nextRecord: Record<string, unknown> = { ...record }
+  const nextThread: Record<string, unknown> = { ...thread }
+
+  if (modelState.model) {
+    nextRecord.model = modelState.model
+    nextThread.model = modelState.model
+  }
+  if (modelState.modelProvider) {
+    nextRecord.modelProvider = modelState.modelProvider
+    nextThread.modelProvider = modelState.modelProvider
+  }
+  if (modelState.reasoningEffort) {
+    nextRecord.reasoningEffort = modelState.reasoningEffort
+    nextThread.reasoningEffort = modelState.reasoningEffort
+  }
+
+  return {
+    ...nextRecord,
+    thread: nextThread,
+  }
+}
 
 function parseSessionSkillText(value: string): SessionRecoveredSkillInput | null {
   const trimmed = value.trim()
@@ -6950,7 +7085,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 	            const threadId = typeof params?.threadId === 'string' ? params.threadId.trim() : ''
 	            const snapshot = threadId ? appServer.getLastThreadReadSnapshot(threadId) : null
 	            if (snapshot) {
-	              setJson(res, 200, { result: snapshot })
+	              setJson(res, 200, { result: await mergeSessionModelStateIntoThreadResult(snapshot) })
 	              return
 	            }
 	          }
@@ -6961,9 +7096,12 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           : rpcResult
         const trimmedResult = trimThreadTurnsInRpcResult(body.method, recoveredResult)
         const sanitizedResult = await sanitizeThreadTurnsInlinePayloads(body.method, trimmedResult)
-        const result = THREAD_METHODS_WITH_TURNS.has(body.method)
+        const skillMergedResult = THREAD_METHODS_WITH_TURNS.has(body.method)
           ? await mergeSessionSkillInputsIntoThreadResult(sanitizedResult)
           : sanitizedResult
+        const result = THREAD_METHODS_WITH_THREAD_SNAPSHOT.has(body.method)
+          ? await mergeSessionModelStateIntoThreadResult(skillMergedResult)
+          : skillMergedResult
 
 	        if (THREAD_METHODS_WITH_THREAD_SNAPSHOT.has(body.method)) {
 	          const rpcRecord = asRecord(result)
@@ -6991,7 +7129,8 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 
           const threadReadResult = await appServer.readThreadForTurnPage(threadId)
           const recoveredThreadReadResult = await mergeRecoveredTurnItemsIntoThreadResultFromSession(appServer, threadReadResult)
-          const record = asRecord(recoveredThreadReadResult)
+          const enrichedThreadReadResult = await mergeSessionModelStateIntoThreadResult(recoveredThreadReadResult)
+          const record = asRecord(enrichedThreadReadResult)
           const thread = asRecord(record?.thread)
           if (!record || !thread) {
             setJson(res, 502, { error: 'thread/read returned an invalid thread response' })

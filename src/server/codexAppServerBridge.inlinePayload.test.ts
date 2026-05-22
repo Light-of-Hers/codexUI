@@ -9,6 +9,7 @@ import {
   buildAppServerConfigForState,
   createCodexBridgeMiddleware,
   mergeRecoveredTurnItemsIntoThreadResult,
+  mergeSessionModelStateIntoThreadResult,
   mergeSessionSkillInputsIntoTurns,
   parseAutomationToml,
   sanitizeThreadTurnsInlinePayloads,
@@ -40,6 +41,70 @@ function localImagePathFromProxyUrl(value: string): string {
   expect(imagePath).toBeTruthy()
   return imagePath ?? ''
 }
+
+describe('session model state recovery', () => {
+  it('overrides stale thread snapshot model metadata from persisted turn context', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-session-model-'))
+    const sessionPath = join(tempDir, 'session.jsonl')
+
+    try {
+      await writeFile(sessionPath, [
+        JSON.stringify({
+          type: 'session_meta',
+          payload: {
+            model_provider: 'moon',
+          },
+        }),
+        JSON.stringify({
+          type: 'turn_context',
+          payload: {
+            turn_id: 'turn-1',
+            model: 'glm-5.1',
+            effort: 'xhigh',
+            collaboration_mode: {
+              mode: 'default',
+              settings: {
+                model: 'glm-5.1',
+                reasoning_effort: 'xhigh',
+              },
+            },
+          },
+        }),
+      ].join('\n'), 'utf8')
+
+      const result = await mergeSessionModelStateIntoThreadResult({
+        model: 'gpt-5.5',
+        modelProvider: 'openai',
+        reasoningEffort: 'none',
+        thread: {
+          id: 'thread-1',
+          path: sessionPath,
+          modelProvider: 'openai',
+          reasoningEffort: 'none',
+          turns: [],
+        },
+      }) as {
+        model: string
+        modelProvider: string
+        reasoningEffort: string
+        thread: {
+          model: string
+          modelProvider: string
+          reasoningEffort: string
+        }
+      }
+
+      expect(result.model).toBe('glm-5.1')
+      expect(result.modelProvider).toBe('moon')
+      expect(result.reasoningEffort).toBe('xhigh')
+      expect(result.thread.model).toBe('glm-5.1')
+      expect(result.thread.modelProvider).toBe('moon')
+      expect(result.thread.reasoningEffort).toBe('xhigh')
+    } finally {
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+})
 
 describe('thread inline media sanitization', () => {
   it('externalizes inline image data from common thread payload fields', async () => {
