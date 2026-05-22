@@ -1,5 +1,5 @@
 <template>
-  <section class="conversation-root" @contextmenu.capture="onConversationContextMenu" @click.capture="onConversationClick">
+  <section class="conversation-root" @contextmenu.capture="onConversationContextMenu" @click.capture="onConversationClick" @keydown.capture="onConversationKeydown">
     <p v-if="isLoading" class="conversation-loading">Loading messages...</p>
 
     <p
@@ -75,6 +75,9 @@
                       <div class="cmd-output-section">
                         <span class="cmd-output-section-label">Command</span>
                         <div class="cmd-code-box" tabindex="0" @keydown="onCodeBoxKeydown">
+                          <button class="cmd-code-copy-button" type="button" title="Copy command" aria-label="Copy command" @click.stop="copyCommandCodeBox($event)">
+                            <span class="message-code-copy-icon" aria-hidden="true"></span>
+                          </button>
                           <div class="cmd-code-box-lines">
                             <div
                               v-for="(line, lineIndex) in commandDisplayLines(cmd)"
@@ -95,6 +98,9 @@
                           tabindex="0"
                           @keydown="onCodeBoxKeydown"
                         >
+                          <button class="cmd-code-copy-button" type="button" title="Copy output" aria-label="Copy output" @click.stop="copyCommandCodeBox($event)">
+                            <span class="message-code-copy-icon" aria-hidden="true"></span>
+                          </button>
                           <div class="cmd-code-box-lines">
                             <div
                               v-for="(line, lineIndex) in outputDisplayLines(cmd)"
@@ -137,6 +143,9 @@
                   <div class="cmd-output-section">
                     <span class="cmd-output-section-label">Command</span>
                     <div class="cmd-code-box" tabindex="0" @keydown="onCodeBoxKeydown">
+                      <button class="cmd-code-copy-button" type="button" title="Copy command" aria-label="Copy command" @click.stop="copyCommandCodeBox($event)">
+                        <span class="message-code-copy-icon" aria-hidden="true"></span>
+                      </button>
                       <div class="cmd-code-box-lines">
                         <div
                           v-for="(line, lineIndex) in commandDisplayLines(message)"
@@ -157,6 +166,9 @@
                       tabindex="0"
                       @keydown="onCodeBoxKeydown"
                     >
+                      <button class="cmd-code-copy-button" type="button" title="Copy output" aria-label="Copy output" @click.stop="copyCommandCodeBox($event)">
+                        <span class="message-code-copy-icon" aria-hidden="true"></span>
+                      </button>
                       <div class="cmd-code-box-lines">
                         <div
                           v-for="(line, lineIndex) in outputDisplayLines(message)"
@@ -407,6 +419,9 @@
                           <div class="cmd-output-section">
                             <span class="cmd-output-section-label">Command</span>
                             <div class="cmd-code-box" tabindex="0" @keydown="onCodeBoxKeydown">
+                              <button class="cmd-code-copy-button" type="button" title="Copy command" aria-label="Copy command" @click.stop="copyCommandCodeBox($event)">
+                                <span class="message-code-copy-icon" aria-hidden="true"></span>
+                              </button>
                               <div class="cmd-code-box-lines">
                                 <div
                                   v-for="(line, lineIndex) in commandDisplayLines(cmd)"
@@ -427,6 +442,9 @@
                               tabindex="0"
                               @keydown="onCodeBoxKeydown"
                             >
+                              <button class="cmd-code-copy-button" type="button" title="Copy output" aria-label="Copy output" @click.stop="copyCommandCodeBox($event)">
+                                <span class="message-code-copy-icon" aria-hidden="true"></span>
+                              </button>
                               <div class="cmd-code-box-lines">
                                 <div
                                   v-for="(line, lineIndex) in outputDisplayLines(cmd)"
@@ -1026,6 +1044,30 @@ function onCodeBoxKeydown(event: KeyboardEvent): void {
   range.selectNodeContents(lines)
   selection.removeAllRanges()
   selection.addRange(range)
+  event.preventDefault()
+  event.stopPropagation()
+}
+
+function selectCodeBlockContents(block: HTMLElement): boolean {
+  const code = block.querySelector<HTMLElement>('.message-code-pre code')
+  if (!code) return false
+
+  const selection = window.getSelection()
+  if (!selection) return false
+
+  const range = document.createRange()
+  range.selectNodeContents(code)
+  selection.removeAllRanges()
+  selection.addRange(range)
+  return true
+}
+
+function onCodeBlockSelectAllKeydown(event: KeyboardEvent, block: HTMLElement): void {
+  if (event.key.toLowerCase() !== 'a') return
+  if (!event.ctrlKey && !event.metaKey) return
+  if (event.altKey) return
+  if (!selectCodeBlockContents(block)) return
+
   event.preventDefault()
   event.stopPropagation()
 }
@@ -2502,6 +2544,43 @@ async function copyCodeBlock(button: HTMLButtonElement): Promise<void> {
   }, 1400)
 }
 
+async function copyCommandCodeBox(event: MouseEvent): Promise<void> {
+  const button = event.currentTarget
+  if (!(button instanceof HTMLButtonElement)) return
+
+  const box = button.closest('.cmd-code-box')
+  if (!(box instanceof HTMLElement)) return
+
+  const lines = Array.from(box.querySelectorAll<HTMLElement>('.cmd-code-box-line-code'))
+  const content = lines.map((line) => line.textContent ?? '').join('\n')
+  if (!content) return
+
+  let copied = false
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(content)
+      copied = true
+    } catch {
+      copied = false
+    }
+  }
+
+  if (!copied) {
+    copied = copyTextWithSelectionFallback(content)
+  }
+
+  if (!copied) return
+
+  button.dataset.copied = 'true'
+  button.setAttribute('aria-label', 'Copied')
+  button.setAttribute('title', 'Copied')
+  setTimeout(() => {
+    button.dataset.copied = 'false'
+    button.setAttribute('aria-label', button.closest('.cmd-code-box-output') ? 'Copy output' : 'Copy command')
+    button.setAttribute('title', button.closest('.cmd-code-box-output') ? 'Copy output' : 'Copy command')
+  }, 1400)
+}
+
 function forkResponse(anchorMessageId: string): void {
   const turnIndex = forkableTurnIndexByAnchorId.value[anchorMessageId]
   if (typeof turnIndex !== 'number') return
@@ -3011,6 +3090,15 @@ function onConversationClick(event: MouseEvent): void {
   event.preventDefault()
   event.stopPropagation()
   openImageModal(src)
+}
+
+function onConversationKeydown(event: KeyboardEvent): void {
+  const target = event.target
+  if (!(target instanceof Element)) return
+
+  const block = target.closest('.message-code-block')
+  if (!(block instanceof HTMLElement)) return
+  onCodeBlockSelectAllKeydown(event, block)
 }
 
 function closeFileLinkContextMenu(): void {
@@ -3804,8 +3892,8 @@ function codeBlockCopyButtonHtml(): string {
 function addCodeBlockCopyButtons(html: string): string {
   if (!html.includes('message-code-block') || html.includes('message-code-copy-button')) return html
   return html.replace(
-    /(<pre class="message-code-pre"[^>]*>[\s\S]*?<\/pre>)(<\/div>)/gu,
-    `$1${codeBlockCopyButtonHtml()}$2`,
+    /<div class="message-code-block([^"]*)">/gu,
+    `<div class="message-code-block$1" tabindex="0">${codeBlockCopyButtonHtml()}`,
   )
 }
 
@@ -3863,7 +3951,7 @@ function renderMessageBlockAsHtml(block: MessageBlock): string {
     const language = block.language
       ? `<div class="message-code-language">${escapeHtml(block.language)}</div>`
       : ''
-    return `<div class="message-code-block">${language}<pre class="message-code-pre"><code class="hljs">${renderCachedHighlightedCodeAsHtml(block.language, block.value)}</code></pre>${codeBlockCopyButtonHtml()}</div>`
+    return `<div class="message-code-block" tabindex="0">${codeBlockCopyButtonHtml()}${language}<pre class="message-code-pre"><code class="hljs">${renderCachedHighlightedCodeAsHtml(block.language, block.value)}</code></pre></div>`
   }
   if (block.kind === 'thematicBreak') {
     return '<hr class="message-divider">'
@@ -5655,6 +5743,7 @@ onBeforeUnmount(() => {
 
 .cmd-code-box {
   @apply block max-h-40 overflow-y-auto rounded-lg border border-white/10 bg-white/5 px-0 py-0 text-xs font-mono text-zinc-100 outline-none;
+  position: relative;
 }
 
 .cmd-code-box-output {

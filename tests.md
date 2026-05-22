@@ -5571,6 +5571,31 @@ Markdown files opened through the local editor expose a preview button that rend
 - Clicking it copies the exact code block content.
 - The button remains readable and aligned in both light and dark themes.
 - Copy success briefly changes the button state without shifting the code block layout.
+- Pressing Ctrl+A or Cmd+A while focused inside a conversation code block selects only that code block's code text.
+
+#### Rollback/Cleanup
+- No cleanup is required.
+
+### Feature: Command code box copy button
+
+#### Prerequisites
+- App server is running from this repository.
+- A chat thread contains a command execution card with command and output code boxes.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Open the thread in light theme.
+2. Confirm each command and output code box shows a compact copy icon button in the upper-right corner.
+3. Click the command code box copy button and paste into a scratch editor.
+4. Click the output code box copy button and paste into a scratch editor.
+5. Confirm Ctrl+A or Cmd+A while focused inside a command code box still selects only that box's lines.
+6. Switch to dark theme and repeat steps 2-5.
+
+#### Expected Results
+- Command and output code boxes use the same classic copy icon affordance as conversation code blocks.
+- Copying command/output boxes copies only the visible box text, without line numbers or button text.
+- Existing command box scoped select-all behavior still works.
+- Copy buttons stay inside the command box bounds and remain readable in both themes.
 
 #### Rollback/Cleanup
 - No cleanup is required.
