@@ -2345,8 +2345,27 @@ type SessionRecoveredFileChangeItem = {
 
 type SessionItemSlot = {
   type: 'agentMessage' | 'commandExecution' | 'fileChange'
+  text?: string
   command?: SessionRecoveredCommand
   fileChange?: SessionRecoveredFileChangeItem
+}
+
+function readSessionMessageText(payload: Record<string, unknown>): string {
+  const content = payload.content
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+
+  const parts: string[] = []
+  for (const block of content) {
+    const blockRecord = asRecord(block)
+    const text = typeof blockRecord?.text === 'string' ? blockRecord.text : ''
+    if (!text) continue
+    const type = typeof blockRecord?.type === 'string' ? blockRecord.type : ''
+    if (type && type !== 'text' && type !== 'output_text') continue
+    parts.push(text)
+  }
+
+  return parts.join('')
 }
 
 function buildSessionItemOrder(sessionLogRaw: string, turnIds: Set<string>): Map<string, SessionItemSlot[]> {
@@ -2387,7 +2406,7 @@ function buildSessionItemOrder(sessionLogRaw: string, turnIds: Set<string>): Map
     }
 
     if (payload.type === 'message' && payload.role === 'assistant') {
-      slots.push({ type: 'agentMessage' })
+      slots.push({ type: 'agentMessage', text: readSessionMessageText(payload) })
       continue
     }
 
@@ -2447,6 +2466,46 @@ function buildSessionItemOrder(sessionLogRaw: string, turnIds: Set<string>): Map
   }
 
   return orderByTurnId
+}
+
+function splitMergedAgentMessageFromSessionSlots(
+  agentMessages: Record<string, unknown>[],
+  slots: SessionItemSlot[],
+): Record<string, unknown>[] {
+  if (agentMessages.length !== 1) return agentMessages
+
+  const sessionAgentTexts = slots
+    .filter((slot) => slot.type === 'agentMessage')
+    .map((slot) => slot.text ?? '')
+    .filter((text) => text.length > 0)
+  if (sessionAgentTexts.length <= 1) return agentMessages
+
+  const mergedMessage = agentMessages[0]!
+  const mergedText = typeof mergedMessage.text === 'string' ? mergedMessage.text : ''
+  if (!mergedText) return agentMessages
+
+  let cursor = 0
+  const splitTexts: string[] = []
+  for (let index = 0; index < sessionAgentTexts.length; index += 1) {
+    const sessionText = sessionAgentTexts[index]!
+    const textIndex = mergedText.indexOf(sessionText, cursor)
+    if (textIndex < 0) return agentMessages
+
+    const textEnd = textIndex + sessionText.length
+    const splitEnd = index === sessionAgentTexts.length - 1 ? mergedText.length : textEnd
+    const splitText = mergedText.slice(cursor, splitEnd)
+    if (!splitText) return agentMessages
+    splitTexts.push(splitText)
+    cursor = textEnd
+  }
+
+  if (splitTexts.join('') !== mergedText) return agentMessages
+
+  return splitTexts.map((text, index) => ({
+    ...mergedMessage,
+    id: index === 0 ? mergedMessage.id : `${String(mergedMessage.id ?? 'agent')}-session-part-${index}`,
+    text,
+  }))
 }
 
 function extractFilePathsFromCommand(cmd: string, cwd: string): string[] {
@@ -2746,6 +2805,8 @@ function mergeSessionCommandsIntoTurns(turns: unknown[], sessionLogRaw: string):
     if (alreadyHasRecoveredItems) return turn
 
     const agentMessages = existingItems.filter((it) => it.type === 'agentMessage')
+    const splitAgentMessages = splitMergedAgentMessageFromSessionSlots(agentMessages, slots)
+    const splitAgentMessageApplied = splitAgentMessages !== agentMessages
     const nonAgentNonUserItems = existingItems.filter((it) => it.type !== 'agentMessage' && it.type !== 'userMessage')
     const userMessages = existingItems.filter((it) => it.type === 'userMessage')
 
@@ -2754,8 +2815,9 @@ function mergeSessionCommandsIntoTurns(turns: unknown[], sessionLogRaw: string):
 
     for (const slot of slots) {
       if (slot.type === 'agentMessage') {
-        if (agentIdx < agentMessages.length) {
-          interleaved.push(agentMessages[agentIdx]!)
+        if (splitAgentMessageApplied && !slot.text) continue
+        if (agentIdx < splitAgentMessages.length) {
+          interleaved.push(splitAgentMessages[agentIdx]!)
           agentIdx++
         }
       } else if (slot.type === 'commandExecution' && slot.command) {
@@ -2765,8 +2827,8 @@ function mergeSessionCommandsIntoTurns(turns: unknown[], sessionLogRaw: string):
       }
     }
 
-    while (agentIdx < agentMessages.length) {
-      interleaved.push(agentMessages[agentIdx]!)
+    while (agentIdx < splitAgentMessages.length) {
+      interleaved.push(splitAgentMessages[agentIdx]!)
       agentIdx++
     }
 
