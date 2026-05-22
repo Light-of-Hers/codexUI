@@ -47,7 +47,7 @@ import {
   isIncompleteCursorToolCallText,
   parseCursorToolMessage,
 } from '../api/normalizers/cursorToolCalls'
-import { normalizeFileChangeStatus, toUiFileChanges } from '../api/normalizers/v2'
+import { normalizeFileChangeStatus, toUiFileChanges, toUiToolCallMessage } from '../api/normalizers/v2'
 import type {
   CollaborationModeKind,
   CollaborationModeOption,
@@ -67,6 +67,7 @@ import type {
   UiThreadTokenUsage,
   UiTokenUsageBreakdown,
   UiThread,
+  UiToolCallData,
 } from '../types/codex'
 import { getPathParent, isProjectlessChatPath, normalizePathForUi, toProjectName } from '../pathUtils.js'
 
@@ -765,6 +766,24 @@ function areCommandExecutionsEqual(first?: CommandExecutionData, second?: Comman
   return first.status === second.status && first.aggregatedOutput === second.aggregatedOutput && first.exitCode === second.exitCode
 }
 
+function areToolCallsEqual(first?: UiToolCallData, second?: UiToolCallData): boolean {
+  if (!first && !second) return true
+  if (!first || !second) return false
+  return (
+    first.kind === second.kind &&
+    first.title === second.title &&
+    first.name === second.name &&
+    first.status === second.status &&
+    first.server === second.server &&
+    first.input === second.input &&
+    first.output === second.output &&
+    first.error === second.error &&
+    first.progress === second.progress &&
+    first.durationMs === second.durationMs &&
+    areStringArraysEqual(first.meta, second.meta)
+  )
+}
+
 function arePlanStepsEqual(first: UiPlanStep[] = [], second: UiPlanStep[] = []): boolean {
   if (first.length !== second.length) return false
   for (let index = 0; index < first.length; index += 1) {
@@ -807,6 +826,7 @@ function areMessageFieldsEqual(first: UiMessage, second: UiMessage): boolean {
     first.rawPayload === second.rawPayload &&
     first.isUnhandled === second.isUnhandled &&
     areCommandExecutionsEqual(first.commandExecution, second.commandExecution) &&
+    areToolCallsEqual(first.toolCall, second.toolCall) &&
     arePlanDataEqual(first.plan, second.plan) &&
     first.turnId === second.turnId &&
     first.turnIndex === second.turnIndex &&
@@ -1533,6 +1553,7 @@ export function useDesktopState() {
   const liveReasoningTextByThreadId = ref<Record<string, string>>({})
   const liveCommandsByThreadId = ref<Record<string, UiMessage[]>>({})
   const liveFileChangeMessagesByThreadId = ref<Record<string, UiMessage[]>>({})
+  const liveToolCallMessagesByThreadId = ref<Record<string, UiMessage[]>>({})
   const inProgressById = ref<Record<string, boolean>>({})
   type FileAttachment = { label: string; path: string; fsPath: string }
   type QueuedMessage = {
@@ -1739,7 +1760,8 @@ export function useDesktopState() {
     const liveAgent = liveAgentMessagesByThreadId.value[threadId] ?? []
     const liveCommands = liveCommandsByThreadId.value[threadId] ?? []
     const liveFileChanges = liveFileChangeMessagesByThreadId.value[threadId] ?? []
-    const combined = [...persisted, ...livePlan, ...liveCommands, ...liveFileChanges, ...liveAgent]
+    const liveToolCalls = liveToolCallMessagesByThreadId.value[threadId] ?? []
+    const combined = [...persisted, ...livePlan, ...liveCommands, ...liveFileChanges, ...liveToolCalls, ...liveAgent]
 
     const summary = turnSummaryByThreadId.value[threadId]
     if (!summary) return combined
@@ -2131,6 +2153,7 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
         if (liveCommandsByThreadId.value[threadId]) {
           liveCommandsByThreadId.value = omitKey(liveCommandsByThreadId.value, threadId)
         }
+        clearLiveToolCallsForThread(threadId)
       } catch {
         // If rollback fails, continue with retry rather than dropping the turn.
       }
@@ -2569,6 +2592,7 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
     liveReasoningTextByThreadId.value = pruneThreadStateMap(liveReasoningTextByThreadId.value, activeThreadIds)
     liveCommandsByThreadId.value = pruneThreadStateMap(liveCommandsByThreadId.value, activeThreadIds)
     liveFileChangeMessagesByThreadId.value = pruneThreadStateMap(liveFileChangeMessagesByThreadId.value, activeThreadIds)
+    liveToolCallMessagesByThreadId.value = pruneThreadStateMap(liveToolCallMessagesByThreadId.value, activeThreadIds)
     turnSummaryByThreadId.value = pruneThreadStateMap(turnSummaryByThreadId.value, activeThreadIds)
     turnActivityByThreadId.value = pruneThreadStateMap(turnActivityByThreadId.value, activeThreadIds)
     turnErrorByThreadId.value = pruneThreadStateMap(turnErrorByThreadId.value, activeThreadIds)
@@ -2863,6 +2887,15 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
     }
   }
 
+  function setLiveToolCallMessagesForThread(threadId: string, nextMessages: UiMessage[]): void {
+    const previous = liveToolCallMessagesByThreadId.value[threadId] ?? []
+    if (areMessageArraysEqual(previous, nextMessages)) return
+    liveToolCallMessagesByThreadId.value = {
+      ...liveToolCallMessagesByThreadId.value,
+      [threadId]: nextMessages,
+    }
+  }
+
   function setLivePlanMessagesForThread(threadId: string, nextMessages: UiMessage[]): void {
     const previous = livePlanMessagesByThreadId.value[threadId] ?? []
     if (areMessageArraysEqual(previous, nextMessages)) return
@@ -2888,6 +2921,12 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
     const previous = liveFileChangeMessagesByThreadId.value[threadId] ?? []
     const next = upsertMessage(previous, nextMessage)
     setLiveFileChangeMessagesForThread(threadId, next)
+  }
+
+  function upsertLiveToolCallMessage(threadId: string, nextMessage: UiMessage): void {
+    const previous = liveToolCallMessagesByThreadId.value[threadId] ?? []
+    const next = upsertMessage(previous, nextMessage)
+    setLiveToolCallMessagesForThread(threadId, next)
   }
 
   function setLiveReasoningText(threadId: string, text: string): void {
@@ -2930,10 +2969,17 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
     liveFileChangeMessagesByThreadId.value = omitKey(liveFileChangeMessagesByThreadId.value, threadId)
   }
 
+  function clearLiveToolCallsForThread(threadId: string): void {
+    if (!threadId) return
+    if (!(threadId in liveToolCallMessagesByThreadId.value)) return
+    liveToolCallMessagesByThreadId.value = omitKey(liveToolCallMessagesByThreadId.value, threadId)
+  }
+
   function clearCompletedTurnLiveState(threadId: string): void {
     if (!threadId) return
     clearLivePlansForThread(threadId)
     clearLiveReasoningForThread(threadId)
+    clearLiveToolCallsForThread(threadId)
     setTurnActivityForThread(threadId, null)
     if (threadId === selectedThreadId.value) {
       activeReasoningItemId = ''
@@ -3516,6 +3562,49 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
           },
         }
       }
+      if (itemType === 'mcptoolcall') {
+        const server = readString(item?.server)
+        const tool = readString(item?.tool)
+        return {
+          threadId,
+          activity: {
+            label: 'Running tool',
+            details: [server, tool].filter((value) => value.length > 0),
+          },
+        }
+      }
+      if (itemType === 'collabagenttoolcall') {
+        const tool = readString(item?.tool)
+        return {
+          threadId,
+          activity: {
+            label: 'Running agent tool',
+            details: tool ? [tool] : [],
+          },
+        }
+      }
+      if (itemType === 'websearch') {
+        const query = readString(item?.query)
+        return {
+          threadId,
+          activity: {
+            label: 'Searching web',
+            details: query ? [query] : [],
+          },
+        }
+      }
+    }
+
+    if (notification.method === 'item/mcpToolCall/progress') {
+      const params = asRecord(notification.params)
+      const message = readString(params?.message)
+      return {
+        threadId,
+        activity: {
+          label: 'Running tool',
+          details: message ? [message] : [],
+        },
+      }
     }
 
     if (notification.method === 'item/commandExecution/outputDelta') {
@@ -3969,6 +4058,69 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
     }
   }
 
+  function readToolCallItemMessage(notification: RpcNotification): UiMessage | null {
+    if (notification.method !== 'item/started' && notification.method !== 'item/completed') return null
+    const params = asRecord(notification.params)
+    const item = asRecord(params?.item)
+    const message = toUiToolCallMessage(item)
+    if (!message) return null
+    const threadId = extractThreadIdFromNotification(notification)
+    const turnId = readString(params?.turnId) || readString(params?.turn_id)
+    const turnIndex = threadId && turnId
+      ? turnIndexByTurnIdByThreadId.value[threadId]?.[turnId]
+      : undefined
+    const normalizedMessage = notification.method === 'item/started' && message.toolCall?.status === 'completed'
+      ? createToolCallMessage(message.id, { ...message.toolCall, status: 'inProgress' })
+      : message
+    return {
+      ...normalizedMessage,
+      turnId: turnId || undefined,
+      turnIndex: typeof turnIndex === 'number' ? turnIndex : undefined,
+    }
+  }
+
+  function readMcpToolCallProgress(notification: RpcNotification): { itemId: string; message: string } | null {
+    if (notification.method !== 'item/mcpToolCall/progress') return null
+    const params = asRecord(notification.params)
+    const itemId = readString(params?.itemId) || readString(params?.item_id)
+    const message = readString(params?.message)
+    if (!itemId || !message) return null
+    return { itemId, message }
+  }
+
+  function createProgressOnlyToolCallMessage(itemId: string, progress: string): UiMessage {
+    const toolCall: UiToolCallData = {
+      kind: 'mcp',
+      title: 'MCP tool call',
+      name: 'mcpToolCall',
+      status: 'inProgress',
+      server: null,
+      input: '',
+      output: '',
+      error: '',
+      progress,
+      durationMs: null,
+      meta: [],
+    }
+    return createToolCallMessage(itemId, toolCall)
+  }
+
+  function createToolCallMessage(itemId: string, toolCall: UiToolCallData): UiMessage {
+    const lines = [`${toolCall.title} (${toolCall.status})`]
+    if (toolCall.meta.length > 0) lines.push(toolCall.meta.join(' | '))
+    if (toolCall.progress) lines.push('', 'Progress:', toolCall.progress)
+    if (toolCall.input) lines.push('', 'Input:', toolCall.input)
+    if (toolCall.output) lines.push('', 'Output:', toolCall.output)
+    if (toolCall.error) lines.push('', 'Error:', toolCall.error)
+    return {
+      id: itemId,
+      role: 'system',
+      text: lines.join('\n'),
+      messageType: 'toolCall',
+      toolCall,
+    }
+  }
+
   function upsertLiveCommand(threadId: string, msg: UiMessage): void {
     const previous = liveCommandsByThreadId.value[threadId] ?? []
     const next = upsertMessage(previous, msg)
@@ -4013,6 +4165,19 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
       liveFileChangeMessagesByThreadId.value = omitKey(liveFileChangeMessagesByThreadId.value, threadId)
     } else {
       liveFileChangeMessagesByThreadId.value = { ...liveFileChangeMessagesByThreadId.value, [threadId]: next }
+    }
+  }
+
+  function removeLiveToolCallsPersistedIn(threadId: string, persistedMessages: UiMessage[]): void {
+    const current = liveToolCallMessagesByThreadId.value[threadId]
+    if (!current || current.length === 0) return
+    const persistedIds = new Set(persistedMessages.map((message) => message.id))
+    const next = current.filter((message) => !persistedIds.has(message.id))
+    if (next.length === current.length) return
+    if (next.length === 0) {
+      liveToolCallMessagesByThreadId.value = omitKey(liveToolCallMessagesByThreadId.value, threadId)
+    } else {
+      liveToolCallMessagesByThreadId.value = { ...liveToolCallMessagesByThreadId.value, [threadId]: next }
     }
   }
 
@@ -4294,6 +4459,32 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
       upsertLiveFileChangeMessage(notificationThreadId, completedFileChange)
     }
 
+    const toolCallItem = readToolCallItemMessage(notification)
+    if (toolCallItem) {
+      upsertLiveToolCallMessage(notificationThreadId, toolCallItem)
+    }
+
+    const mcpToolCallProgress = readMcpToolCallProgress(notification)
+    if (mcpToolCallProgress) {
+      const current = (liveToolCallMessagesByThreadId.value[notificationThreadId] ?? [])
+        .find((message) => message.id === mcpToolCallProgress.itemId)
+      const fallback = createProgressOnlyToolCallMessage(mcpToolCallProgress.itemId, mcpToolCallProgress.message)
+      const previousToolCall = current?.toolCall ?? (fallback.toolCall as UiToolCallData)
+      const nextToolCall: UiToolCallData = {
+        ...previousToolCall,
+        status: previousToolCall.status === 'completed' || previousToolCall.status === 'failed'
+          ? previousToolCall.status
+          : 'inProgress',
+        progress: mcpToolCallProgress.message,
+      }
+      const nextMessage = createToolCallMessage(mcpToolCallProgress.itemId, nextToolCall)
+      upsertLiveToolCallMessage(notificationThreadId, {
+        ...(current ?? fallback),
+        text: nextMessage.text,
+        toolCall: nextToolCall,
+      })
+    }
+
     if (isAgentContentEvent(notification)) {
       activeReasoningItemId = ''
       clearLiveReasoningForThread(notificationThreadId)
@@ -4306,6 +4497,7 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
       if (liveCommandsByThreadId.value[notificationThreadId]) {
         liveCommandsByThreadId.value = omitKey(liveCommandsByThreadId.value, notificationThreadId)
       }
+      clearLiveToolCallsForThread(notificationThreadId)
       const completedThreadId = extractThreadIdFromNotification(notification)
       if (completedThreadId) {
         setThreadInProgress(completedThreadId, false)
@@ -4753,6 +4945,7 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
         }
         removeLiveCommandsPersistedIn(threadId, nextMessages)
         removeLiveFileChangesPersistedIn(threadId, nextMessages)
+        removeLiveToolCallsPersistedIn(threadId, nextMessages)
 
         loadedMessagesByThreadId.value = {
           ...loadedMessagesByThreadId.value,
@@ -5082,6 +5275,7 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
       if (liveCommandsByThreadId.value[forkedThreadId]) {
         liveCommandsByThreadId.value = omitKey(liveCommandsByThreadId.value, forkedThreadId)
       }
+      clearLiveToolCallsForThread(forkedThreadId)
       setTurnSummaryForThread(forkedThreadId, null)
       setTurnActivityForThread(forkedThreadId, null)
       setTurnErrorForThread(forkedThreadId, null)
@@ -5637,6 +5831,7 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
       if (liveCommandsByThreadId.value[threadId]) {
         liveCommandsByThreadId.value = omitKey(liveCommandsByThreadId.value, threadId)
       }
+      clearLiveToolCallsForThread(threadId)
       setTurnSummaryForThread(threadId, null)
       setTurnActivityForThread(threadId, null)
       setTurnErrorForThread(threadId, null)
@@ -5987,6 +6182,7 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
     liveReasoningTextByThreadId.value = {}
     liveCommandsByThreadId.value = {}
     liveFileChangeMessagesByThreadId.value = {}
+    liveToolCallMessagesByThreadId.value = {}
     turnIndexByTurnIdByThreadId.value = {}
     turnActivityByThreadId.value = {}
     turnSummaryByThreadId.value = {}

@@ -175,6 +175,49 @@
           </div>
         </div>
 
+        <div v-else-if="isToolCallMessage(message)" class="message-row" data-role="system">
+          <div class="message-stack" data-role="system">
+            <button
+              type="button"
+              class="tool-call-row"
+              :class="[toolCallStatusClass(message), { 'tool-call-expanded': isToolCallExpanded(message) }]"
+              @click="toggleToolCallExpand(message)"
+            >
+              <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isToolCallExpanded(message) }">▶</span>
+              <span class="tool-call-main">
+                <span class="tool-call-title" :title="toolCallDisplayTitle(message)">{{ toolCallDisplayTitle(message) }}</span>
+                <span v-if="toolCallMetaLabel(message)" class="tool-call-meta" :title="toolCallMetaLabel(message)">
+                  {{ toolCallMetaLabel(message) }}
+                </span>
+              </span>
+              <span class="tool-call-status">{{ toolCallStatusLabel(message) }}</span>
+            </button>
+            <div class="tool-call-detail-wrap" :class="{ 'tool-call-detail-visible': isToolCallExpanded(message) }">
+              <div class="tool-call-detail-inner">
+                <div v-if="toolCallProgressText(message)" class="tool-call-section">
+                  <span class="tool-call-section-label">Progress</span>
+                  <p class="tool-call-progress" v-text="toolCallProgressText(message)"></p>
+                </div>
+                <div v-if="toolCallInputText(message)" class="tool-call-section">
+                  <span class="tool-call-section-label">Input</span>
+                  <pre class="tool-call-code-box" v-text="toolCallInputText(message)"></pre>
+                </div>
+                <div v-if="toolCallOutputText(message)" class="tool-call-section">
+                  <span class="tool-call-section-label">Output</span>
+                  <pre class="tool-call-code-box" v-text="toolCallOutputText(message)"></pre>
+                </div>
+                <div v-if="toolCallErrorText(message)" class="tool-call-section">
+                  <span class="tool-call-section-label">Error</span>
+                  <pre class="tool-call-code-box tool-call-code-box-error" v-text="toolCallErrorText(message)"></pre>
+                </div>
+                <div v-if="!hasToolCallDetails(message)" class="tool-call-section">
+                  <p class="tool-call-progress">No additional details.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div
           v-else-if="isFileChangeMessage(message)"
           class="message-row"
@@ -796,6 +839,7 @@ const ThreadPendingRequestPanel = defineAsyncComponent(() => import('./ThreadPen
 const expandedCommandIds = ref<Set<string>>(new Set())
 const collapsedAutoCommandIds = ref<Set<string>>(new Set())
 const expandedCommandGroupIds = ref<Set<string>>(new Set())
+const expandedToolCallIds = ref<Set<string>>(new Set())
 const expandedWorkedIds = ref<Set<string>>(new Set())
 const expandedFileChangeSummaryIds = ref<Set<string>>(new Set())
 const expandedResponseSourceIds = ref<Set<string>>(new Set())
@@ -870,6 +914,78 @@ function readPlanData(message: UiMessage): { explanation: string; steps: UiPlanS
 
 function isCommandMessage(message: UiMessage): boolean {
   return message.messageType === 'commandExecution' && !!message.commandExecution
+}
+
+function isToolCallMessage(message: UiMessage): boolean {
+  return message.messageType === 'toolCall' && !!message.toolCall
+}
+
+function toolCallDisplayTitle(message: UiMessage): string {
+  const toolCall = message.toolCall
+  if (!toolCall) return 'Tool call'
+  return toolCall.title || toolCall.name || 'Tool call'
+}
+
+function toolCallMetaLabel(message: UiMessage): string {
+  const meta = message.toolCall?.meta ?? []
+  return meta.filter((part) => part.trim().length > 0).join(' · ')
+}
+
+function toolCallStatusLabel(message: UiMessage): string {
+  switch (message.toolCall?.status) {
+    case 'inProgress':
+      return 'Running'
+    case 'completed':
+      return 'Done'
+    case 'failed':
+      return 'Failed'
+    default:
+      return ''
+  }
+}
+
+function toolCallStatusClass(message: UiMessage): string {
+  const status = message.toolCall?.status
+  if (status === 'inProgress') return 'tool-call-status-running'
+  if (status === 'failed') return 'tool-call-status-error'
+  return 'tool-call-status-ok'
+}
+
+function isToolCallExpanded(message: UiMessage): boolean {
+  return isToolCallMessage(message) && expandedToolCallIds.value.has(message.id)
+}
+
+function toggleToolCallExpand(message: UiMessage): void {
+  if (!isToolCallMessage(message)) return
+  const next = new Set(expandedToolCallIds.value)
+  if (next.has(message.id)) next.delete(message.id)
+  else next.add(message.id)
+  expandedToolCallIds.value = next
+}
+
+function toolCallProgressText(message: UiMessage): string {
+  return message.toolCall?.progress?.trim() ?? ''
+}
+
+function toolCallInputText(message: UiMessage): string {
+  return message.toolCall?.input?.trim() ?? ''
+}
+
+function toolCallOutputText(message: UiMessage): string {
+  return message.toolCall?.output?.trim() ?? ''
+}
+
+function toolCallErrorText(message: UiMessage): string {
+  return message.toolCall?.error?.trim() ?? ''
+}
+
+function hasToolCallDetails(message: UiMessage): boolean {
+  return Boolean(
+    toolCallProgressText(message) ||
+    toolCallInputText(message) ||
+    toolCallOutputText(message) ||
+    toolCallErrorText(message),
+  )
 }
 
 function commandDisplayText(message: UiMessage): string {
@@ -4322,6 +4438,10 @@ watch(
       expandedCommandGroupIds.value,
       new Set(Object.keys(groupedCommandsByLatestId.value)),
     )
+    expandedToolCallIds.value = pruneCommandIdSet(
+      expandedToolCallIds.value,
+      new Set(next.filter((message) => isToolCallMessage(message)).map((message) => message.id)),
+    )
     expandedFileChangeSummaryIds.value = pruneCommandIdSet(
       expandedFileChangeSummaryIds.value,
       new Set([
@@ -5481,6 +5601,111 @@ onBeforeUnmount(() => {
 
 .cmd-code-box-line-code {
   @apply min-w-0 whitespace-pre-wrap break-words leading-4 text-zinc-100;
+}
+
+.tool-call-row {
+  @apply w-full min-w-0 flex items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-left transition hover:bg-indigo-100;
+}
+
+.tool-call-row.tool-call-expanded {
+  @apply rounded-b-none;
+}
+
+.tool-call-main {
+  @apply flex min-w-0 flex-1 flex-col gap-0.5;
+}
+
+.tool-call-title {
+  @apply min-w-0 truncate text-xs font-semibold text-indigo-950;
+}
+
+.tool-call-meta {
+  @apply min-w-0 truncate text-[11px] leading-4 text-indigo-700/80;
+}
+
+.tool-call-status {
+  @apply max-w-20 shrink-0 truncate text-right text-[11px] font-semibold;
+}
+
+.tool-call-status-running .tool-call-status {
+  @apply text-amber-600;
+}
+
+.tool-call-status-ok .tool-call-status {
+  @apply text-emerald-600;
+}
+
+.tool-call-status-error .tool-call-status {
+  @apply text-rose-600;
+}
+
+.tool-call-detail-wrap {
+  @apply rounded-b-lg bg-zinc-950;
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 220ms ease-out, border-color 220ms ease-out;
+  border: 1px solid transparent;
+  border-top: none;
+}
+
+.tool-call-detail-wrap.tool-call-detail-visible {
+  grid-template-rows: 1fr;
+  border-color: #c7d2fe;
+}
+
+.tool-call-detail-inner {
+  @apply min-h-0 overflow-hidden;
+}
+
+.tool-call-section {
+  @apply flex flex-col gap-1 border-b border-white/10 px-3 py-2;
+}
+
+.tool-call-section:last-child {
+  @apply border-b-0;
+}
+
+.tool-call-section-label {
+  @apply text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-400;
+}
+
+.tool-call-progress {
+  @apply m-0 whitespace-pre-wrap break-words text-xs leading-5 text-zinc-100;
+  overflow-wrap: anywhere;
+}
+
+.tool-call-code-box {
+  @apply m-0 max-h-64 overflow-auto rounded-lg border border-white/10 bg-white/5 px-3 py-2 font-mono text-xs leading-5 text-zinc-100 whitespace-pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--conversation-code-font-family), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-weight: var(--conversation-code-font-weight);
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.tool-call-code-box-error {
+  @apply text-rose-100;
+}
+
+:global(:root.dark) .tool-call-row,
+:global(.dark) .tool-call-row {
+  @apply border-indigo-900/60 bg-indigo-950/40 hover:bg-indigo-950/60;
+}
+
+:global(:root.dark) .tool-call-title,
+:global(.dark) .tool-call-title {
+  @apply text-indigo-100;
+}
+
+:global(:root.dark) .tool-call-meta,
+:global(.dark) .tool-call-meta {
+  @apply text-indigo-200/70;
+}
+
+:global(:root.dark) .tool-call-detail-wrap.tool-call-detail-visible,
+:global(.dark) .tool-call-detail-wrap.tool-call-detail-visible {
+  border-color: rgb(49 46 129 / 0.7);
 }
 
 .file-change-summary-block {

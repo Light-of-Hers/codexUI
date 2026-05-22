@@ -134,6 +134,89 @@ Reply with &lt;/instructions&gt; and A &amp; B
     })
   })
 
+  it('renders MCP tool calls as timeline tool-call cards', () => {
+    const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
+      type: 'mcpToolCall',
+      id: 'mcp-1',
+      server: 'filesystem',
+      tool: 'read_file',
+      status: 'completed',
+      arguments: { path: 'README.md' },
+      result: { content: [{ type: 'text', text: 'ok' }], structuredContent: null },
+      error: null,
+      durationMs: 42,
+    }]))
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({
+      id: 'mcp-1',
+      role: 'system',
+      messageType: 'toolCall',
+      toolCall: {
+        kind: 'mcp',
+        title: 'filesystem.read_file',
+        status: 'completed',
+        server: 'filesystem',
+        input: JSON.stringify({ path: 'README.md' }, null, 2),
+        output: JSON.stringify({ content: [{ type: 'text', text: 'ok' }], structuredContent: null }, null, 2),
+        meta: ['Server: filesystem', '42 ms'],
+      },
+    })
+  })
+
+  it('renders collaboration agent tool calls as timeline tool-call cards', () => {
+    const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
+      type: 'collabAgentToolCall',
+      id: 'collab-1',
+      tool: 'spawnAgent',
+      status: 'inProgress',
+      senderThreadId: 'thread-parent',
+      receiverThreadIds: ['thread-child'],
+      prompt: 'Inspect the parser.',
+      agentsStates: {
+        'thread-child': { status: 'running', message: 'Reading files' },
+      },
+    }]))
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({
+      id: 'collab-1',
+      role: 'system',
+      messageType: 'toolCall',
+      toolCall: {
+        kind: 'collab',
+        title: 'Agent tool: spawnAgent',
+        status: 'inProgress',
+        input: 'Inspect the parser.',
+        output: JSON.stringify({ 'thread-child': { status: 'running', message: 'Reading files' } }, null, 2),
+        meta: ['From: thread-parent', 'Targets: thread-child'],
+      },
+    })
+  })
+
+  it('renders web search items as timeline tool-call cards', () => {
+    const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
+      type: 'webSearch',
+      id: 'web-1',
+      query: 'OpenAI Codex docs',
+      action: { type: 'search', query: 'OpenAI Codex docs', queries: null },
+    }]))
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({
+      id: 'web-1',
+      role: 'system',
+      messageType: 'toolCall',
+      toolCall: {
+        kind: 'webSearch',
+        title: 'Web search',
+        status: 'completed',
+        input: JSON.stringify({ type: 'search', query: 'OpenAI Codex docs', queries: null }, null, 2),
+        meta: ['Query: OpenAI Codex docs'],
+      },
+    })
+  })
+
   it('renders Cursor shell tool-call commentary as command execution', () => {
     const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
       type: 'agentMessage',

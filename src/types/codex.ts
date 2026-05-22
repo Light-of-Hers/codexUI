@@ -101,6 +101,22 @@ export type CommandExecutionData = {
   exitCode: number | null
 }
 
+export type UiToolCallStatus = 'inProgress' | 'completed' | 'failed'
+export type UiToolCallKind = 'mcp' | 'collab' | 'webSearch'
+export type UiToolCallData = {
+  kind: UiToolCallKind
+  title: string
+  name: string
+  status: UiToolCallStatus
+  server: string | null
+  input: string
+  output: string
+  error: string
+  progress: string
+  durationMs: number | null
+  meta: string[]
+}
+
 export type UiFileAttachment = { label: string; path: string }
 export type UiFileChangeOperation = 'add' | 'delete' | 'update'
 export type UiFileChangeStatus = 'inProgress' | 'completed' | 'failed' | 'declined'
@@ -216,6 +232,7 @@ export type UiMessage = {
   rawPayload?: string
   isUnhandled?: boolean
   commandExecution?: CommandExecutionData
+  toolCall?: UiToolCallData
   plan?: UiPlanData
   turnId?: string
   turnIndex?: number

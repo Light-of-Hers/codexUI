@@ -5533,3 +5533,28 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - Decline, cancel, or complete any disposable pending request created for the check.
+
+### Feature: Mobile persisted tool-call cards render in the conversation
+
+#### Prerequisites
+- App server is running from this repository.
+- A mobile-width viewport is available, for example 375x812.
+- A thread contains persisted `mcpToolCall`, `collabAgentToolCall`, or `webSearch` items.
+- Light theme and dark theme are both available from Settings.
+
+#### Steps
+1. Run `./node_modules/.bin/vitest run src/api/normalizers/v2.test.ts`.
+2. Open the target thread in a mobile-width viewport in light theme.
+3. Confirm each persisted tool call appears as a compact row in the conversation timeline.
+4. Tap a tool-call row and confirm progress, input, output, and error details expand when present.
+5. Switch to dark theme and repeat steps 2-4.
+6. Repeat with a desktop-width viewport and confirm the same tool-call rows remain visible.
+
+#### Expected Results
+- Persisted MCP, collaboration-agent, and web-search tool calls are not dropped from the conversation.
+- Tool-call rows fit mobile width without horizontal page overflow.
+- Expanded details remain readable in both light and dark themes.
+- Desktop conversation rendering still shows the same tool-call information.
+
+#### Rollback/Cleanup
+- No persistent cleanup is needed beyond closing any disposable test thread.

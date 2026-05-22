@@ -16,6 +16,7 @@ import type {
   UiPlanStep,
   UiProjectGroup,
   UiThread,
+  UiToolCallData,
 } from '../../types/codex'
 import { normalizePathForComparison, normalizePathForUi, toProjectName } from '../../pathUtils.js'
 import { isIncompleteCursorToolCallText, parseCursorToolMessage } from './cursorToolCalls'
@@ -30,6 +31,32 @@ function toRawPayload(value: unknown): string {
   } catch {
     return String(value)
   }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
+function readString(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}
+
+function readNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function formatStructuredValue(value: unknown): string {
+  if (value === null || value === undefined) return ''
+  if (typeof value === 'string') return value
+  return toRawPayload(value)
+}
+
+function formatToolCallError(value: unknown): string {
+  const record = asRecord(value)
+  if (!record) return formatStructuredValue(value)
+  return readString(record.message) || toRawPayload(record)
 }
 
 const FILE_ATTACHMENT_LINE = /^##\s+(.+?):\s+(.+?)\s*$/
@@ -395,6 +422,142 @@ export function toUiFileChanges(changes: unknown): UiFileChange[] {
   return normalized
 }
 
+function normalizeToolCallStatus(value: unknown, error: unknown): UiToolCallData['status'] {
+  if (error !== null && error !== undefined) return 'failed'
+  if (value === 'failed') return 'failed'
+  if (value === 'completed') return 'completed'
+  return 'inProgress'
+}
+
+function compactToolCallMeta(values: Array<string | null | undefined>): string[] {
+  return values
+    .map((value) => value?.trim() ?? '')
+    .filter((value) => value.length > 0)
+}
+
+function formatDurationMeta(durationMs: number | null): string {
+  if (durationMs === null) return ''
+  if (durationMs < 1000) return `${durationMs} ms`
+  const seconds = durationMs / 1000
+  return `${seconds.toFixed(seconds < 10 ? 1 : 0)} s`
+}
+
+function buildToolCallFallbackText(toolCall: UiToolCallData): string {
+  const lines = [`${toolCall.title} (${toolCall.status})`]
+  if (toolCall.meta.length > 0) {
+    lines.push(toolCall.meta.join(' | '))
+  }
+  if (toolCall.progress) {
+    lines.push('', 'Progress:', toolCall.progress)
+  }
+  if (toolCall.input) {
+    lines.push('', 'Input:', '```json', toolCall.input, '```')
+  }
+  if (toolCall.output) {
+    lines.push('', 'Output:', '```json', toolCall.output, '```')
+  }
+  if (toolCall.error) {
+    lines.push('', 'Error:', toolCall.error)
+  }
+  return lines.join('\n')
+}
+
+function buildToolCallMessage(id: string, toolCall: UiToolCallData): UiMessage {
+  return {
+    id,
+    role: 'system',
+    text: buildToolCallFallbackText(toolCall),
+    messageType: 'toolCall',
+    toolCall,
+  }
+}
+
+function hasRecordEntries(value: unknown): boolean {
+  const record = asRecord(value)
+  return Boolean(record && Object.keys(record).length > 0)
+}
+
+export function toUiToolCallMessage(item: unknown): UiMessage | null {
+  const record = asRecord(item)
+  const type = readString(record?.type)
+  const id = readString(record?.id)
+  if (!record || !id) return null
+
+  if (type === 'mcpToolCall') {
+    const server = readString(record.server)
+    const tool = readString(record.tool)
+    const durationMs = readNumber(record.durationMs)
+    const error = formatToolCallError(record.error)
+    const result = formatStructuredValue(record.result)
+    const name = tool || 'MCP tool'
+    const title = server && tool ? `${server}.${tool}` : name
+    const toolCall: UiToolCallData = {
+      kind: 'mcp',
+      title,
+      name,
+      status: normalizeToolCallStatus(record.status, record.error),
+      server: server || null,
+      input: formatStructuredValue(record.arguments),
+      output: result,
+      error,
+      progress: '',
+      durationMs,
+      meta: compactToolCallMeta([
+        server ? `Server: ${server}` : '',
+        formatDurationMeta(durationMs),
+      ]),
+    }
+    return buildToolCallMessage(id, toolCall)
+  }
+
+  if (type === 'collabAgentToolCall') {
+    const tool = readString(record.tool) || 'agent tool'
+    const receiverThreadIds = Array.isArray(record.receiverThreadIds)
+      ? record.receiverThreadIds.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      : []
+    const agentsStates = hasRecordEntries(record.agentsStates) ? formatStructuredValue(record.agentsStates) : ''
+    const prompt = readString(record.prompt)
+    const toolCall: UiToolCallData = {
+      kind: 'collab',
+      title: `Agent tool: ${tool}`,
+      name: tool,
+      status: normalizeToolCallStatus(record.status, null),
+      server: null,
+      input: prompt,
+      output: agentsStates,
+      error: '',
+      progress: '',
+      durationMs: null,
+      meta: compactToolCallMeta([
+        readString(record.senderThreadId) ? `From: ${readString(record.senderThreadId)}` : '',
+        receiverThreadIds.length > 0 ? `Targets: ${receiverThreadIds.join(', ')}` : '',
+      ]),
+    }
+    return buildToolCallMessage(id, toolCall)
+  }
+
+  if (type === 'webSearch') {
+    const query = readString(record.query)
+    const action = formatStructuredValue(record.action)
+    const toolCall: UiToolCallData = {
+      kind: 'webSearch',
+      title: 'Web search',
+      name: 'web_search',
+      status: 'completed',
+      server: null,
+      input: action || query,
+      output: '',
+      error: '',
+      progress: '',
+      durationMs: null,
+      meta: compactToolCallMeta([query ? `Query: ${query}` : '']),
+    }
+    return buildToolCallMessage(id, toolCall)
+  }
+
+  return null
+}
+
 function toUiMessages(item: ThreadItem): UiMessage[] {
   if (item.type === 'agentMessage') {
     const cursorToolMessage = parseCursorToolMessage(item.id, item.text)
@@ -506,6 +669,11 @@ function toUiMessages(item: ThreadItem): UiMessage[] {
         commandExecution: { command: cmd, cwd, status, aggregatedOutput, exitCode },
       },
     ]
+  }
+
+  const toolCallMessage = toUiToolCallMessage(item)
+  if (toolCallMessage) {
+    return [toolCallMessage]
   }
 
   if (item.type === 'fileChange') {

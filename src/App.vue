@@ -3973,6 +3973,32 @@ function buildThreadMarkdown(): string {
       lines.push('')
     }
 
+    if (message.toolCall) {
+      lines.push('```text')
+      lines.push(`tool: ${message.toolCall.title}`)
+      lines.push(`status: ${message.toolCall.status}`)
+      for (const part of message.toolCall.meta) {
+        lines.push(part)
+      }
+      if (message.toolCall.progress) {
+        lines.push(`progress: ${message.toolCall.progress}`)
+      }
+      if (message.toolCall.input) {
+        lines.push('input:')
+        lines.push(message.toolCall.input)
+      }
+      if (message.toolCall.output) {
+        lines.push('output:')
+        lines.push(message.toolCall.output)
+      }
+      if (message.toolCall.error) {
+        lines.push('error:')
+        lines.push(message.toolCall.error)
+      }
+      lines.push('```')
+      lines.push('')
+    }
+
     if (message.fileAttachments && message.fileAttachments.length > 0) {
       lines.push('Attachments:')
       for (const attachment of message.fileAttachments) {
