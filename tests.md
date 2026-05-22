@@ -5650,3 +5650,28 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - No persistent cleanup is needed beyond closing any disposable test thread.
+
+### Feature: New-session Moon Bridge provider/model first message
+
+#### Prerequisites
+- App server is running from this repository.
+- Moon Bridge is configured and exposes `ark-code-latest`.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Run `./node_modules/.bin/vitest run src/composables/useDesktopState.test.ts`.
+2. Open a new chat composer in light theme.
+3. In Settings, switch Provider to `Moon Bridge`.
+4. In the composer model dropdown, choose `ark-code-latest`.
+5. Send the first message in that new chat.
+6. Confirm the created thread keeps Provider as `Moon Bridge` and Model as `ark-code-latest`.
+7. Repeat steps 2-6 in dark theme.
+
+#### Expected Results
+- New-chat provider selection is stored in the new-session provider context and is not cleared by opening the composer.
+- The first message request starts with Moon Bridge rather than falling back to Codex.
+- The composer cannot submit while the provider runtime switch is still loading.
+- Provider and model controls remain readable and usable in both light and dark themes.
+
+#### Rollback/Cleanup
+- Restore the preferred provider and model after manual verification.

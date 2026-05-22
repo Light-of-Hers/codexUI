@@ -403,7 +403,7 @@ describe('provider session helpers', () => {
     expect(readSelectedProvider(next, '__new-thread__')).toBe('moon')
   })
 
-  it('resets the new-session provider back to Codex', () => {
+  it('preserves the new-session provider while opening the composer', () => {
     installTestWindow({
       'codex-web-local.provider-by-context.v1': JSON.stringify({
         '__new-thread-provider__': 'moon',
@@ -419,8 +419,25 @@ describe('provider session helpers', () => {
 
     state.primeSelectedThread('')
 
-    expect(state.selectedProvider.value).toBe('codex')
-    expect(window.localStorage.getItem('codex-web-local.provider-by-context.v1')).toBe(null)
+    expect(state.selectedProvider.value).toBe('moon')
+    expect(window.localStorage.getItem('codex-web-local.provider-by-context.v1')).toBe(JSON.stringify({
+      '__new-thread-provider__': 'moon',
+    }))
+  })
+
+  it('stores composer provider changes in the new-session context', () => {
+    installTestWindow()
+
+    const state = useDesktopState()
+
+    state.primeSelectedThread('existing-thread')
+    state.setSelectedProviderForComposerContext('__new-thread__', 'moon')
+
+    expect(state.selectedProvider.value).toBe('moon')
+    expect(readSelectedProvider(
+      JSON.parse(window.localStorage.getItem('codex-web-local.provider-by-context.v1') ?? '{}'),
+      '',
+    )).toBe('moon')
   })
 
   it('infers Moon Bridge provider from session model catalog entries', () => {

@@ -946,6 +946,7 @@
                   :selected-reasoning-effort="selectedReasoningEffort"
                   :selected-speed-mode="selectedSpeedMode"
                   :is-updating-speed-mode="isUpdatingSpeedMode"
+                  :disabled="freeModeLoading"
                   :skills="installedSkills"
                   :thread-token-usage="selectedThreadTokenUsage"
                   :codex-quota="codexQuota"
@@ -1027,6 +1028,7 @@
                     :selected-reasoning-effort="selectedReasoningEffort"
                     :selected-speed-mode="selectedSpeedMode"
                     :is-updating-speed-mode="isUpdatingSpeedMode"
+                    :disabled="freeModeLoading"
                     :skills="installedSkills"
                     :thread-token-usage="selectedThreadTokenUsage"
                     :codex-quota="codexQuota"
@@ -1415,6 +1417,7 @@ const {
   setSelectedCollaborationMode,
   readModelIdForThread,
   setSelectedModelIdForThread,
+  setSelectedProviderForComposerContext,
   refreshMoonBridgeModelIds,
   refreshAncillaryState,
   invalidateAppServerRuntimeState,
@@ -4192,7 +4195,8 @@ async function onProviderChange(provider: string): Promise<void> {
   if (freeModeLoading.value) return
   freeModeLoading.value = true
   try {
-    setSelectedProvider(normalizeProviderSelection(provider))
+    const normalizedProvider = normalizeProviderSelection(provider)
+    setSelectedProviderForComposerContext(composerThreadContextId.value, normalizedProvider)
     await applySelectedProviderState()
   } catch (err) {
     providerError.value = err instanceof Error ? err.message : 'Failed to switch provider'

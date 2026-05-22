@@ -1877,9 +1877,6 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
       selectedThreadId.value = nextThreadId
       saveSelectedThreadId(nextThreadId)
     }
-    if (!nextThreadId.trim()) {
-      clearNewThreadProviderSelection()
-    }
     selectedModelId.value = readModelIdForThread(nextThreadId)
     ensureAvailableModelIds(selectedModelId.value)
     selectedCollaborationMode.value = readSelectedCollaborationMode(
@@ -1968,11 +1965,12 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
     saveSelectedProviderMap(selectedProviderByContext.value)
   }
 
-  function clearNewThreadProviderSelection(): void {
-    const nextProviderMap = omitStringKeyedRecordKey(selectedProviderByContext.value, NEW_THREAD_PROVIDER_CONTEXT)
-    if (nextProviderMap === selectedProviderByContext.value) return
-    selectedProviderByContext.value = nextProviderMap
-    saveSelectedProviderMap(nextProviderMap)
+  function setSelectedProviderForComposerContext(threadId: string, providerId: ProviderId): void {
+    const normalizedProvider = normalizeProviderId(providerId)
+    setSelectedProviderForThread(threadId, normalizedProvider)
+    if (toThreadContextId(threadId) === NEW_THREAD_COLLABORATION_MODE_CONTEXT) {
+      selectedProvider.value = normalizedProvider
+    }
   }
 
   function setSelectedProvider(providerId: ProviderId): void {
@@ -6313,6 +6311,7 @@ function applyThreadModelStateWithProviderPriority(threadId: string, modelId: st
     readModelIdForThread,
     setSelectedModelIdForThread,
     setSelectedModelId,
+    setSelectedProviderForComposerContext,
     setSelectedProvider,
 
     setSelectedReasoningEffort,
