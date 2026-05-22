@@ -5551,6 +5551,30 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Rollback/Cleanup
 - No cleanup is required.
 
+### Feature: Conversation code block copy button
+
+#### Prerequisites
+- App server is running from this repository.
+- A chat thread contains a fenced code block with multiple lines.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Open the thread in light theme.
+2. Confirm each rendered conversation code block shows a compact copy icon button in the upper-right corner.
+3. Click the code block copy button and paste into a scratch editor.
+4. Confirm only the code text is pasted, without the language label or copy button text.
+5. Switch to dark theme and repeat steps 2-4.
+6. Confirm image preview clicks and response-level copy buttons still work normally.
+
+#### Expected Results
+- The code block button uses a classic overlapping-squares copy icon.
+- Clicking it copies the exact code block content.
+- The button remains readable and aligned in both light and dark themes.
+- Copy success briefly changes the button state without shifting the code block layout.
+
+#### Rollback/Cleanup
+- No cleanup is required.
+
 ### Feature: Mobile pending tool calls render in the conversation
 
 #### Prerequisites

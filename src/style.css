@@ -1103,6 +1103,7 @@
   --syntax-deletion-fg: #b31d28;
   --syntax-deletion-bg: #ffeef0;
   @apply overflow-hidden rounded-xl border;
+  position: relative;
   border-color: var(--message-code-border);
   background: var(--message-code-bg);
   color: var(--message-code-fg);
@@ -1114,7 +1115,7 @@
 }
 
 .message-code-language {
-  @apply border-b px-3 py-2 text-[11px] font-mono uppercase tracking-[0.08em];
+  @apply border-b py-2 pl-3 pr-11 text-[11px] font-mono uppercase tracking-[0.08em];
   border-color: var(--message-code-header-border);
   color: var(--message-code-header-fg);
   font-family: inherit;
@@ -1123,10 +1124,51 @@
 }
 
 .message-code-pre {
-  @apply m-0 overflow-x-auto px-3 py-3 text-[13px] leading-relaxed font-mono whitespace-pre;
+  @apply m-0 overflow-x-auto py-3 pl-3 pr-11 text-[13px] leading-relaxed font-mono whitespace-pre;
   font-family: inherit;
   font-weight: inherit;
   font-synthesis: inherit;
+}
+
+.message-code-copy-button {
+  position: absolute;
+  top: 0.45rem;
+  right: 0.45rem;
+  z-index: 1;
+  display: inline-flex;
+  width: 1.75rem;
+  height: 1.75rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--message-code-border);
+  border-radius: 0.375rem;
+  background: color-mix(in srgb, var(--message-code-bg) 86%, white);
+  color: var(--message-code-header-fg);
+  opacity: 0.78;
+  transition: border-color 140ms ease, background-color 140ms ease, color 140ms ease, opacity 140ms ease;
+}
+
+.message-code-copy-button:hover,
+.message-code-copy-button:focus-visible {
+  border-color: var(--syntax-constant);
+  color: var(--syntax-constant);
+  opacity: 1;
+}
+
+.message-code-copy-button[data-copied='true'] {
+  border-color: var(--syntax-addition-fg);
+  background: var(--syntax-addition-bg);
+  color: var(--syntax-addition-fg);
+  opacity: 1;
+}
+
+.message-code-copy-icon {
+  width: 0.95rem;
+  height: 0.95rem;
+  display: block;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 16a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2z'/%3E%3Cpath d='M4 8v10a2 2 0 0 0 2 2h10'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 16a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2z'/%3E%3Cpath d='M4 8v10a2 2 0 0 0 2 2h10'/%3E%3C/svg%3E") center / contain no-repeat;
 }
 
 .message-code-pre .hljs {

@@ -1446,6 +1446,7 @@ let conversationScrollFrame = 0
 let bottomLockFrame = 0
 let bottomLockFramesLeft = 0
 let copiedMessageResetTimer: ReturnType<typeof setTimeout> | null = null
+let copiedCodeBlockResetTimer: ReturnType<typeof setTimeout> | null = null
 let conversationScrollPromise: Promise<void> | null = null
 const trackedPendingImages = new WeakSet<HTMLImageElement>()
 const highlightJsModule = ref<HighlightJsModule | null>(null)
@@ -2455,6 +2456,52 @@ async function copyResponse(anchorMessageId: string): Promise<void> {
   }, 1800)
 }
 
+async function copyCodeBlock(button: HTMLButtonElement): Promise<void> {
+  const block = button.closest('.message-code-block')
+  if (!(block instanceof HTMLElement)) return
+
+  const code = block.querySelector<HTMLElement>('.message-code-pre code')
+  const content = code?.textContent ?? ''
+  if (!content) return
+
+  let copied = false
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(content)
+      copied = true
+    } catch {
+      copied = false
+    }
+  }
+
+  if (!copied) {
+    copied = copyTextWithSelectionFallback(content)
+  }
+
+  if (!copied) return
+
+  const previousCopiedButton = conversationListRef.value?.querySelector<HTMLButtonElement>('.message-code-copy-button[data-copied="true"]')
+  if (previousCopiedButton && previousCopiedButton !== button) {
+    previousCopiedButton.dataset.copied = 'false'
+    previousCopiedButton.setAttribute('aria-label', 'Copy code')
+    previousCopiedButton.setAttribute('title', 'Copy code')
+  }
+
+  button.dataset.copied = 'true'
+  button.setAttribute('aria-label', 'Code copied')
+  button.setAttribute('title', 'Code copied')
+
+  if (copiedCodeBlockResetTimer) {
+    clearTimeout(copiedCodeBlockResetTimer)
+  }
+  copiedCodeBlockResetTimer = setTimeout(() => {
+    button.dataset.copied = 'false'
+    button.setAttribute('aria-label', 'Copy code')
+    button.setAttribute('title', 'Copy code')
+    copiedCodeBlockResetTimer = null
+  }, 1400)
+}
+
 function forkResponse(anchorMessageId: string): void {
   const turnIndex = forkableTurnIndexByAnchorId.value[anchorMessageId]
   if (typeof turnIndex !== 'number') return
@@ -2945,6 +2992,14 @@ function onConversationContextMenu(event: MouseEvent): void {
 function onConversationClick(event: MouseEvent): void {
   const target = event.target
   if (!(target instanceof Element)) return
+
+  const codeCopyButton = target.closest('button.message-code-copy-button')
+  if (codeCopyButton instanceof HTMLButtonElement) {
+    event.preventDefault()
+    event.stopPropagation()
+    void copyCodeBlock(codeCopyButton)
+    return
+  }
 
   const image = target.closest('img.message-markdown-image')
   if (!(image instanceof HTMLImageElement)) return
@@ -3742,6 +3797,18 @@ function tableCellAlignmentStyle(alignment: TableAlignment): string {
   return ` style="text-align:${alignment}"`
 }
 
+function codeBlockCopyButtonHtml(): string {
+  return '<button class="message-code-copy-button" type="button" title="Copy code" aria-label="Copy code"><span class="message-code-copy-icon" aria-hidden="true"></span></button>'
+}
+
+function addCodeBlockCopyButtons(html: string): string {
+  if (!html.includes('message-code-block') || html.includes('message-code-copy-button')) return html
+  return html.replace(
+    /(<pre class="message-code-pre"[^>]*>[\s\S]*?<\/pre>)(<\/div>)/gu,
+    `$1${codeBlockCopyButtonHtml()}$2`,
+  )
+}
+
 function renderMessageBlockAsHtml(block: MessageBlock): string {
   if (block.kind === 'paragraph') {
     return `<p class="message-text">${renderInlineSegmentsAsHtml(block.value)}</p>`
@@ -3796,7 +3863,7 @@ function renderMessageBlockAsHtml(block: MessageBlock): string {
     const language = block.language
       ? `<div class="message-code-language">${escapeHtml(block.language)}</div>`
       : ''
-    return `<div class="message-code-block">${language}<pre class="message-code-pre"><code class="hljs">${renderCachedHighlightedCodeAsHtml(block.language, block.value)}</code></pre></div>`
+    return `<div class="message-code-block">${language}<pre class="message-code-pre"><code class="hljs">${renderCachedHighlightedCodeAsHtml(block.language, block.value)}</code></pre>${codeBlockCopyButtonHtml()}</div>`
   }
   if (block.kind === 'thematicBreak') {
     return '<hr class="message-divider">'
@@ -3837,11 +3904,11 @@ function renderProgressiveMarkdownContent(
   if (!renderer) {
     return renderMarkdownBlocksAsHtml(text)
   }
-  return renderer.renderMarkdownContent(text, {
+  return addCodeBlockCopyButtons(renderer.renderMarkdownContent(text, {
     cwd: props.cwd,
     kind,
     highlightVersion: highlightCacheVersion.value,
-  }).html
+  }).html)
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -4579,6 +4646,10 @@ onBeforeUnmount(() => {
     clearTimeout(copiedMessageResetTimer)
     copiedMessageResetTimer = null
   }
+  if (copiedCodeBlockResetTimer) {
+    clearTimeout(copiedCodeBlockResetTimer)
+    copiedCodeBlockResetTimer = null
+  }
   window.removeEventListener('pointerdown', onWindowPointerDownForFileLinkContextMenu)
   window.removeEventListener('blur', onWindowBlurForFileLinkContextMenu)
   window.removeEventListener('keydown', onWindowKeydownForFileLinkContextMenu)
@@ -5055,6 +5126,7 @@ onBeforeUnmount(() => {
 
 .plan-card-markdown :deep(.message-code-block) {
   @apply overflow-hidden rounded-xl border;
+  position: relative;
   border-color: var(--message-code-border, #d0d7de);
   background: var(--message-code-bg, #f6f8fa);
   color: var(--message-code-fg, #24292f);
@@ -5066,7 +5138,7 @@ onBeforeUnmount(() => {
 }
 
 .plan-card-markdown :deep(.message-code-language) {
-  @apply border-b px-3 py-2 text-[11px] font-medium uppercase tracking-[0.08em];
+  @apply border-b py-2 pl-3 pr-11 text-[11px] font-medium uppercase tracking-[0.08em];
   border-color: var(--message-code-header-border, #d0d7de);
   color: var(--message-code-header-fg, #57606a);
   font-family: inherit;
@@ -5075,7 +5147,7 @@ onBeforeUnmount(() => {
 }
 
 .plan-card-markdown :deep(.message-code-pre) {
-  @apply m-0 overflow-x-auto px-3 py-3 text-[13px] leading-6;
+  @apply m-0 overflow-x-auto py-3 pl-3 pr-11 text-[13px] leading-6;
   font-family: inherit;
   font-weight: inherit;
   font-synthesis: inherit;
@@ -5309,6 +5381,7 @@ onBeforeUnmount(() => {
 
 .message-code-block {
   @apply overflow-hidden rounded-xl border;
+  position: relative;
   border-color: var(--message-code-border, #d0d7de);
   background: var(--message-code-bg, #f6f8fa);
   color: var(--message-code-fg, #24292f);
@@ -5320,7 +5393,7 @@ onBeforeUnmount(() => {
 }
 
 .message-code-language {
-  @apply border-b px-3 py-2 text-[11px] font-mono uppercase tracking-[0.08em];
+  @apply border-b py-2 pl-3 pr-11 text-[11px] font-mono uppercase tracking-[0.08em];
   border-color: var(--message-code-header-border, #d0d7de);
   color: var(--message-code-header-fg, #57606a);
   font-family: inherit;
@@ -5329,7 +5402,7 @@ onBeforeUnmount(() => {
 }
 
 .message-code-pre {
-  @apply m-0 overflow-x-auto px-3 py-3 text-[13px] leading-relaxed font-mono whitespace-pre;
+  @apply m-0 overflow-x-auto py-3 pl-3 pr-11 text-[13px] leading-relaxed font-mono whitespace-pre;
   font-family: inherit;
   font-weight: inherit;
   font-synthesis: inherit;
