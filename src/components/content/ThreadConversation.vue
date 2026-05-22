@@ -3914,8 +3914,13 @@ function codeBlockCopyButtonHtml(): string {
 function addCodeBlockCopyButtons(html: string): string {
   if (!html.includes('message-code-block') || html.includes('message-code-copy-button')) return html
   return html.replace(
-    /<div class="message-code-block([^"]*)">/gu,
-    `<div class="message-code-block$1" tabindex="0">${codeBlockCopyButtonHtml()}`,
+    /<div\b(?=[^>]*class="[^"]*\bmessage-code-block\b[^"]*")[^>]*>/gu,
+    (openingTag) => {
+      const focusableOpeningTag = /\stabindex=/u.test(openingTag)
+        ? openingTag
+        : openingTag.replace(/>$/u, ' tabindex="0">')
+      return `${focusableOpeningTag}${codeBlockCopyButtonHtml()}`
+    },
   )
 }
 
