@@ -305,6 +305,11 @@ export type ComposerFileSuggestion = {
   isSymlink: boolean
 }
 
+export type FileLinkSearchSuggestion = ComposerFileSuggestion & {
+  absolutePath: string
+  root: string
+}
+
 const DEFAULT_COLLABORATION_MODE_OPTIONS: CollaborationModeOption[] = [
   { value: 'default', label: 'Default' },
   { value: 'plan', label: 'Plan' },
@@ -3300,6 +3305,48 @@ export async function searchComposerFiles(cwd: string, query: string, limit = 20
     suggestions.push({
       path: value,
       kind,
+      isSymlink: row.isSymlink === true,
+    })
+  }
+  return suggestions
+}
+
+export async function searchFileLinkPaths(cwd: string, query: string, limit = 30): Promise<FileLinkSearchSuggestion[]> {
+  const trimmedCwd = cwd.trim()
+  const trimmedQuery = query.trim()
+  if (!trimmedCwd || !trimmedQuery) return []
+  const response = await fetch('/codex-api/file-link-search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      cwd: trimmedCwd,
+      query: trimmedQuery,
+      limit,
+    }),
+  })
+  const payload = (await response.json()) as unknown
+  if (!response.ok) {
+    const message = getErrorMessageFromPayload(payload, 'Failed to search linked paths')
+    throw new Error(message)
+  }
+  const record =
+    payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? (payload as Record<string, unknown>)
+      : {}
+  const data = Array.isArray(record.data) ? record.data : []
+  const suggestions: FileLinkSearchSuggestion[] = []
+  for (const item of data) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue
+    const row = item as Record<string, unknown>
+    const path = typeof row.path === 'string' ? row.path.trim() : ''
+    const absolutePath = typeof row.absolutePath === 'string' ? normalizePathForUi(row.absolutePath) : ''
+    const root = typeof row.root === 'string' ? normalizePathForUi(row.root) : ''
+    if (!path || !absolutePath || !root) continue
+    suggestions.push({
+      path,
+      absolutePath,
+      root,
+      kind: row.kind === 'directory' ? 'directory' : 'file',
       isSymlink: row.isSymlink === true,
     })
   }

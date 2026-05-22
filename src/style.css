@@ -736,67 +736,6 @@
   @apply border-zinc-600 bg-zinc-700 text-zinc-300;
 }
 
-:root.dark .thread-composer-base-paths {
-  @apply border-zinc-700;
-}
-
-:root.dark .thread-composer-base-paths-label {
-  @apply text-zinc-400;
-}
-
-:root.dark .thread-composer-base-path-chip {
-  @apply border-sky-900/70 bg-sky-950 text-sky-200;
-}
-
-:root.dark .thread-composer-base-path-chip-icon {
-  @apply text-sky-300;
-}
-
-:root.dark .thread-composer-base-path-chip-remove {
-  @apply text-sky-300 hover:bg-sky-900 hover:text-sky-100;
-}
-
-:root.dark .thread-composer-base-path-add-button {
-  @apply border-zinc-600 bg-zinc-800 text-zinc-300 hover:border-zinc-500 hover:bg-zinc-700;
-}
-
-:root.dark .thread-composer-base-path-search {
-  @apply border-zinc-600 bg-zinc-800;
-}
-
-:root.dark .thread-composer-base-path-search-input-wrap {
-  @apply border-zinc-700;
-}
-
-:root.dark .thread-composer-base-path-search-icon {
-  @apply text-zinc-500;
-}
-
-:root.dark .thread-composer-base-path-search-input {
-  @apply text-zinc-100 placeholder:text-zinc-500;
-}
-
-:root.dark .thread-composer-base-path-search-row {
-  @apply text-zinc-300 hover:bg-zinc-700;
-}
-
-:root.dark .thread-composer-base-path-search-row.is-active {
-  @apply bg-zinc-700;
-}
-
-:root.dark .thread-composer-base-path-search-row-icon {
-  @apply text-zinc-300;
-}
-
-:root.dark .thread-composer-base-path-search-row-name {
-  @apply text-zinc-100;
-}
-
-:root.dark .thread-composer-base-path-search-row-path,
-:root.dark .thread-composer-base-path-search-empty {
-  @apply text-zinc-400;
-}
-
 :root.dark .organize-menu-panel {
   @apply border-zinc-600 bg-zinc-800/95;
 }

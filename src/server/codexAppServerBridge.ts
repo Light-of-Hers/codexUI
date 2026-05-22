@@ -4809,6 +4809,99 @@ async function persistWorkspaceRoot(workspaceRoot: string, label = ''): Promise<
   })
 }
 
+function stripPathLineReference(value: string): string {
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  const hashLineMatch = trimmed.match(/^(.*)#L\d+(?:-L?\d+)?(?:C\d+)?$/u)
+  if (hashLineMatch) return (hashLineMatch[1] ?? '').trim()
+  const colonLineMatch = trimmed.match(/^(.*):\d+(?:-\d+)?(?::\d+)?$/u)
+  if (colonLineMatch) return (colonLineMatch[1] ?? '').trim()
+  return trimmed
+}
+
+async function normalizeExistingDirectoryRoots(rawRoots: readonly string[], maxRoots: number): Promise<string[]> {
+  const roots: string[] = []
+  const seen = new Set<string>()
+  for (const rawRoot of rawRoots) {
+    const trimmed = rawRoot.trim()
+    if (!trimmed) continue
+    const root = isAbsolute(trimmed) ? trimmed : resolve(trimmed)
+    if (seen.has(root)) continue
+    seen.add(root)
+    try {
+      const rootInfo = await stat(root)
+      if (!rootInfo.isDirectory()) continue
+    } catch {
+      continue
+    }
+    roots.push(root)
+    if (roots.length >= maxRoots) break
+  }
+  return roots
+}
+
+async function searchFileLinkPathCandidates(
+  cwd: string,
+  query: string,
+  limit: number,
+): Promise<Array<{ path: string; absolutePath: string; root: string; kind: 'file' | 'directory'; isSymlink: boolean }>> {
+  const trimmedQuery = stripPathLineReference(query)
+  if (!trimmedQuery) return []
+
+  const maxResults = Math.max(1, Math.min(50, Math.floor(limit)))
+  const results: Array<{ path: string; absolutePath: string; root: string; kind: 'file' | 'directory'; isSymlink: boolean }> = []
+  const seen = new Set<string>()
+
+  if (isAbsolute(trimmedQuery)) {
+    try {
+      const info = await stat(trimmedQuery)
+      results.push({
+        path: trimmedQuery,
+        absolutePath: trimmedQuery,
+        root: dirname(trimmedQuery),
+        kind: info.isDirectory() ? 'directory' : 'file',
+        isSymlink: false,
+      })
+      seen.add(trimmedQuery)
+    } catch {
+      // Keep searching workspace roots below.
+    }
+  }
+
+  const workspaceState = await readWorkspaceRootsState()
+  const roots = await normalizeExistingDirectoryRoots([
+    cwd,
+    ...workspaceState.active,
+    ...workspaceState.order,
+  ], 8)
+  const perRootLimit = Math.max(5, Math.ceil(maxResults / Math.max(roots.length, 1)))
+
+  for (const root of roots) {
+    if (results.length >= maxResults) break
+    let rows: Awaited<ReturnType<typeof searchComposerPaths>>
+    try {
+      rows = await searchComposerPaths(root, trimmedQuery, perRootLimit)
+    } catch {
+      continue
+    }
+    for (const row of rows) {
+      const absolutePath = isAbsolute(row.path) ? row.path : resolve(root, row.path)
+      if (seen.has(absolutePath)) continue
+      seen.add(absolutePath)
+      results.push({
+        path: row.path,
+        absolutePath,
+        root,
+        kind: row.kind,
+        isSymlink: row.isSymlink,
+      })
+      if (results.length >= maxResults) break
+    }
+  }
+
+  return results
+}
+
 async function rollbackCreatedWorktree(
   gitRoot: string,
   worktreeCwd: string,
@@ -8335,6 +8428,41 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           setJson(res, 200, { data: paths })
         } catch (error) {
           setJson(res, 500, { error: getErrorMessage(error, 'Failed to search paths') })
+        }
+        return
+      }
+
+      if (req.method === 'POST' && url.pathname === '/codex-api/file-link-search') {
+        const payload = asRecord(await readJsonBody(req))
+        const rawCwd = typeof payload?.cwd === 'string' ? payload.cwd.trim() : ''
+        const query = typeof payload?.query === 'string' ? payload.query.trim() : ''
+        const limitRaw = typeof payload?.limit === 'number' ? payload.limit : 30
+        const limit = Math.max(1, Math.min(50, Math.floor(limitRaw)))
+        if (!rawCwd) {
+          setJson(res, 400, { error: 'Missing cwd' })
+          return
+        }
+        if (!query) {
+          setJson(res, 200, { data: [] })
+          return
+        }
+        const cwd = isAbsolute(rawCwd) ? rawCwd : resolve(rawCwd)
+        try {
+          const info = await stat(cwd)
+          if (!info.isDirectory()) {
+            setJson(res, 400, { error: 'cwd is not a directory' })
+            return
+          }
+        } catch {
+          setJson(res, 404, { error: 'cwd does not exist' })
+          return
+        }
+
+        try {
+          const paths = await searchFileLinkPathCandidates(cwd, query, limit)
+          setJson(res, 200, { data: paths })
+        } catch (error) {
+          setJson(res, 500, { error: getErrorMessage(error, 'Failed to search linked paths') })
         }
         return
       }

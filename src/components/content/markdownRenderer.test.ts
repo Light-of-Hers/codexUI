@@ -185,17 +185,6 @@ const answer = 42
     expect(html).not.toContain('/root/work/my-agent-configs/repos/codexUI/~/work')
   })
 
-  it('resolves bare relative paths through configured session base paths', () => {
-    const html = markdownRenderer.renderMarkdownContent('Open `src/App.vue` next.', {
-      ...baseContext,
-      cwd: '/work/current',
-      basePaths: ['/work/context'],
-    }).html
-
-    expect(html).toContain('href="/codex-local-browse/work/context/src/App.vue"')
-    expect(html).not.toContain('/work/current/src/App.vue')
-  })
-
   it('renders local markdown images through the local image route', () => {
     const html = render('![diagram](/home/ubuntu/Documents/New Project (2)/diagram.png)')
 

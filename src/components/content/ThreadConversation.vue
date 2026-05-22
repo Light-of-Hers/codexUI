@@ -504,7 +504,7 @@
                 <div
                   v-else
                   class="message-text-flow message-markdown-body"
-                  v-memo="[message.id, message.text, props.cwd, linkBasePathCacheKey, highlightCacheVersion, markdownRendererVersion]"
+                  v-memo="[message.id, message.text, props.cwd, highlightCacheVersion, markdownRendererVersion]"
                   v-html="renderProgressiveMarkdownContent(message.text, 'message', markdownRendererVersion)"
                 ></div>
               </article>
@@ -716,6 +716,49 @@
       </button>
     </div>
 
+    <div
+      v-if="isFileLinkPickerVisible"
+      ref="fileLinkPickerRef"
+      class="file-link-picker"
+      :style="fileLinkPickerStyle"
+      @click.stop
+    >
+      <div class="file-link-picker-search">
+        <IconTablerSearch class="file-link-picker-search-icon" />
+        <input
+          ref="fileLinkPickerInputRef"
+          v-model="fileLinkPickerQuery"
+          class="file-link-picker-input"
+          type="text"
+          aria-label="Search linked path"
+          @input="onFileLinkPickerQueryInput"
+          @keydown="onFileLinkPickerKeydown"
+        />
+      </div>
+      <div class="file-link-picker-results">
+        <template v-if="fileLinkPickerResults.length > 0">
+          <button
+            v-for="(result, index) in fileLinkPickerResults"
+            :key="result.absolutePath"
+            class="file-link-picker-result"
+            :class="{ 'is-active': index === fileLinkPickerHighlightedIndex }"
+            type="button"
+            @click="openFileLinkPickerResult(result)"
+          >
+            <IconTablerFolderOpen v-if="result.kind === 'directory'" class="file-link-picker-result-icon" />
+            <IconTablerFilePencil v-else class="file-link-picker-result-icon" />
+            <span class="file-link-picker-result-text">
+              <span class="file-link-picker-result-name">{{ getBasename(result.absolutePath) }}</span>
+              <span class="file-link-picker-result-path">{{ result.absolutePath }}</span>
+            </span>
+          </button>
+        </template>
+        <div v-else class="file-link-picker-empty">
+          {{ isFileLinkPickerSearching ? 'Searching paths…' : 'No matching paths' }}
+        </div>
+      </div>
+    </div>
+
     <div v-if="activeDiffViewerChange" class="diff-viewer-backdrop" @click="closeDiffViewer">
       <div class="diff-viewer-shell" @click.stop>
         <aside v-if="!isMobile" class="diff-viewer-sidebar">
@@ -838,23 +881,18 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { UiFileChange, UiLiveOverlay, UiMessage, UiPlanStep, UiServerRequest, UiServerRequestReply } from '../../types/codex'
+import { searchFileLinkPaths, type FileLinkSearchSuggestion } from '../../api/codexGateway'
 import { useFeedbackDiagnostics } from '../../composables/useFeedbackDiagnostics'
 import { useMobile } from '../../composables/useMobile'
 import { useUiLanguage } from '../../composables/useUiLanguage'
 import { getHighlightLanguageForPath, normalizeHighlightLanguage } from '../../utils/codeLanguage.js'
-import {
-  fileReferenceDisplayPath as formatFileReferenceDisplayPath,
-  getBasename as getFileBasename,
-  parseFileReference as parseLocalFileReference,
-  shouldAutoLinkPlainTextFileReference as shouldAutoLinkLocalFileReference,
-  toBrowseUrl as buildBrowseUrl,
-  toRenderableImageUrl as buildRenderableImageUrl,
-} from '../../utils/fileLinkResolver.js'
 
 import IconTablerArrowUp from '../icons/IconTablerArrowUp.vue'
 import IconTablerCopy from '../icons/IconTablerCopy.vue'
 import IconTablerFilePencil from '../icons/IconTablerFilePencil.vue'
+import IconTablerFolderOpen from '../icons/IconTablerFolderOpen.vue'
 import IconTablerGitFork from '../icons/IconTablerGitFork.vue'
+import IconTablerSearch from '../icons/IconTablerSearch.vue'
 import IconTablerX from '../icons/IconTablerX.vue'
 
 type HighlightJsModule = (typeof import('highlight.js'))['default']
@@ -878,6 +916,19 @@ const fileLinkContextMenuX = ref(0)
 const fileLinkContextMenuY = ref(0)
 const fileLinkContextBrowseUrl = ref('')
 const fileLinkContextEditUrl = ref('')
+const fileLinkPickerRef = ref<HTMLElement | null>(null)
+const fileLinkPickerInputRef = ref<HTMLInputElement | null>(null)
+const isFileLinkPickerVisible = ref(false)
+const isFileLinkPickerSearching = ref(false)
+const fileLinkPickerX = ref(0)
+const fileLinkPickerY = ref(0)
+const fileLinkPickerQuery = ref('')
+const fileLinkPickerLine = ref<number | null>(null)
+const fileLinkPickerEndLine = ref<number | null>(null)
+const fileLinkPickerResults = ref<FileLinkSearchSuggestion[]>([])
+const fileLinkPickerHighlightedIndex = ref(0)
+let fileLinkPickerSearchToken = 0
+let fileLinkPickerSearchDebounceTimer: ReturnType<typeof setTimeout> | null = null
 const { isMobile } = useMobile()
 const { t } = useUiLanguage()
 const { buildFeedbackMailto, feedbackMailtoBase, recordVisibleFailure } = useFeedbackDiagnostics()
@@ -1420,7 +1471,6 @@ const props = defineProps<{
   isLoading: boolean
   activeThreadId: string
   cwd: string
-  linkBasePaths?: string[]
   hasMorePersistedAbove?: boolean
   isLoadingPersistedAbove?: boolean
   loadEarlierMessages?: (threadId: string) => Promise<void>
@@ -1432,8 +1482,6 @@ const emit = defineEmits<{
   implementPlan: [payload: { turnId: string }]
   respondServerRequest: [payload: UiServerRequestReply]
 }>()
-
-const linkBasePathCacheKey = computed(() => (props.linkBasePaths ?? []).join('\u0001'))
 
 function forwardServerRequestReply(payload: UiServerRequestReply): void {
   emit('respondServerRequest', payload)
@@ -2694,14 +2742,14 @@ function splitPlainTextByLinks(text: string, options: { applyMarkdownMarkers?: b
         segments.push({ kind: 'text', value: trailing })
       }
     } else {
-      const ref = parseLocalFileReference(token)
-      if (ref && shouldAutoLinkLocalFileReference(ref)) {
+      const ref = parseFileReference(token)
+      if (ref && shouldAutoLinkPlainTextFileReference(ref)) {
         segments.push({
           kind: 'file',
           value: token,
           path: ref.path,
           displayPath: token,
-          downloadName: getFileBasename(ref.path),
+          downloadName: getBasename(ref.path),
           line: ref.line,
           endLine: ref.endLine,
         })
@@ -2896,14 +2944,14 @@ function splitTextByFileUrls(text: string): InlineSegment[] {
     } else if (/^https?:\/\//u.test(target)) {
       segments.push({ kind: 'url', value: label || target, href: target })
     } else {
-      const ref = parseLocalFileReference(target)
+      const ref = parseFileReference(target)
       if (ref) {
         segments.push({
           kind: 'file',
           value: target,
           path: ref.path,
           displayPath: label || target,
-          downloadName: getFileBasename(ref.path),
+          downloadName: getBasename(ref.path),
           line: ref.line,
           endLine: ref.endLine,
         })
@@ -3012,25 +3060,72 @@ function getInlineSegments(text: string): InlineSegment[] {
 }
 
 function toRenderableImageUrl(value: string): string {
-  return buildRenderableImageUrl(value, {
-    cwd: props.cwd,
-    basePaths: props.linkBasePaths ?? [],
-  })
+  const normalized = value.trim()
+  if (!normalized) return ''
+  if (
+    normalized.startsWith('data:') ||
+    normalized.startsWith('blob:') ||
+    normalized.startsWith('http://') ||
+    normalized.startsWith('https://') ||
+    normalized.startsWith('/codex-local-image?')
+  ) {
+    return normalized
+  }
+
+  if (normalized.startsWith('file://')) {
+    return `/codex-local-image?path=${encodeURIComponent(normalized)}`
+  }
+
+  const looksLikeUnixAbsolute = normalized.startsWith('/')
+  const looksLikeWindowsAbsolute = /^[A-Za-z]:[\\/]/u.test(normalized)
+  if (looksLikeUnixAbsolute || looksLikeWindowsAbsolute) {
+    return `/codex-local-image?path=${encodeURIComponent(normalized)}`
+  }
+
+  return normalized
 }
 
 function toBrowseUrl(pathValue: string, line: number | null = null, endLine: number | null = line): string {
-  return buildBrowseUrl(pathValue, {
-    cwd: props.cwd,
-    basePaths: props.linkBasePaths ?? [],
-    line,
-    endLine,
-  })
+  const normalized = pathValue.trim()
+  if (!normalized) return '#'
+  const looksLikeAbsolutePath = (candidate: string): boolean => (
+    candidate.startsWith('/') || /^[A-Za-z]:[\\/]/u.test(candidate)
+  )
+
+  const parsed = parseFileReference(normalized)
+  const candidatePath = parsed?.path ?? normalized
+  const resolved = resolveRelativePath(candidatePath, props.cwd)
+
+  if (looksLikeAbsolutePath(resolved)) {
+    const normalizedResolved = resolved.startsWith('/') ? resolved : `/${resolved}`
+    return appendLineQuery(
+      `/codex-local-browse${encodeURI(normalizedResolved)}`,
+      parsed?.line ?? line,
+      parsed?.endLine ?? endLine,
+    )
+  }
+
+  return '#'
 }
 
 const fileLinkContextMenuStyle = computed(() => ({
   left: `${String(fileLinkContextMenuX.value)}px`,
   top: `${String(fileLinkContextMenuY.value)}px`,
 }))
+
+const fileLinkPickerStyle = computed(() => ({
+  left: `${String(fileLinkPickerX.value)}px`,
+  top: `${String(fileLinkPickerY.value)}px`,
+}))
+
+function clampFloatingPanelPosition(x: number, y: number, width = 420, height = 320): { x: number; y: number } {
+  if (typeof window === 'undefined') return { x, y }
+  const padding = 12
+  return {
+    x: Math.max(padding, Math.min(x, Math.max(padding, window.innerWidth - width - padding))),
+    y: Math.max(padding, Math.min(y, Math.max(padding, window.innerHeight - height - padding))),
+  }
+}
 
 function toEditUrlFromBrowseHref(href: string): string {
   const normalizedHref = href.trim()
@@ -3043,6 +3138,197 @@ function toEditUrlFromBrowseHref(href: string): string {
   } catch {
     return ''
   }
+}
+
+function parseLineRangeQuery(value: string): { line: number | null; endLine: number | null } {
+  const match = value.trim().match(/^(\d+)(?:-(\d+))?$/u)
+  if (!match) return { line: null, endLine: null }
+  const normalized = normalizeLineRange(Number(match[1]), Number(match[2] ?? match[1]))
+  return {
+    line: normalized?.startLine ?? null,
+    endLine: normalized?.endLine ?? null,
+  }
+}
+
+function hrefToLocalBrowsePath(href: string): { path: string; line: number | null; endLine: number | null } | null {
+  const normalizedHref = href.trim()
+  if (!normalizedHref) return null
+  try {
+    const resolved = new URL(normalizedHref, window.location.href)
+    if (!resolved.pathname.startsWith('/codex-local-browse')) return null
+    const rawPath = decodeURIComponent(resolved.pathname.slice('/codex-local-browse'.length) || '')
+    const lineRange = parseLineRangeQuery(resolved.searchParams.get('line') ?? '')
+    return {
+      path: rawPath,
+      line: lineRange.line,
+      endLine: lineRange.endLine,
+    }
+  } catch {
+    return null
+  }
+}
+
+function sourcePathFromFileLinkAnchor(anchor: HTMLAnchorElement): { path: string; line: number | null; endLine: number | null } | null {
+  const title = (anchor.getAttribute('title') ?? '').trim()
+  if (title) {
+    const ref = parseFileReference(title)
+    if (ref) {
+      return {
+        path: ref.path,
+        line: ref.line,
+        endLine: ref.endLine,
+      }
+    }
+  }
+
+  const text = anchor.innerText.trim()
+  if (text) {
+    const ref = parseFileReference(text)
+    if (ref) {
+      return {
+        path: ref.path,
+        line: ref.line,
+        endLine: ref.endLine,
+      }
+    }
+  }
+
+  return hrefToLocalBrowsePath(anchor.getAttribute('href') ?? '')
+}
+
+function normalizeFileLinkPickerQuery(value: string): string {
+  const ref = parseFileReference(value)
+  const pathValue = (ref?.path ?? value).trim()
+  return pathValue
+    .replace(/^file:\/\//u, '')
+    .replace(/[\\/]+$/u, '')
+    .replace(/^\.\//u, '')
+}
+
+function buildFileLinkPickerSearchQueries(value: string): string[] {
+  const normalized = normalizeFileLinkPickerQuery(value)
+  const candidates = [
+    normalized,
+    normalized.replace(/^~\//u, ''),
+    getBasename(normalized),
+  ]
+  const seen = new Set<string>()
+  const next: string[] = []
+  for (const candidate of candidates) {
+    const query = candidate.trim()
+    if (!query || seen.has(query)) continue
+    seen.add(query)
+    next.push(query)
+  }
+  return next
+}
+
+function closeFileLinkPicker(): void {
+  isFileLinkPickerVisible.value = false
+  isFileLinkPickerSearching.value = false
+  fileLinkPickerResults.value = []
+  fileLinkPickerHighlightedIndex.value = 0
+  fileLinkPickerSearchToken += 1
+  if (fileLinkPickerSearchDebounceTimer) {
+    clearTimeout(fileLinkPickerSearchDebounceTimer)
+    fileLinkPickerSearchDebounceTimer = null
+  }
+}
+
+function openFileLinkPicker(event: MouseEvent, anchor: HTMLAnchorElement): void {
+  const href = (anchor.getAttribute('href') ?? '').trim()
+  const source = sourcePathFromFileLinkAnchor(anchor)
+  if (!href || href === '#' || !source) return
+
+  closeFileLinkContextMenu()
+  const position = clampFloatingPanelPosition(event.clientX, event.clientY + 8)
+  fileLinkPickerX.value = position.x
+  fileLinkPickerY.value = position.y
+  fileLinkPickerQuery.value = normalizeFileLinkPickerQuery(source.path)
+  fileLinkPickerLine.value = source.line
+  fileLinkPickerEndLine.value = source.endLine
+  fileLinkPickerResults.value = []
+  fileLinkPickerHighlightedIndex.value = 0
+  isFileLinkPickerVisible.value = true
+  void nextTick(() => fileLinkPickerInputRef.value?.focus())
+  void queueFileLinkPickerSearch()
+}
+
+async function queueFileLinkPickerSearch(): Promise<void> {
+  if (!isFileLinkPickerVisible.value) return
+  const cwd = props.cwd.trim()
+  const queries = buildFileLinkPickerSearchQueries(fileLinkPickerQuery.value)
+  if (!cwd || queries.length === 0) {
+    fileLinkPickerResults.value = []
+    return
+  }
+  if (fileLinkPickerSearchDebounceTimer) {
+    clearTimeout(fileLinkPickerSearchDebounceTimer)
+  }
+  const token = ++fileLinkPickerSearchToken
+  isFileLinkPickerSearching.value = true
+  fileLinkPickerSearchDebounceTimer = setTimeout(async () => {
+    try {
+      let results: FileLinkSearchSuggestion[] = []
+      for (const query of queries) {
+        results = await searchFileLinkPaths(cwd, query, 30)
+        if (!isFileLinkPickerVisible.value || token !== fileLinkPickerSearchToken) return
+        if (results.length > 0) break
+      }
+      fileLinkPickerResults.value = results
+      fileLinkPickerHighlightedIndex.value = 0
+    } catch {
+      if (!isFileLinkPickerVisible.value || token !== fileLinkPickerSearchToken) return
+      fileLinkPickerResults.value = []
+    } finally {
+      if (isFileLinkPickerVisible.value && token === fileLinkPickerSearchToken) {
+        isFileLinkPickerSearching.value = false
+      }
+    }
+  }, 120)
+}
+
+function onFileLinkPickerQueryInput(): void {
+  void queueFileLinkPickerSearch()
+}
+
+function onFileLinkPickerKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    closeFileLinkPicker()
+    return
+  }
+  if (event.key === 'ArrowDown') {
+    event.preventDefault()
+    if (fileLinkPickerResults.value.length > 0) {
+      fileLinkPickerHighlightedIndex.value = (fileLinkPickerHighlightedIndex.value + 1) % fileLinkPickerResults.value.length
+    }
+    return
+  }
+  if (event.key === 'ArrowUp') {
+    event.preventDefault()
+    const count = fileLinkPickerResults.value.length
+    if (count > 0) {
+      fileLinkPickerHighlightedIndex.value = (fileLinkPickerHighlightedIndex.value + count - 1) % count
+    }
+    return
+  }
+  if (event.key === 'Enter') {
+    event.preventDefault()
+    const selected = fileLinkPickerResults.value[fileLinkPickerHighlightedIndex.value]
+    if (selected) {
+      openFileLinkPickerResult(selected)
+    }
+  }
+}
+
+function openFileLinkPickerResult(result: FileLinkSearchSuggestion): void {
+  const line = result.kind === 'file' ? fileLinkPickerLine.value : null
+  const endLine = result.kind === 'file' ? fileLinkPickerEndLine.value : null
+  const href = toBrowseUrl(result.absolutePath, line, endLine)
+  closeFileLinkPicker()
+  if (!href || href === '#') return
+  window.open(href, '_blank', 'noopener,noreferrer')
 }
 
 function onConversationContextMenu(event: MouseEvent): void {
@@ -3058,6 +3344,7 @@ function onConversationContextMenu(event: MouseEvent): void {
   event.preventDefault()
   event.stopPropagation()
 
+  closeFileLinkPicker()
   fileLinkContextBrowseUrl.value = href
   fileLinkContextEditUrl.value = toEditUrlFromBrowseHref(href)
   fileLinkContextMenuX.value = event.clientX
@@ -3068,6 +3355,21 @@ function onConversationContextMenu(event: MouseEvent): void {
 function onConversationClick(event: MouseEvent): void {
   const target = event.target
   if (!(target instanceof Element)) return
+
+  if (target.closest('.file-link-picker')) return
+
+  const fileLinkAnchor = target.closest('a.message-file-link')
+  if (fileLinkAnchor instanceof HTMLAnchorElement) {
+    const href = (fileLinkAnchor.getAttribute('href') ?? '').trim()
+    if (href && href !== '#' && hrefToLocalBrowsePath(href)) {
+      event.preventDefault()
+      event.stopPropagation()
+      openFileLinkPicker(event, fileLinkAnchor)
+      return
+    }
+  } else if (isFileLinkPickerVisible.value) {
+    closeFileLinkPicker()
+  }
 
   const codeCopyButton = target.closest('button.message-code-copy-button')
   if (codeCopyButton instanceof HTMLButtonElement) {
@@ -3141,24 +3443,41 @@ async function copyFileLinkContextLink(): Promise<void> {
 }
 
 function onWindowPointerDownForFileLinkContextMenu(event: PointerEvent): void {
-  if (!isFileLinkContextMenuVisible.value) return
-  const menu = fileLinkContextMenuRef.value
-  if (!menu) {
-    closeFileLinkContextMenu()
+  const target = event.target
+  if (isFileLinkContextMenuVisible.value) {
+    const menu = fileLinkContextMenuRef.value
+    if (!menu) {
+      closeFileLinkContextMenu()
+    } else if (!(target instanceof Node) || !menu.contains(target)) {
+      closeFileLinkContextMenu()
+    }
+  }
+
+  if (!isFileLinkPickerVisible.value) return
+  const picker = fileLinkPickerRef.value
+  if (!picker) {
+    closeFileLinkPicker()
     return
   }
-  const target = event.target
-  if (target instanceof Node && menu.contains(target)) return
-  closeFileLinkContextMenu()
+  if (target instanceof Node && picker.contains(target)) return
+  closeFileLinkPicker()
 }
 
 function onWindowBlurForFileLinkContextMenu(): void {
   closeFileLinkContextMenu()
+  closeFileLinkPicker()
 }
 
 function onWindowKeydownForFileLinkContextMenu(event: KeyboardEvent): void {
   if (event.key !== 'Escape') return
-  closeFileLinkContextMenu()
+  if (isFileLinkPickerVisible.value) {
+    event.preventDefault()
+    closeFileLinkPicker()
+  }
+  if (isFileLinkContextMenuVisible.value) {
+    event.preventDefault()
+    closeFileLinkContextMenu()
+  }
 }
 
 function normalizeMarkdownText(text: string): string {
@@ -3831,7 +4150,7 @@ function renderInlineCodeAsHtml(value: string): string {
   const content = splitPlainTextByLinks(value, { applyMarkdownMarkers: false })
     .map((segment) => {
       if (segment.kind === 'file') {
-        return `<a class="message-file-link message-inline-code-link" href="${escapeHtml(toBrowseUrl(segment.path, segment.line, segment.endLine))}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(formatFileReferenceDisplayPath(segment.path, segment.line, segment.endLine))}">${escapeHtml(segment.displayPath)}</a>`
+        return `<a class="message-file-link message-inline-code-link" href="${escapeHtml(toBrowseUrl(segment.path, segment.line, segment.endLine))}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(fileReferenceDisplayPath(segment.path, segment.line, segment.endLine))}">${escapeHtml(segment.displayPath)}</a>`
       }
       if (segment.kind === 'url') {
         return `<a class="message-file-link message-inline-code-link" href="${escapeHtml(segment.href)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(segment.href)}">${escapeHtml(segment.value)}</a>`
@@ -3858,7 +4177,7 @@ function renderInlineSegmentsAsHtml(text: string): string {
         return `<s class="message-strikethrough-text">${escapeHtml(segment.value)}</s>`
       }
       if (segment.kind === 'file') {
-        return `<a class="message-file-link" href="${escapeHtml(toBrowseUrl(segment.path, segment.line, segment.endLine))}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(formatFileReferenceDisplayPath(segment.path, segment.line, segment.endLine))}">${escapeHtml(segment.displayPath)}</a>`
+        return `<a class="message-file-link" href="${escapeHtml(toBrowseUrl(segment.path, segment.line, segment.endLine))}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(fileReferenceDisplayPath(segment.path, segment.line, segment.endLine))}">${escapeHtml(segment.displayPath)}</a>`
       }
       if (segment.kind === 'url') {
         return `<a class="message-file-link" href="${escapeHtml(segment.href)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(segment.href)}">${escapeHtml(segment.value)}</a>`
@@ -3965,7 +4284,7 @@ function renderMessageBlockAsHtml(block: MessageBlock): string {
 }
 
 function renderMarkdownBlocksAsHtml(text: string): string {
-  const cacheKey = `${props.cwd}\u0000${linkBasePathCacheKey.value}\u0000${highlightCacheVersion.value}\u0000${text}`
+  const cacheKey = `${props.cwd}\u0000${highlightCacheVersion.value}\u0000${text}`
   const cached = markdownHtmlCache.get(cacheKey)
   if (cached && cached.text === text && cached.cwd === props.cwd && cached.highlightVersion === highlightCacheVersion.value) {
     markdownHtmlCache.delete(cacheKey)
@@ -3999,7 +4318,6 @@ function renderProgressiveMarkdownContent(
   }
   return addCodeBlockCopyButtons(renderer.renderMarkdownContent(text, {
     cwd: props.cwd,
-    basePaths: props.linkBasePaths ?? [],
     kind,
     highlightVersion: highlightCacheVersion.value,
   }).html)
@@ -4694,6 +5012,8 @@ watch(
   async () => {
     autoFollowOutput.value = true
     modalImageUrl.value = ''
+    closeFileLinkPicker()
+    closeFileLinkContextMenu()
     isLoadingMore.value = false
     expandedResponseSourceIds.value = new Set()
     // Apply immediately for cached threads where isLoading never toggles.
@@ -4743,6 +5063,10 @@ onBeforeUnmount(() => {
   if (copiedCodeBlockResetTimer) {
     clearTimeout(copiedCodeBlockResetTimer)
     copiedCodeBlockResetTimer = null
+  }
+  if (fileLinkPickerSearchDebounceTimer) {
+    clearTimeout(fileLinkPickerSearchDebounceTimer)
+    fileLinkPickerSearchDebounceTimer = null
   }
   window.removeEventListener('pointerdown', onWindowPointerDownForFileLinkContextMenu)
   window.removeEventListener('blur', onWindowBlurForFileLinkContextMenu)
@@ -5538,6 +5862,89 @@ onBeforeUnmount(() => {
 
 .file-link-context-menu-item {
   @apply block w-full rounded-md px-2 py-1.5 text-left text-xs text-zinc-700 hover:bg-zinc-100;
+}
+
+.file-link-picker {
+  @apply fixed z-50 flex w-[min(420px,calc(100vw-24px))] max-h-[min(320px,calc(100vh-24px))] flex-col overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-xl;
+}
+
+.file-link-picker-search {
+  @apply flex items-center gap-2 border-b border-zinc-200 px-2 py-2;
+}
+
+.file-link-picker-search-icon {
+  @apply h-4 w-4 shrink-0 text-zinc-400;
+}
+
+.file-link-picker-input {
+  @apply min-w-0 flex-1 border-0 bg-transparent p-0 text-xs text-zinc-800 outline-none placeholder:text-zinc-400;
+}
+
+.file-link-picker-results {
+  @apply min-h-0 overflow-y-auto p-1;
+}
+
+.file-link-picker-result {
+  @apply flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-zinc-100;
+}
+
+.file-link-picker-result.is-active {
+  @apply bg-blue-50;
+}
+
+.file-link-picker-result-icon {
+  @apply h-4 w-4 shrink-0 text-zinc-500;
+}
+
+.file-link-picker-result-text {
+  @apply min-w-0 flex flex-col gap-0.5;
+}
+
+.file-link-picker-result-name {
+  @apply truncate text-xs font-medium text-zinc-800;
+}
+
+.file-link-picker-result-path {
+  @apply truncate text-[11px] text-zinc-500;
+}
+
+.file-link-picker-empty {
+  @apply px-2 py-3 text-xs text-zinc-500;
+}
+
+:global(:root.dark) .file-link-context-menu,
+:global(:root.dark) .file-link-picker {
+  @apply border-zinc-700 bg-zinc-900 shadow-black/40;
+}
+
+:global(:root.dark) .file-link-context-menu-item {
+  @apply text-zinc-200 hover:bg-zinc-800;
+}
+
+:global(:root.dark) .file-link-picker-search {
+  @apply border-zinc-700;
+}
+
+:global(:root.dark) .file-link-picker-input {
+  @apply text-zinc-100 placeholder:text-zinc-500;
+}
+
+:global(:root.dark) .file-link-picker-result {
+  @apply hover:bg-zinc-800;
+}
+
+:global(:root.dark) .file-link-picker-result.is-active {
+  @apply bg-blue-950/50;
+}
+
+:global(:root.dark) .file-link-picker-result-icon,
+:global(:root.dark) .file-link-picker-result-path,
+:global(:root.dark) .file-link-picker-empty {
+  @apply text-zinc-400;
+}
+
+:global(:root.dark) .file-link-picker-result-name {
+  @apply text-zinc-100;
 }
 
 .message-divider {

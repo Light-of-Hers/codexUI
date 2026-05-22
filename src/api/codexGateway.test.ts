@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { forkThread, listDirectoryComposioConnectors, resumeThread, searchComposerFiles, startThread, startThreadTurn, steerThreadTurn } from './codexGateway'
+import { forkThread, listDirectoryComposioConnectors, resumeThread, searchComposerFiles, searchFileLinkPaths, startThread, startThreadTurn, steerThreadTurn } from './codexGateway'
 
 function mockRpcFetch(): { requests: Array<{ method: string, params: Record<string, unknown> }> } {
   const requests: Array<{ method: string, params: Record<string, unknown> }> = []
@@ -258,6 +258,43 @@ describe('searchComposerFiles', () => {
     expect(results).toEqual([
       { path: 'src', kind: 'directory', isSymlink: false },
       { path: 'link.txt', kind: 'file', isSymlink: true },
+    ])
+  })
+})
+
+describe('searchFileLinkPaths', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('preserves absolute path and root metadata from the server', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      data: [
+        {
+          path: 'src/App.vue',
+          absolutePath: '/tmp/project/src/App.vue',
+          root: '/tmp/project',
+          kind: 'file',
+          isSymlink: false,
+        },
+      ],
+    }), {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    })))
+
+    const results = await searchFileLinkPaths('/tmp/project', 'src/App.vue', 10)
+
+    expect(results).toEqual([
+      {
+        path: 'src/App.vue',
+        absolutePath: '/tmp/project/src/App.vue',
+        root: '/tmp/project',
+        kind: 'file',
+        isSymlink: false,
+      },
     ])
   })
 })

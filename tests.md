@@ -5708,37 +5708,37 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Rollback/Cleanup
 - Restore the preferred provider, model, and reasoning effort after manual verification.
 
-### Feature: Session link base paths for file links
+### Feature: File-link click path picker
 
 #### Prerequisites
 - App server is running from this repository.
 - A TestChat workspace root is registered in the app.
-- The TestChat workspace contains a directory fixture with `context/src/utils/fileLinkResolver.ts`.
+- The TestChat workspace contains a file fixture such as `context/src/utils/fileLinkResolver.ts`.
 - Light and dark themes are both available from Settings.
 
 #### Steps
-1. Run `pnpm exec vitest run src/utils/fileLinkResolver.test.ts src/components/content/markdownRenderer.test.ts src/composables/useDesktopState.test.ts`.
+1. Run `pnpm exec vitest run src/api/codexGateway.test.ts src/components/content/markdownRenderer.test.ts src/composables/useDesktopState.test.ts`.
 2. Run `pnpm run build:frontend`.
-3. Start the dev server and run `node output/playwright/link-base-paths-verification.cjs`.
-4. In the composer, click `Add base path`, search for `context`, and select the matching directory.
-5. Preview and send a message containing `[fileLinkResolver.ts](src/utils/fileLinkResolver.ts:1-5)`, inline code `` `src/utils/fileLinkResolver.ts:1-5` ``, and the text `` `agent`/Codex ``.
-6. Refresh or open the created thread and confirm the configured base path is still applied for that session.
-7. Repeat the rendered-message check in light and dark themes.
-8. Run `PROFILE_BASE_URL=http://127.0.0.1:4173 PROFILE_WAIT_MS=7000 pnpm run profile:browser`.
+3. Start the dev server and run the TestChat CJS Playwright verification for file-link picking.
+4. In a TestChat thread, send or locate a message containing `[fileLinkResolver.ts](src/utils/fileLinkResolver.ts:1-5)` and inline code `` `src/utils/fileLinkResolver.ts:1-5` ``.
+5. Click the rendered file link.
+6. Confirm a path picker opens near the clicked link, with the search input prefilled from the linked path.
+7. Select the matching `context/src/utils/fileLinkResolver.ts` result.
+8. Confirm the browser opens the local browse/editor route for the selected absolute path and preserves the `line=1-5` range.
+9. Repeat the picker interaction in light and dark themes.
+10. Run `PROFILE_BASE_URL=http://127.0.0.1:4173 PROFILE_WAIT_MS=7000 pnpm run profile:browser`.
 
 #### Expected Results
-- Base paths are displayed as removable chips below the composer and are persisted by thread context.
-- Adding a base path uses folder search results only and stores the selected directory as a normalized absolute path.
-- Bare relative markdown links and inline-code paths resolve through the first configured base path before falling back to `cwd`.
-- Line ranges such as `src/utils/fileLinkResolver.ts:1-5` open with `?line=1-5`.
-- Existing explicit paths such as `./`, `../`, and `~/` keep their previous semantics.
-- `` `agent`/Codex `` does not create a false `/Codex` file link.
-- Light and dark theme composer/base-path controls and rendered file links remain readable.
-- The browser runtime profile does not report duplicate startup API calls or warnings.
+- File links do not navigate immediately on left click.
+- Clicking a file link opens a keyboard-usable path picker instead.
+- The picker searches the linked path text across the current cwd and registered workspace roots.
+- Choosing a candidate opens that candidate's absolute local path.
+- Existing markdown parsing behavior remains intact for inline code paths, directory paths, `~/` paths, and false `/Codex` tail links.
+- The picker is readable and usable in both light and dark themes.
+- Startup profiling does not show duplicate API requests or warnings.
 
 #### Rollback/Cleanup
-- Remove any base-path chips created for the manual check.
-- Delete disposable TestChat threads and fixture files created for the run.
+- Delete disposable TestChat messages and fixture files created for the check.
 
 ### Feature: Session switch restores persisted model state
 

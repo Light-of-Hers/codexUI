@@ -48,7 +48,6 @@ import {
   parseCursorToolMessage,
 } from '../api/normalizers/cursorToolCalls'
 import { normalizeFileChangeStatus, toUiFileChanges, toUiToolCallMessage } from '../api/normalizers/v2'
-import { normalizeLinkBasePaths } from '../utils/fileLinkResolver.js'
 import type {
   CollaborationModeKind,
   CollaborationModeOption,
@@ -90,7 +89,6 @@ const SELECTED_THREAD_STORAGE_KEY = 'codex-web-local.selected-thread-id.v1'
 const SELECTED_MODEL_BY_CONTEXT_STORAGE_KEY = 'codex-web-local.selected-model-by-context.v1'
 const LEGACY_SELECTED_MODEL_STORAGE_KEY = 'codex-web-local.selected-model-id.v1'
 const SELECTED_REASONING_EFFORT_BY_CONTEXT_STORAGE_KEY = 'codex-web-local.reasoning-effort-by-context.v1'
-const LINK_BASE_PATHS_BY_CONTEXT_STORAGE_KEY = 'codex-web-local.link-base-paths-by-context.v1'
 const PROJECT_ORDER_STORAGE_KEY = 'codex-web-local.project-order.v1'
 const PROJECT_DISPLAY_NAME_STORAGE_KEY = 'codex-web-local.project-display-name.v1'
 const COLLABORATION_MODE_STORAGE_KEY = 'codex-web-local.collaboration-mode-by-context.v1'
@@ -421,68 +419,6 @@ function saveSelectedReasoningEffortMap(state: Record<string, ReasoningEffort>):
     }
   } catch {
     // Keep in-memory selection working even if localStorage writes fail.
-  }
-}
-
-function loadLinkBasePathMap(): Record<string, string[]> {
-  if (typeof window === 'undefined') return createStringKeyedRecord<string[]>()
-
-  try {
-    const raw = window.localStorage.getItem(LINK_BASE_PATHS_BY_CONTEXT_STORAGE_KEY)
-    if (!raw) return createStringKeyedRecord<string[]>()
-
-    const parsed = JSON.parse(raw) as unknown
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      return createStringKeyedRecord<string[]>()
-    }
-
-    const next = createStringKeyedRecord<string[]>()
-    for (const [contextId, value] of Object.entries(parsed as Record<string, unknown>)) {
-      if (typeof contextId !== 'string' || contextId.length === 0 || !Array.isArray(value)) continue
-      const normalizedBasePaths = normalizeLinkBasePaths(value.filter((entry): entry is string => typeof entry === 'string'))
-      if (normalizedBasePaths.length > 0) {
-        next[contextId] = normalizedBasePaths
-      }
-    }
-    return next
-  } catch {
-    return createStringKeyedRecord<string[]>()
-  }
-}
-
-export function readLinkBasePathsForThreadContext(
-  state: Record<string, string[]>,
-  threadId: string,
-): string[] {
-  return normalizeLinkBasePaths(state[toThreadContextId(threadId)] ?? [])
-}
-
-export function writeLinkBasePathsForContext(
-  state: Record<string, string[]>,
-  threadId: string,
-  basePaths: readonly string[],
-): Record<string, string[]> {
-  const contextId = toThreadContextId(threadId)
-  const normalizedBasePaths = normalizeLinkBasePaths(basePaths)
-  if (normalizedBasePaths.length === 0) {
-    return omitStringKeyedRecordKey(state, contextId)
-  }
-
-  const next = cloneStringKeyedRecord(state)
-  next[contextId] = normalizedBasePaths
-  return next
-}
-
-function saveLinkBasePathMap(state: Record<string, string[]>): void {
-  if (typeof window === 'undefined') return
-  try {
-    if (Object.keys(state).length === 0) {
-      window.localStorage.removeItem(LINK_BASE_PATHS_BY_CONTEXT_STORAGE_KEY)
-    } else {
-      window.localStorage.setItem(LINK_BASE_PATHS_BY_CONTEXT_STORAGE_KEY, JSON.stringify(state))
-    }
-  } catch {
-    // Keep in-memory base paths working even if localStorage writes fail.
   }
 }
 
@@ -1724,7 +1660,6 @@ export function useDesktopState() {
   )
   const selectedModelIdByContext = ref<Record<string, string>>(loadSelectedModelMap())
   const selectedReasoningEffortByContext = ref<Record<string, ReasoningEffort>>(loadSelectedReasoningEffortMap())
-  const linkBasePathsByContext = ref<Record<string, string[]>>(loadLinkBasePathMap())
   const selectedProviderByContext = ref<Record<string, ProviderId>>(loadSelectedProviderMap())
   const selectedCollaborationMode = ref<CollaborationModeKind>(
     readSelectedCollaborationMode(selectedCollaborationModeByContext.value, selectedThreadId.value),
@@ -1954,10 +1889,6 @@ export function useDesktopState() {
     return readSelectedReasoningEffort(selectedReasoningEffortByContext.value, threadId)
   }
 
-  function readLinkBasePathsForThread(threadId: string): string[] {
-    return readLinkBasePathsForThreadContext(linkBasePathsByContext.value, threadId)
-  }
-
   function syncThreadProviderFromModel(threadId: string, modelId: string): void {
     const inferredProvider = inferProviderFromModel(modelId, moonBridgeModelIds.value)
     const normalizedThreadId = threadId.trim()
@@ -1995,15 +1926,6 @@ export function useDesktopState() {
     }
 
     saveSelectedReasoningEffortMap(selectedReasoningEffortByContext.value)
-  }
-
-  function setLinkBasePathsForThread(threadId: string, basePaths: readonly string[]): void {
-    linkBasePathsByContext.value = writeLinkBasePathsForContext(
-      linkBasePathsByContext.value,
-      threadId,
-      basePaths,
-    )
-    saveLinkBasePathMap(linkBasePathsByContext.value)
   }
 
   function applyThreadModelStateWithProviderPriority(
@@ -2760,14 +2682,6 @@ export function useDesktopState() {
       selectedReasoningEffortByContext.value = nextSelectedReasoningEffortMap
       selectedReasoningEffort.value = readReasoningEffortForThread(selectedThreadId.value)
       saveSelectedReasoningEffortMap(nextSelectedReasoningEffortMap)
-    }
-    const nextLinkBasePathMap = pruneThreadContextStateMap(
-      linkBasePathsByContext.value,
-      activeThreadIds,
-    )
-    if (nextLinkBasePathMap !== linkBasePathsByContext.value) {
-      linkBasePathsByContext.value = nextLinkBasePathMap
-      saveLinkBasePathMap(nextLinkBasePathMap)
     }
     const nextSelectedProviderMap = pruneThreadContextStateMap(
       selectedProviderByContext.value,
@@ -5689,7 +5603,6 @@ export function useDesktopState() {
     const targetCwd = cwd.trim()
     const selectedModel = readModelIdForThread(NEW_THREAD_COLLABORATION_MODE_CONTEXT).trim()
     const selectedReasoningEffortForNewThread = readReasoningEffortForThread(NEW_THREAD_COLLABORATION_MODE_CONTEXT)
-    const selectedLinkBasePathsForNewThread = readLinkBasePathsForThread(NEW_THREAD_COLLABORATION_MODE_CONTEXT)
     const selectedMode = readSelectedCollaborationMode(
       selectedCollaborationModeByContext.value,
       NEW_THREAD_COLLABORATION_MODE_CONTEXT,
@@ -5738,7 +5651,6 @@ export function useDesktopState() {
       }
       if (!threadId) return ''
 
-      setLinkBasePathsForThread(threadId, selectedLinkBasePathsForNewThread)
       insertOptimisticThread(threadId, targetCwd, nextText || '[Image]')
       blockInterruptUntilThreadIsPersisted(threadId)
       resumedThreadById.value = {
@@ -6564,14 +6476,12 @@ export function useDesktopState() {
     setSelectedCollaborationMode,
     readModelIdForThread,
     readReasoningEffortForThread,
-    readLinkBasePathsForThread,
     setSelectedModelIdForThread,
     setSelectedModelId,
     setSelectedProviderForComposerContext,
     setSelectedProvider,
 
     setSelectedReasoningEffortForThread,
-    setLinkBasePathsForThread,
     setSelectedReasoningEffort,
     updateSelectedSpeedMode,
     respondToPendingServerRequest,
