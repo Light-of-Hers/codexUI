@@ -174,6 +174,17 @@ const answer = 42
     expect(html).toContain('>.superpowers/plans/2026-05-18-codex-cursor/</a></code> next.')
   })
 
+  it('expands tilde paths from root workspaces', () => {
+    const html = markdownRenderer.renderMarkdownContent('Open `~/work/my-agent-configs/AGENTS.md` next.', {
+      ...baseContext,
+      cwd: '/root/work/my-agent-configs/repos/codexUI',
+    }).html
+
+    expect(html).toContain('href="/codex-local-browse/root/work/my-agent-configs/AGENTS.md"')
+    expect(html).toContain('>~/work/my-agent-configs/AGENTS.md</a></code> next.')
+    expect(html).not.toContain('/root/work/my-agent-configs/repos/codexUI/~/work')
+  })
+
   it('renders local markdown images through the local image route', () => {
     const html = render('![diagram](/home/ubuntu/Documents/New Project (2)/diagram.png)')
 

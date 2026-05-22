@@ -1096,6 +1096,7 @@ function normalizeFileUrlToPath(pathValue: string): string {
 
 function inferHomeFromCwd(cwd: string): string {
   const normalized = normalizePathSeparators(cwd)
+  if (normalized === '/root' || normalized.startsWith('/root/')) return '/root'
   const userMatch = normalized.match(/^\/Users\/([^/]+)/u)
   if (userMatch) return `/Users/${userMatch[1]}`
   const homeMatch = normalized.match(/^\/home\/([^/]+)/u)
