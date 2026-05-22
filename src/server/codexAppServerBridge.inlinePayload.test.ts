@@ -564,6 +564,111 @@ describe('thread session skill recovery', () => {
     ])
   })
 
+  it('reorders existing recovered commands instead of leaving them grouped before assistant text', () => {
+    const result = {
+      thread: {
+        id: 'thread-1',
+        path: '/tmp/session.jsonl',
+        turns: [{
+          id: 'turn-1',
+          items: [
+            {
+              id: 'user-1',
+              type: 'userMessage',
+              content: [{ type: 'text', text: 'inspect project', text_elements: [] }],
+            },
+            {
+              id: 'session-cmd-call-list',
+              type: 'commandExecution',
+              command: 'ls',
+              status: 'completed',
+              aggregatedOutput: 'package.json',
+            },
+            {
+              id: 'session-cmd-call-config',
+              type: 'commandExecution',
+              command: 'cat package.json',
+              status: 'completed',
+              aggregatedOutput: '{"name":"codex-ui"}',
+            },
+            {
+              id: 'agent-merged',
+              type: 'agentMessage',
+              text: [
+                'I will inspect the files.',
+                'The listing shows package files.',
+                'The config confirms the setup.',
+              ].join('\n'),
+            },
+          ],
+        }],
+      },
+    }
+    const sessionLog = [
+      JSON.stringify({ type: 'turn_context', payload: { turn_id: 'turn-1' } }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'I will inspect the files.' }],
+        },
+      }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'function_call',
+          name: 'exec_command',
+          call_id: 'call-list',
+          arguments: JSON.stringify({ cmd: 'ls' }),
+        },
+      }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'The listing shows package files.' }],
+        },
+      }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'function_call',
+          name: 'exec_command',
+          call_id: 'call-config',
+          arguments: JSON.stringify({ cmd: 'cat package.json' }),
+        },
+      }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'The config confirms the setup.' }],
+        },
+      }),
+    ].join('\n')
+
+    const merged = mergeRecoveredTurnItemsIntoThreadResult(
+      result,
+      (_threadId, turns) => turns,
+      sessionLog,
+    ) as typeof result
+    const items = merged.thread.turns[0].items
+
+    expect(items.map((item) => item.type)).toEqual([
+      'userMessage',
+      'agentMessage',
+      'commandExecution',
+      'agentMessage',
+      'commandExecution',
+      'agentMessage',
+    ])
+    expect(items[2]).toBe(result.thread.turns[0].items[1])
+    expect(items[4]).toBe(result.thread.turns[0].items[2])
+  })
+
   it('adds selected skill inputs from session JSONL to matching user messages', () => {
     const turns = [{
       id: 'turn-1',
