@@ -816,7 +816,7 @@ describe('session composer model state', () => {
 
     await state.loadMessages('thread-a')
 
-    expect(gatewayMocks.resumeThread).toHaveBeenCalledWith('thread-a', undefined, 'openai')
+    expect(gatewayMocks.resumeThread).toHaveBeenCalledWith('thread-a', undefined, undefined)
     expect(state.readModelIdForThread('thread-a')).toBe('ark-code-latest')
     expect(state.selectedModelId.value).toBe('ark-code-latest')
     expect(state.selectedProvider.value).toBe('moon')
@@ -921,7 +921,7 @@ describe('session composer model state', () => {
     await state.sendMessageToSelectedThread('use codex now')
 
     expect(gatewayMocks.resumeThread).toHaveBeenNthCalledWith(1, 'thread-a', 'ark-code-latest', 'moon')
-    expect(gatewayMocks.resumeThread).toHaveBeenNthCalledWith(2, 'thread-a', 'gpt-5.5', 'openai')
+    expect(gatewayMocks.resumeThread).toHaveBeenNthCalledWith(2, 'thread-a', 'gpt-5.5', undefined)
     expect(gatewayMocks.startThreadTurn).toHaveBeenCalledWith(
       'thread-a',
       'use codex now',
@@ -940,7 +940,7 @@ describe('session composer model state', () => {
 
     await state.loadMessages('thread-a', { force: true })
 
-    expect(gatewayMocks.resumeThread).toHaveBeenNthCalledWith(3, 'thread-a', 'gpt-5.5', 'openai')
+    expect(gatewayMocks.resumeThread).toHaveBeenNthCalledWith(3, 'thread-a', 'gpt-5.5', undefined)
     expect(state.selectedProvider.value).toBe('codex')
     expect(state.readModelIdForThread('thread-a')).toBe('gpt-5.5')
   })
