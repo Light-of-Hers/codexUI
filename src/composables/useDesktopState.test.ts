@@ -382,6 +382,7 @@ describe('workspace roots project persistence helpers', () => {
 describe('provider session helpers', () => {
   it('defaults provider selections to Codex', () => {
     expect(normalizeProviderId('')).toBe('codex')
+    expect(normalizeProviderId('openai')).toBe('codex')
     expect(normalizeProviderId('rustcat')).toBe('codex')
     expect(normalizeProviderId('openrouter-free')).toBe('openrouter')
     expect(normalizeProviderId('custom-endpoint')).toBe('custom')
@@ -394,6 +395,13 @@ describe('provider session helpers', () => {
 
     expect(readSelectedProvider(next, 'thread-a')).toBe('moon')
     expect(readSelectedProvider(next, 'thread-b')).toBe('codex')
+  })
+
+  it('persists explicit Codex provider selections for existing sessions', () => {
+    const next = writeSelectedProviderForContext({}, 'thread-a', 'codex')
+
+    expect(next).toEqual({ 'thread-a': 'codex' })
+    expect(readSelectedProvider(next, 'thread-a')).toBe('codex')
   })
 
   it('maps the new-thread model context to the new-thread provider context', () => {
@@ -808,7 +816,7 @@ describe('session composer model state', () => {
 
     await state.loadMessages('thread-a')
 
-    expect(gatewayMocks.resumeThread).toHaveBeenCalledWith('thread-a', undefined, undefined)
+    expect(gatewayMocks.resumeThread).toHaveBeenCalledWith('thread-a', undefined, 'openai')
     expect(state.readModelIdForThread('thread-a')).toBe('ark-code-latest')
     expect(state.selectedModelId.value).toBe('ark-code-latest')
     expect(state.selectedProvider.value).toBe('moon')
@@ -850,6 +858,91 @@ describe('session composer model state', () => {
     expect(state.readReasoningEffortForThread('thread-a')).toBe('high')
     expect(state.selectedReasoningEffort.value).toBe('high')
     expect(state.availableModelIds.value).toContain('ark-code-latest')
+  })
+
+  it('keeps an explicit Codex switch on an existing Moon Bridge session when sending', async () => {
+    installTestWindow({
+      'codex-web-local.selected-model-by-context.v1': JSON.stringify({
+        'thread-a': 'ark-code-latest',
+      }),
+      'codex-web-local.provider-by-context.v1': JSON.stringify({
+        'thread-a': 'moon',
+      }),
+      'codex-web-local.reasoning-effort-by-context.v1': JSON.stringify({
+        'thread-a': 'xhigh',
+      }),
+    })
+    gatewayMocks.getThreadDetail.mockResolvedValue({
+      messages: [],
+      inProgress: false,
+      activeTurnId: '',
+      hasMoreOlder: false,
+      turnIndexByTurnId: {},
+    })
+    gatewayMocks.resumeThread
+      .mockResolvedValueOnce({
+        model: 'ark-code-latest',
+        modelProvider: 'moon',
+        reasoningEffort: 'xhigh',
+        messages: [],
+        inProgress: false,
+        activeTurnId: '',
+        hasMoreOlder: false,
+        turnIndexByTurnId: {},
+      })
+      .mockResolvedValueOnce({
+        model: 'gpt-5.5',
+        modelProvider: 'openai',
+        reasoningEffort: 'xhigh',
+        messages: [],
+        inProgress: false,
+        activeTurnId: '',
+        hasMoreOlder: false,
+        turnIndexByTurnId: {},
+      })
+      .mockResolvedValueOnce({
+        model: 'ark-code-latest',
+        modelProvider: 'moon',
+        reasoningEffort: 'xhigh',
+        messages: [],
+        inProgress: false,
+        activeTurnId: '',
+        hasMoreOlder: false,
+        turnIndexByTurnId: {},
+      })
+    gatewayMocks.startThreadTurn.mockResolvedValue('turn-1')
+
+    const state = useDesktopState()
+    state.primeSelectedThread('thread-a')
+    await state.loadMessages('thread-a')
+
+    state.setSelectedProvider('codex')
+    state.setSelectedModelIdForThread('thread-a', 'gpt-5.5')
+    await state.sendMessageToSelectedThread('use codex now')
+
+    expect(gatewayMocks.resumeThread).toHaveBeenNthCalledWith(1, 'thread-a', 'ark-code-latest', 'moon')
+    expect(gatewayMocks.resumeThread).toHaveBeenNthCalledWith(2, 'thread-a', 'gpt-5.5', 'openai')
+    expect(gatewayMocks.startThreadTurn).toHaveBeenCalledWith(
+      'thread-a',
+      'use codex now',
+      [],
+      'gpt-5.5',
+      'xhigh',
+      undefined,
+      [],
+      'default',
+    )
+    expect(state.selectedProvider.value).toBe('codex')
+    expect(state.readModelIdForThread('thread-a')).toBe('gpt-5.5')
+    expect(JSON.parse(window.localStorage.getItem('codex-web-local.provider-by-context.v1') ?? '{}')).toEqual({
+      'thread-a': 'codex',
+    })
+
+    await state.loadMessages('thread-a', { force: true })
+
+    expect(gatewayMocks.resumeThread).toHaveBeenNthCalledWith(3, 'thread-a', 'gpt-5.5', 'openai')
+    expect(state.selectedProvider.value).toBe('codex')
+    expect(state.readModelIdForThread('thread-a')).toBe('gpt-5.5')
   })
 })
 

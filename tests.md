@@ -5829,23 +5829,27 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Steps
 1. Run `pnpm exec vitest run src/composables/useDesktopState.test.ts src/api/codexGateway.test.ts src/server/codexAppServerBridge.inlinePayload.test.ts`.
 2. Run `pnpm exec vue-tsc --noEmit`.
-2. Open the target session in light theme.
-3. Switch to a different session, then switch back to the target session.
-4. Confirm the composer still shows Provider `Moon Bridge`, Model `ark-code-latest`, and the persisted reasoning effort instead of resetting to `gpt-5.5` and `None`.
-5. Send a follow-up message and confirm the next turn uses the same model state.
-6. While a Moon Bridge turn is running, queue a follow-up message and confirm the queued turn keeps Provider `Moon Bridge`, Model `ark-code-latest`, and the selected reasoning effort when it starts.
-7. Interrupt a Moon Bridge turn in a way that triggers automatic `Please continue.` recovery and confirm the recovery turn keeps `ark-code-latest`.
-8. Repeat steps 2-7 in dark theme.
+3. Open the target session in light theme.
+4. Switch to a different session, then switch back to the target session.
+5. Confirm the composer still shows Provider `Moon Bridge`, Model `ark-code-latest`, and the persisted reasoning effort instead of resetting to `gpt-5.5` and `None`.
+6. Send a follow-up message and confirm the next turn uses the same model state.
+7. Switch the same session to Provider `Codex` and Model `gpt-5.5`, then send another follow-up message.
+8. Confirm the composer and the running turn stay on Provider `Codex` and Model `gpt-5.5`.
+9. While a Moon Bridge turn is running, queue a follow-up message and confirm the queued turn keeps Provider `Moon Bridge`, Model `ark-code-latest`, and the selected reasoning effort when it starts.
+10. Interrupt a Moon Bridge turn in a way that triggers automatic `Please continue.` recovery and confirm the recovery turn keeps `ark-code-latest`.
+11. Repeat steps 3-10 in dark theme.
 
 #### Expected Results
 - Session switches hydrate `model`, `modelProvider`, and `reasoningEffort` from persisted session data.
 - The composer no longer flashes back to the current global config when a session is selected.
 - The follow-up turn keeps using the persisted Moon Bridge session state.
+- Explicitly switching an existing Moon Bridge session to Codex sends the next turn through `openai` and does not get overwritten by older session metadata.
 - Queued and automatic recovery turns preserve the session's Moon Bridge model state instead of falling back to the global config.
 - The behavior stays consistent in both light and dark themes.
 
 #### Performance Audit
 - Session switching still uses the existing `thread/read` or `thread/resume` flow; this change does not add browser-side network requests.
+- Explicit provider/model changes invalidate only that thread's cached resume state, adding one `thread/resume` before the next send so app-server provider state is updated.
 - Queue persistence stores three scalar fields with each queued message and does not change the queue drain polling cadence.
 - Automatic recovery reads model state through the existing cached session JSONL helper and passes it into the already-required `thread/resume`; no extra app-server RPC is added for the recovery turn.
 

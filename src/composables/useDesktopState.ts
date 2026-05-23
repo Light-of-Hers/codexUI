@@ -177,6 +177,9 @@ function normalizeStoredModelId(value: unknown): string {
 
 export function normalizeProviderId(value: unknown): ProviderId {
   const normalized = typeof value === 'string' ? value.trim().toLowerCase() : ''
+  if (normalized === 'openai') {
+    return 'codex'
+  }
   if (normalized === 'openrouter' || normalized === 'openrouter-free') {
     return 'openrouter'
   }
@@ -255,7 +258,7 @@ function toRpcModelProviderId(providerId: ProviderId): string {
   if (providerId === 'custom') return 'custom-endpoint'
   if (providerId === 'moon') return 'moon'
   if (providerId === 'cursor') return 'cursor'
-  return ''
+  return 'openai'
 }
 
 function isNewThreadContextId(contextId: string): boolean {
@@ -438,7 +441,7 @@ function loadSelectedProviderMap(): Record<string, ProviderId> {
     for (const [contextId, value] of Object.entries(parsed as Record<string, unknown>)) {
       if (typeof contextId !== 'string' || contextId.length === 0) continue
       const normalizedProvider = normalizeProviderId(value)
-      if (normalizedProvider !== 'codex') {
+      if (normalizedProvider !== 'codex' || contextId !== NEW_THREAD_PROVIDER_CONTEXT) {
         next[contextId] = normalizedProvider
       }
     }
@@ -463,7 +466,7 @@ export function writeSelectedProviderForContext(
 ): Record<string, ProviderId> {
   const contextId = toProviderSelectionContextId(threadId)
   const normalizedProvider = normalizeProviderId(provider)
-  if (normalizedProvider === 'codex') {
+  if (normalizedProvider === 'codex' && contextId === NEW_THREAD_PROVIDER_CONTEXT) {
     return omitStringKeyedRecordKey(state, contextId)
   }
 
@@ -1933,6 +1936,14 @@ export function useDesktopState() {
     const normalizedThreadId = threadId.trim()
     if (!normalizedThreadId) return
 
+    const rawProvider = typeof providerId === 'string' ? providerId.trim() : ''
+    const incomingProvider = rawProvider ? normalizeProviderId(rawProvider) : ''
+    const providerContextId = toProviderSelectionContextId(normalizedThreadId)
+    const explicitProvider = Object.prototype.hasOwnProperty.call(selectedProviderByContext.value, providerContextId)
+      ? normalizeProviderId(selectedProviderByContext.value[providerContextId])
+      : ''
+    if (explicitProvider && (!incomingProvider || explicitProvider !== incomingProvider)) return
+
     setThreadModelId(normalizedThreadId, modelId)
 
     const normalizedReasoningEffort = normalizeStoredReasoningEffort(reasoningEffort)
@@ -1942,17 +1953,19 @@ export function useDesktopState() {
 
     // When the thread has an explicit modelProvider (non-empty), use it directly.
     // Empty providerId means codex thread (default), so skip inference entirely.
-    const rawProvider = typeof providerId === 'string' ? providerId.trim() : ''
     if (rawProvider.length === 0) return
 
-    const normalizedProvider = normalizeProviderId(rawProvider)
-    if (normalizedProvider !== 'codex') {
-      setThreadProviderId(normalizedThreadId, normalizedProvider)
-    }
+    setThreadProviderId(normalizedThreadId, incomingProvider)
   }
 
   function readThreadRpcProviderId(threadId: string): string {
     return toRpcModelProviderId(readSelectedProvider(selectedProviderByContext.value, threadId))
+  }
+
+  function invalidateThreadResumeState(threadId: string): void {
+    const normalizedThreadId = threadId.trim()
+    if (!normalizedThreadId || normalizedThreadId === NEW_THREAD_COLLABORATION_MODE_CONTEXT) return
+    resumedThreadById.value = omitKey(resumedThreadById.value, normalizedThreadId)
   }
 
   function shouldResumeThread(threadId: string, forceReload = false): boolean {
@@ -2043,6 +2056,9 @@ export function useDesktopState() {
     } else {
       ensureAvailableModelIds(normalizedModelId)
     }
+    if (contextId !== NEW_THREAD_COLLABORATION_MODE_CONTEXT) {
+      invalidateThreadResumeState(threadId)
+    }
     saveSelectedModelMap(selectedModelIdByContext.value)
   }
 
@@ -2053,7 +2069,7 @@ export function useDesktopState() {
   function setSelectedProviderForThread(threadId: string, providerId: unknown): void {
     const normalizedProvider = normalizeProviderId(providerId)
     const contextId = toProviderSelectionContextId(threadId)
-    if (normalizedProvider !== 'codex') {
+    if (normalizedProvider !== 'codex' || contextId !== NEW_THREAD_PROVIDER_CONTEXT) {
       const nextProviderMap = cloneStringKeyedRecord(selectedProviderByContext.value)
       nextProviderMap[contextId] = normalizedProvider
       selectedProviderByContext.value = nextProviderMap
@@ -2063,6 +2079,9 @@ export function useDesktopState() {
 
     if (contextId === toProviderSelectionContextId(selectedThreadId.value)) {
       selectedProvider.value = normalizedProvider
+    }
+    if (toThreadContextId(threadId) !== NEW_THREAD_COLLABORATION_MODE_CONTEXT) {
+      invalidateThreadResumeState(threadId)
     }
     saveSelectedProviderMap(selectedProviderByContext.value)
   }

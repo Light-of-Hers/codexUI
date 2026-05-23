@@ -412,6 +412,33 @@ export async function mergeSessionModelStateIntoThreadResult(result: unknown): P
   }
 }
 
+export function mergeExplicitModelStateIntoThreadResult(result: unknown, params: unknown): unknown {
+  const paramsRecord = asRecord(params)
+  const model = readNonEmptyString(paramsRecord?.model)
+  const modelProvider = readNonEmptyString(paramsRecord?.modelProvider) || readNonEmptyString(paramsRecord?.model_provider)
+  if (!model && !modelProvider) return result
+
+  const record = asRecord(result)
+  const thread = asRecord(record?.thread)
+  if (!record || !thread) return result
+
+  const nextRecord: Record<string, unknown> = { ...record }
+  const nextThread: Record<string, unknown> = { ...thread }
+  if (model) {
+    nextRecord.model = model
+    nextThread.model = model
+  }
+  if (modelProvider) {
+    nextRecord.modelProvider = modelProvider
+    nextThread.modelProvider = modelProvider
+  }
+
+  return {
+    ...nextRecord,
+    thread: nextThread,
+  }
+}
+
 function parseSessionSkillText(value: string): SessionRecoveredSkillInput | null {
   const trimmed = value.trim()
   if (!trimmed.startsWith('<skill>')) return null
@@ -7375,9 +7402,13 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         const skillMergedResult = THREAD_METHODS_WITH_TURNS.has(body.method)
           ? await mergeSessionSkillInputsIntoThreadResult(sanitizedResult)
           : sanitizedResult
-        const result = THREAD_METHODS_WITH_THREAD_SNAPSHOT.has(body.method)
-          ? await mergeSessionModelStateIntoThreadResult(skillMergedResult)
-          : skillMergedResult
+        let result = skillMergedResult
+        if (THREAD_METHODS_WITH_THREAD_SNAPSHOT.has(body.method)) {
+          const explicitModelResult = mergeExplicitModelStateIntoThreadResult(skillMergedResult, body.params)
+          result = explicitModelResult === skillMergedResult
+            ? await mergeSessionModelStateIntoThreadResult(skillMergedResult)
+            : explicitModelResult
+        }
 
 	        if (THREAD_METHODS_WITH_THREAD_SNAPSHOT.has(body.method)) {
 	          const rpcRecord = asRecord(result)

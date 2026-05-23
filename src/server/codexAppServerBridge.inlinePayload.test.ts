@@ -8,6 +8,7 @@ import {
   BackendQueueProcessor,
   buildAppServerConfigForState,
   createCodexBridgeMiddleware,
+  mergeExplicitModelStateIntoThreadResult,
   mergeRecoveredTurnItemsIntoThreadResult,
   mergeSessionModelStateIntoThreadResult,
   mergeSessionSkillInputsIntoTurns,
@@ -103,6 +104,35 @@ describe('session model state recovery', () => {
     } finally {
       await rm(tempDir, { recursive: true, force: true })
     }
+  })
+
+  it('keeps explicit lifecycle model state ahead of recovered session metadata', () => {
+    const result = mergeExplicitModelStateIntoThreadResult({
+      model: 'ark-code-latest',
+      modelProvider: 'moon',
+      thread: {
+        id: 'thread-1',
+        path: '/tmp/session.jsonl',
+        model: 'ark-code-latest',
+        modelProvider: 'moon',
+        turns: [],
+      },
+    }, {
+      model: 'gpt-5.5',
+      modelProvider: 'openai',
+    }) as {
+      model: string
+      modelProvider: string
+      thread: {
+        model: string
+        modelProvider: string
+      }
+    }
+
+    expect(result.model).toBe('gpt-5.5')
+    expect(result.modelProvider).toBe('openai')
+    expect(result.thread.model).toBe('gpt-5.5')
+    expect(result.thread.modelProvider).toBe('openai')
   })
 })
 
