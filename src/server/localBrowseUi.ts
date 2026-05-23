@@ -253,18 +253,19 @@ export function normalizeLineRangeQuery(value: string): string {
   return firstLine === lastLine ? String(firstLine) : `${firstLine}-${lastLine}`
 }
 
-function buildLocalRouteQuery(newProjectName = '', lineRange = ''): string {
+function buildLocalRouteQuery(newProjectName = '', lineRange = '', options: { raw?: boolean } = {}): string {
   const normalizedName = normalizeNewProjectName(newProjectName)
   const normalizedLineRange = normalizeLineRangeQuery(lineRange)
   const params = new URLSearchParams()
   if (normalizedName) params.set('newProjectName', normalizedName)
   if (normalizedLineRange) params.set('line', normalizedLineRange)
+  if (options.raw === true) params.set('raw', '1')
   const queryString = params.toString()
   return queryString ? `?${queryString}` : ''
 }
 
-function toBrowseHref(pathValue: string, newProjectName = '', lineRange = ''): string {
-  const query = buildLocalRouteQuery(newProjectName, lineRange)
+function toBrowseHref(pathValue: string, newProjectName = '', lineRange = '', options: { raw?: boolean } = {}): string {
+  const query = buildLocalRouteQuery(newProjectName, lineRange, options)
   return `/codex-local-browse${encodeURI(pathValue)}${query}`
 }
 
@@ -286,17 +287,23 @@ async function getDirectoryItems(localPath: string): Promise<DirectoryItem[]> {
   const entries = await readdir(localPath, { withFileTypes: true })
   const withMeta = await Promise.all(entries.map(async (entry) => {
     const entryPath = join(localPath, entry.name)
-    const entryStat = await stat(entryPath)
-    const editable = !entry.isDirectory() && await isTextEditableFile(entryPath)
-    return {
-      name: entry.name,
-      path: entryPath,
-      isDirectory: entry.isDirectory(),
-      editable,
-      mtimeMs: entryStat.mtimeMs,
+    try {
+      const entryStat = await stat(entryPath)
+      const isDirectory = entryStat.isDirectory()
+      const editable = !isDirectory && await isTextEditableFile(entryPath)
+      return {
+        name: entry.name,
+        path: entryPath,
+        isDirectory,
+        editable,
+        mtimeMs: entryStat.mtimeMs,
+      }
+    } catch {
+      return null
     }
   }))
-  return withMeta.sort((a, b) => {
+  const visibleItems = withMeta.filter((item): item is DirectoryItem => item !== null)
+  return visibleItems.sort((a, b) => {
     if (b.mtimeMs !== a.mtimeMs) return b.mtimeMs - a.mtimeMs
     if (a.isDirectory && !b.isDirectory) return -1
     if (!a.isDirectory && b.isDirectory) return 1
@@ -386,7 +393,7 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
     .map((item) => {
       const suffix = item.isDirectory ? '/' : ''
       const rawAction = item.editable
-        ? ` <a class="icon-btn" aria-label="Raw ${escapeHtml(item.name)}" href="${escapeHtml(toBrowseHref(item.path, newProjectName))}" title="Open raw">${rawFileIconHtml()}</a>`
+        ? ` <a class="icon-btn" aria-label="Raw ${escapeHtml(item.name)}" href="${escapeHtml(toBrowseHref(item.path, newProjectName, '', { raw: true }))}" title="Open raw">${rawFileIconHtml()}</a>`
         : ''
       const deleteAction = ` <button class="icon-btn danger delete-entry-btn" type="button" aria-label="Delete ${escapeHtml(item.name)}" title="Delete ${escapeHtml(item.name)}" data-path="${escapeHtml(item.path)}" data-name="${escapeHtml(item.name)}" data-is-dir="${item.isDirectory ? '1' : '0'}">${deleteFileIconHtml()}</button>`
       return `<li class="file-row"><a class="file-link" href="${escapeHtml(toBrowseHref(item.path, newProjectName))}">${escapeHtml(item.name)}${suffix}</a><span class="row-actions">${rawAction}${deleteAction}</span></li>`

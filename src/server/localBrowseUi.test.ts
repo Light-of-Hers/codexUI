@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -166,8 +166,23 @@ describe('local browse markdown preview', () => {
     expect(html).toContain('class="icon-btn danger delete-entry-btn"')
     expect(html).toContain('data-name="note.txt"')
     expect(html).toContain('Delete note.txt')
+    expect(html).toContain(`aria-label="Raw note.txt" href="/codex-local-browse${encodeURI(filePath)}?raw=1"`)
+    expect(html).toContain(`class="file-link" href="/codex-local-browse${encodeURI(filePath)}"`)
     expect((html.match(/class="icon-btn danger delete-entry-btn"/gu) ?? []).length).toBe(2)
     expect(html).toContain('docs/')
+  })
+
+  it('skips broken symlinks in directory listings', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'codexui-local-browse-broken-link-'))
+    const filePath = join(tempDir, 'note.txt')
+    const brokenLinkPath = join(tempDir, 'missing-skill')
+    await writeFile(filePath, 'hello\n', 'utf8')
+    await symlink(join(tempDir, 'missing-target'), brokenLinkPath)
+
+    const html = await createDirectoryListingHtml(tempDir)
+
+    expect(html).toContain('note.txt')
+    expect(html).not.toContain('missing-skill')
   })
 
   it('links KaTeX assets in standalone markdown preview', () => {

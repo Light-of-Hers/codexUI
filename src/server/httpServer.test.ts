@@ -79,6 +79,21 @@ describe('local browse redirect behavior', () => {
     expect(response.status).toBe(302)
     expect(response.headers.get('location')).toBe(`/codex-local-edit${encodeURI(filePath)}?line=2-3`)
   })
+
+  it('serves editable files as raw content when requested', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'codexui-http-server-raw-'))
+    const filePath = join(tempDir, 'note.txt')
+    await writeFile(filePath, 'hello raw\n', 'utf8')
+
+    const baseUrl = await startServer()
+    const response = await fetch(`${baseUrl}/codex-local-browse${encodeURI(filePath)}?raw=1`, {
+      redirect: 'manual',
+    })
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('location')).toBeNull()
+    expect(await response.text()).toBe('hello raw\n')
+  })
 })
 
 describe('local browse file mutations', () => {

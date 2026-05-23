@@ -5124,6 +5124,38 @@ Plain Chinese prose containing `/`, such as `系统浅/深色主题`, is not spl
 
 ---
 
+### Local browse raw links and broken symlinks
+
+#### Feature/Change Name
+`/codex-local-browse/...` directory pages tolerate broken symlinks and expose a working raw-file action for editable files.
+
+#### Prerequisites/Setup
+1. Dev server running (`pnpm run dev`)
+2. A readable folder with a broken symlink is available, for example `/root/.codex/skills`
+3. A disposable folder with an editable text file is available
+4. Browser or device appearance can be switched between light and dark
+
+#### Steps
+1. Run `pnpm exec vitest run src/server/localBrowseUi.test.ts src/server/httpServer.test.ts`.
+2. Open `/codex-local-browse/root/.codex/skills` in light appearance.
+3. Confirm the directory page renders instead of returning `File not found`.
+4. Open the disposable folder through `/codex-local-browse/...`.
+5. Click the `Open raw` icon for the editable text file.
+6. Confirm the browser opens the raw file response instead of redirecting to `/codex-local-edit/...`.
+7. Switch to dark appearance and repeat steps 2-6.
+
+#### Expected Results
+- Broken symlinks are skipped during directory rendering and do not make the entire directory return 404.
+- Normal files, directories, and valid symlinks continue to appear in the listing.
+- The regular file name link still opens editable text files in the local editor.
+- The `Open raw` action opens `/codex-local-browse/...?...raw=1` and returns the raw file content.
+- Directory rows and action buttons remain readable in both light and dark themes.
+
+#### Rollback/Cleanup
+- Remove disposable files or folders created for the check.
+
+---
+
 ### Local markdown preview uses browse routes and system theme
 
 #### Feature/Change Name
