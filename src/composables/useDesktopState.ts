@@ -2789,7 +2789,6 @@ export function useDesktopState() {
       }
     } else {
       inProgressById.value = omitKey(inProgressById.value, threadId)
-      clearCompletedTurnLiveState(threadId)
       clearInterruptPersistenceGate(threadId)
     }
     applyThreadFlags()
@@ -4613,17 +4612,11 @@ export function useDesktopState() {
 
     if (isAgentContentEvent(notification)) {
       activeReasoningItemId = ''
-      clearLiveReasoningForThread(notificationThreadId)
     }
 
     if (notification.method === 'turn/completed') {
       activeReasoningItemId = ''
       shouldAutoScrollOnNextAgentEvent = false
-      clearLiveReasoningForThread(notificationThreadId)
-      if (liveCommandsByThreadId.value[notificationThreadId]) {
-        liveCommandsByThreadId.value = omitKey(liveCommandsByThreadId.value, notificationThreadId)
-      }
-      clearLiveToolCallsForThread(notificationThreadId)
       const completedThreadId = extractThreadIdFromNotification(notification)
       if (completedThreadId) {
         setThreadInProgress(completedThreadId, false)

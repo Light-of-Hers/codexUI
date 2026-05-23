@@ -15,7 +15,7 @@ import {
   writeSelectedProviderForContext,
 } from './useDesktopState'
 import type { UiProjectGroup } from '../types/codex'
-import type { WorkspaceRootsState } from '../api/codexGateway'
+import type { RpcNotification, WorkspaceRootsState } from '../api/codexGateway'
 
 const gatewayMocks = vi.hoisted(() => ({
   archiveThread: vi.fn(),
@@ -790,6 +790,103 @@ describe('session composer model state', () => {
     expect(state.readReasoningEffortForThread('thread-a')).toBe('high')
     expect(state.selectedReasoningEffort.value).toBe('high')
     expect(state.availableModelIds.value).toContain('ark-code-latest')
+  })
+})
+
+describe('live turn rendering', () => {
+  function createLiveStateHarness(): {
+    state: ReturnType<typeof useDesktopState>
+    notify: (notification: RpcNotification) => void
+  } {
+    installTestWindow()
+    let notify: ((notification: RpcNotification) => void) | null = null
+    gatewayMocks.subscribeCodexNotifications.mockImplementation((handler: (notification: RpcNotification) => void) => {
+      notify = handler
+      return vi.fn()
+    })
+
+    const state = useDesktopState()
+    state.primeSelectedThread('thread-a')
+    state.startPolling()
+
+    if (!notify) {
+      throw new Error('Notification subscription was not installed')
+    }
+
+    return { state, notify }
+  }
+
+  function notification(method: string, params: unknown): RpcNotification {
+    return {
+      method,
+      params,
+      atIso: '2026-05-23T00:00:00.000Z',
+    }
+  }
+
+  it('keeps live command output visible after turn completion until persisted messages refresh', () => {
+    const { state, notify } = createLiveStateHarness()
+
+    notify(notification('turn/started', {
+      threadId: 'thread-a',
+      turn: { id: 'turn-1', threadId: 'thread-a', startedAt: '2026-05-23T00:00:00.000Z' },
+    }))
+    notify(notification('item/started', {
+      threadId: 'thread-a',
+      turnId: 'turn-1',
+      item: { id: 'cmd-1', type: 'commandExecution', command: 'pnpm test', cwd: '/tmp/project' },
+    }))
+    notify(notification('item/commandExecution/outputDelta', {
+      threadId: 'thread-a',
+      turnId: 'turn-1',
+      itemId: 'cmd-1',
+      delta: 'running\n',
+    }))
+
+    expect(state.messages.value).toHaveLength(1)
+    expect(state.messages.value[0].messageType).toBe('commandExecution')
+    expect(state.messages.value[0].commandExecution?.aggregatedOutput).toBe('running\n')
+
+    notify(notification('turn/completed', {
+      threadId: 'thread-a',
+      turn: { id: 'turn-1', threadId: 'thread-a', status: 'completed', completedAt: '2026-05-23T00:00:01.000Z' },
+    }))
+
+    const commandMessages = state.messages.value.filter((message) => message.messageType === 'commandExecution')
+    expect(commandMessages).toHaveLength(1)
+    expect(commandMessages[0].commandExecution?.aggregatedOutput).toBe('running\n')
+  })
+
+  it('keeps accumulated live reasoning when assistant text starts streaming', () => {
+    const { state, notify } = createLiveStateHarness()
+
+    notify(notification('turn/started', {
+      threadId: 'thread-a',
+      turn: { id: 'turn-1', threadId: 'thread-a', startedAt: '2026-05-23T00:00:00.000Z' },
+    }))
+    notify(notification('item/started', {
+      threadId: 'thread-a',
+      turnId: 'turn-1',
+      item: { id: 'reason-1', type: 'reasoning' },
+    }))
+    notify(notification('item/reasoning/textDelta', {
+      threadId: 'thread-a',
+      turnId: 'turn-1',
+      itemId: 'reason-1',
+      delta: 'checking context',
+    }))
+
+    expect(state.selectedLiveOverlay.value?.reasoningText).toBe('checking context')
+
+    notify(notification('item/agentMessage/delta', {
+      threadId: 'thread-a',
+      turnId: 'turn-1',
+      itemId: 'agent-1',
+      delta: 'I found the issue.',
+    }))
+
+    expect(state.selectedLiveOverlay.value?.reasoningText).toBe('checking context')
+    expect(state.messages.value.map((message) => message.text)).toEqual(['I found the issue.'])
   })
 })
 

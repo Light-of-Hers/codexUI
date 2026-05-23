@@ -46,6 +46,28 @@ This file tracks manual regression and feature verification steps.
 #### Rollback/Cleanup
 - No cleanup is required.
 
+### Feature: Live turn output does not flicker away before persistence
+
+#### Prerequisites
+- App server is running from this repository.
+- A thread is available where Codex can stream reasoning and run at least one command.
+- Browser devtools Network panel is available.
+
+#### Steps
+1. Open the thread and send a prompt that causes a multi-step response with reasoning and a command.
+2. While the turn is still running, watch the live reasoning, assistant text, and command card.
+3. When assistant text starts after reasoning, confirm the previous live reasoning text remains visible during the active turn.
+4. When the turn completes, watch the command card until the follow-up `thread/read` refresh finishes.
+5. Repeat once in dark theme.
+
+#### Expected Results
+- Live reasoning is not cleared merely because assistant text starts streaming.
+- Live command/tool cards remain visible after `turn/completed` until the persisted thread messages replace them.
+- The conversation does not briefly collapse to only the newest thinking/status overlay before the final persisted output appears.
+
+#### Rollback/Cleanup
+- Stop any disposable test turn if it is still running.
+
 ### Feature: GitHub-style local editor syntax highlighting
 
 #### Prerequisites
