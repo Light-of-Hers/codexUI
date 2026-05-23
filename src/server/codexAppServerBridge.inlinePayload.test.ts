@@ -981,6 +981,114 @@ describe('backend queue scheduling', () => {
     processor.dispose()
   })
 
+  it('auto-continues interrupted turns with persisted Moon Bridge model state', async () => {
+    vi.useFakeTimers()
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-auto-continue-model-'))
+    const sessionPath = join(tempDir, 'session.jsonl')
+    await writeFile(sessionPath, [
+      JSON.stringify({
+        type: 'session_meta',
+        payload: {
+          model_provider: 'moon',
+        },
+      }),
+      JSON.stringify({
+        type: 'turn_context',
+        payload: {
+          turn_id: 'turn-1',
+          model: 'ark-code-latest',
+          effort: 'xhigh',
+        },
+      }),
+    ].join('\n'), 'utf8')
+    vi.stubEnv('CODEX_HOME', tempDir)
+    const listeners: Array<(value: { method: string; params: unknown }) => void> = []
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = []
+    const processor = new BackendQueueProcessor({
+      onNotification(listener: (value: { method: string; params: unknown }) => void) {
+        listeners.push(listener)
+        return () => undefined
+      },
+      async rpc(method: string, params: Record<string, unknown>): Promise<unknown> {
+        calls.push({ method, params })
+        if (method === 'thread/read') {
+          return {
+            model: 'gpt-5.5',
+            modelProvider: 'openai',
+            reasoningEffort: 'none',
+            thread: {
+              id: 'thread-1',
+              path: sessionPath,
+              status: { type: 'idle' },
+              turns: [{ id: 'turn-1', status: 'interrupted' }],
+            },
+          }
+        }
+        if (method === 'thread/resume') {
+          return {
+            model: 'gpt-5.5',
+            modelProvider: 'openai',
+            reasoningEffort: 'none',
+            thread: {
+              id: 'thread-1',
+              path: sessionPath,
+              turns: [],
+            },
+          }
+        }
+        return {}
+      },
+    } as never)
+
+    try {
+      listeners[0]?.({
+        method: 'turn/completed',
+        params: {
+          threadId: 'thread-1',
+          turn: { id: 'turn-1', status: 'interrupted' },
+        },
+      })
+
+      await vi.advanceTimersByTimeAsync(250)
+      await vi.waitFor(() => {
+        expect(calls).toHaveLength(3)
+      })
+
+      expect(calls).toEqual([
+        { method: 'thread/read', params: { threadId: 'thread-1', includeTurns: true } },
+        {
+          method: 'thread/resume',
+          params: {
+            threadId: 'thread-1',
+            persistExtendedHistory: true,
+            model: 'ark-code-latest',
+            modelProvider: 'moon',
+          },
+        },
+        {
+          method: 'turn/start',
+          params: {
+            threadId: 'thread-1',
+            input: [{ type: 'text', text: 'Please continue.' }],
+            model: 'ark-code-latest',
+            effort: 'xhigh',
+            collaborationMode: {
+              mode: 'default',
+              settings: {
+                model: 'ark-code-latest',
+                reasoning_effort: 'xhigh',
+                developer_instructions: null,
+              },
+            },
+          },
+        },
+      ])
+    } finally {
+      processor.dispose()
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
   it('does not auto-continue when a stop arrives before the delayed interrupted-turn check', async () => {
     vi.useFakeTimers()
     vi.stubEnv('CODEX_HOME', `/tmp/codexui-auto-continue-stop-${String(Date.now())}`)

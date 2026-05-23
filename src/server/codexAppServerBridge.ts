@@ -4356,6 +4356,9 @@ type StoredQueuedMessage = {
   skills: Array<{ name: string; path: string }>
   fileAttachments: Array<{ label: string; path: string; fsPath: string }>
   collaborationMode: 'default' | 'plan'
+  model: string
+  modelProvider: string
+  reasoningEffort: ReasoningEffort | ''
 }
 
 type ThreadQueueState = Record<string, StoredQueuedMessage[]>
@@ -4412,6 +4415,9 @@ function normalizeStoredQueuedMessage(value: unknown): StoredQueuedMessage | nul
     skills: normalizeNamedPathItems(record.skills),
     fileAttachments: normalizeFileAttachments(record.fileAttachments),
     collaborationMode: record.collaborationMode === 'plan' ? 'plan' : 'default',
+    model: readNonEmptyString(record.model),
+    modelProvider: readNonEmptyString(record.modelProvider) || readNonEmptyString(record.model_provider),
+    reasoningEffort: normalizeReasoningEffort(record.reasoningEffort ?? record.reasoning_effort),
   }
 }
 
@@ -4551,6 +4557,24 @@ function normalizeCollaborationModeReasoningEffort(value: ReasoningEffort | '' |
   return value && value.length > 0 ? value : null
 }
 
+function readThreadResultModelState(result: unknown): SessionRecoveredModelState {
+  const record = asRecord(result)
+  const thread = asRecord(record?.thread)
+  return {
+    model: (readNonEmptyString(record?.model) || readNonEmptyString(thread?.model)).trim(),
+    modelProvider: (readNonEmptyString(record?.modelProvider)
+      || readNonEmptyString(record?.model_provider)
+      || readNonEmptyString(thread?.modelProvider)
+      || readNonEmptyString(thread?.model_provider)).trim(),
+    reasoningEffort: normalizeReasoningEffort(
+      record?.reasoningEffort
+      ?? record?.reasoning_effort
+      ?? thread?.reasoningEffort
+      ?? thread?.reasoning_effort,
+    ),
+  }
+}
+
 function extractLocalImagePathFromUrl(value: string): string | null {
   if (!value) return null
   try {
@@ -4593,6 +4617,9 @@ ${escapeHeartbeatXmlText(automation.prompt)}
     skills: [],
     fileAttachments: [],
     collaborationMode: 'default',
+    model: '',
+    modelProvider: '',
+    reasoningEffort: '',
   }
 }
 
@@ -6063,7 +6090,8 @@ export class BackendQueueProcessor {
       return false
     }
 
-    const snapshot = shouldAutoContinueInterruptedThreadFromThreadRead(response, this.intentionalInterruptTurnIds)
+    const enrichedReadResponse = await mergeSessionModelStateIntoThreadResult(response)
+    const snapshot = shouldAutoContinueInterruptedThreadFromThreadRead(enrichedReadResponse, this.intentionalInterruptTurnIds)
     if (!snapshot) return false
     if (normalizedCompletedTurnId && snapshot.turnId !== normalizedCompletedTurnId && source === 'turn/completed') {
       return false
@@ -6080,10 +6108,20 @@ export class BackendQueueProcessor {
         turnId: snapshot.turnId,
         source,
       }).catch(() => {})
-      const resumeResult = asRecord(await this.appServer.rpc('thread/resume', {
+      const readModelState = readThreadResultModelState(enrichedReadResponse)
+      const resumeParams: Record<string, unknown> = {
         threadId: snapshot.threadId,
         persistExtendedHistory: true,
-      }))
+      }
+      if (readModelState.model) {
+        resumeParams.model = readModelState.model
+      }
+      if (readModelState.modelProvider) {
+        resumeParams.modelProvider = readModelState.modelProvider
+      }
+      const resumeResult = await this.appServer.rpc('thread/resume', resumeParams)
+      const enrichedResumeResult = await mergeSessionModelStateIntoThreadResult(resumeResult)
+      const resumedModelState = readThreadResultModelState(enrichedResumeResult)
       const turnStartParams: Record<string, unknown> = {
         threadId: snapshot.threadId,
         input: [{
@@ -6091,9 +6129,21 @@ export class BackendQueueProcessor {
           text: 'Please continue.',
         }],
       }
-      const resumedModel = readNonEmptyString(resumeResult?.model).trim()
+      const resumedModel = readModelState.model || resumedModelState.model
+      const resumedReasoningEffort = readModelState.reasoningEffort || resumedModelState.reasoningEffort
       if (resumedModel) {
         turnStartParams.model = resumedModel
+      }
+      if (resumedReasoningEffort) {
+        turnStartParams.effort = resumedReasoningEffort
+        turnStartParams.collaborationMode = {
+          mode: 'default',
+          settings: {
+            model: resumedModel || (await this.resolveCollaborationModeSettings('default')).model,
+            reasoning_effort: normalizeCollaborationModeReasoningEffort(resumedReasoningEffort),
+            developer_instructions: null,
+          },
+        }
       }
       await this.appServer.rpc('turn/start', turnStartParams)
       this.autoContinuedInterruptedTurnIds.add(snapshot.turnId)
@@ -6163,7 +6213,19 @@ export class BackendQueueProcessor {
     })
   }
 
-  private async resolveCollaborationModeSettings(mode: CollaborationModeKind): Promise<ResolvedCollaborationModeSettings> {
+  private async resolveCollaborationModeSettings(
+    mode: CollaborationModeKind,
+    model?: string,
+    reasoningEffort?: ReasoningEffort | '',
+  ): Promise<ResolvedCollaborationModeSettings> {
+    const explicitModel = readNonEmptyString(model)
+    if (explicitModel) {
+      return {
+        model: explicitModel,
+        reasoningEffort: normalizeCollaborationModeReasoningEffort(reasoningEffort ?? null),
+      }
+    }
+
     let currentConfig: Record<string, unknown> | null = null
     try {
       const configPayload = asRecord(await this.appServer.rpc('config/read', {}))
@@ -6245,7 +6307,19 @@ export class BackendQueueProcessor {
     }
 
     try {
-      const settings = await this.resolveCollaborationModeSettings(turn.message.collaborationMode)
+      const queuedModel = readNonEmptyString(turn.message.model)
+      const queuedReasoningEffort = normalizeReasoningEffort(turn.message.reasoningEffort)
+      const settings = await this.resolveCollaborationModeSettings(
+        turn.message.collaborationMode,
+        queuedModel,
+        queuedReasoningEffort,
+      )
+      if (queuedModel) {
+        params.model = queuedModel
+      }
+      if (queuedReasoningEffort) {
+        params.effort = queuedReasoningEffort
+      }
       params.collaborationMode = {
         mode: turn.message.collaborationMode,
         settings: {
@@ -6262,7 +6336,19 @@ export class BackendQueueProcessor {
   }
 
   private async startQueuedTurn(turn: BackendQueuedTurn): Promise<void> {
-    await this.appServer.rpc('thread/resume', { threadId: turn.threadId, persistExtendedHistory: true })
+    const resumeParams: Record<string, unknown> = {
+      threadId: turn.threadId,
+      persistExtendedHistory: true,
+    }
+    const queuedModel = readNonEmptyString(turn.message.model)
+    const queuedModelProvider = readNonEmptyString(turn.message.modelProvider)
+    if (queuedModel) {
+      resumeParams.model = queuedModel
+    }
+    if (queuedModelProvider) {
+      resumeParams.modelProvider = queuedModelProvider
+    }
+    await this.appServer.rpc('thread/resume', resumeParams)
     await this.appServer.rpc('turn/start', await this.buildQueuedTurnParams(turn))
   }
 }

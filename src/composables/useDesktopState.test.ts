@@ -705,6 +705,66 @@ describe('provider model selection', () => {
       '__new-thread-provider__::codex': 'gpt-5.5',
     })
   })
+
+  it('keeps an explicit Moon Bridge provider when its model catalog is incomplete', async () => {
+    installTestWindow({
+      'codex-web-local.provider-by-context.v1': JSON.stringify({
+        'thread-a': 'moon',
+        '__new-thread-provider__': 'moon',
+      }),
+      'codex-web-local.selected-model-by-context.v1': JSON.stringify({
+        'thread-a': 'ark-code-latest',
+        '__new-thread-provider__::moon': 'ark-code-latest',
+      }),
+    })
+    gatewayMocks.getMoonBridgeModelIds.mockResolvedValue([])
+
+    const state = useDesktopState()
+
+    state.primeSelectedThread('thread-a')
+    state.setSelectedModelIdForThread('thread-a', 'ark-code-latest')
+
+    expect(state.selectedProvider.value).toBe('moon')
+    expect(state.readModelIdForThread('thread-a')).toBe('ark-code-latest')
+
+    state.primeSelectedThread('')
+    state.setSelectedModelIdForThread('__new-thread__', 'ark-code-latest')
+
+    expect(state.selectedProvider.value).toBe('moon')
+    expect(state.readModelIdForThread('')).toBe('ark-code-latest')
+  })
+
+  it('keeps a Moon Bridge new-thread model when provider refresh only reports global config', async () => {
+    installTestWindow({
+      'codex-web-local.provider-by-context.v1': JSON.stringify({
+        '__new-thread-provider__': 'moon',
+      }),
+      'codex-web-local.selected-model-by-context.v1': JSON.stringify({
+        '__new-thread-provider__::moon': 'ark-code-latest',
+      }),
+    })
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({ groups: [], nextCursor: null })
+    gatewayMocks.getAvailableCollaborationModes.mockResolvedValue([{ value: 'default', label: 'Default' }])
+    gatewayMocks.getSkillsList.mockResolvedValue([])
+    gatewayMocks.getAccountRateLimits.mockResolvedValue(null)
+    gatewayMocks.getCurrentModelConfig.mockResolvedValue({
+      model: 'gpt-5.5',
+      providerId: 'moon',
+      reasoningEffort: 'none',
+      speedMode: 'standard',
+    })
+    gatewayMocks.getAvailableModelIds.mockResolvedValue(['gpt-5.5'])
+
+    const state = useDesktopState()
+    state.primeSelectedThread('')
+
+    await state.refreshAncillaryState({ providerChanged: true, includeProviderModels: true })
+
+    expect(state.selectedProvider.value).toBe('moon')
+    expect(state.selectedModelId.value).toBe('ark-code-latest')
+    expect(state.readModelIdForThread('')).toBe('ark-code-latest')
+    expect(state.availableModelIds.value).toContain('ark-code-latest')
+  })
 })
 
 describe('session composer model state', () => {

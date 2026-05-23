@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { forkThread, listDirectoryComposioConnectors, resumeThread, searchComposerFiles, searchFileLinkPaths, startThread, startThreadTurn, steerThreadTurn } from './codexGateway'
+import { forkThread, getThreadQueueState, listDirectoryComposioConnectors, resumeThread, searchComposerFiles, searchFileLinkPaths, setThreadQueueState, startThread, startThreadTurn, steerThreadTurn } from './codexGateway'
 
 function mockRpcFetch(): { requests: Array<{ method: string, params: Record<string, unknown> }> } {
   const requests: Array<{ method: string, params: Record<string, unknown> }> = []
@@ -205,6 +205,67 @@ describe('thread history persistence payloads', () => {
     expect(resumedThread.model).toBe('ark-code-latest')
     expect(resumedThread.modelProvider).toBe('moon')
     expect(resumedThread.reasoningEffort).toBe('xhigh')
+  })
+})
+
+describe('thread queue state', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('preserves queued model state through the queue state API', async () => {
+    const requests: Array<{ method: string, body: unknown }> = []
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const method = init?.method ?? 'GET'
+      const body = typeof init?.body === 'string' ? JSON.parse(init.body) as unknown : undefined
+      requests.push({ method, body })
+
+      return new Response(JSON.stringify({
+        data: {
+          'thread-1': [{
+            id: 'q-1',
+            text: 'follow up',
+            imageUrls: [],
+            skills: [],
+            fileAttachments: [],
+            collaborationMode: 'default',
+            model: 'ark-code-latest',
+            model_provider: 'moon',
+            reasoning_effort: 'xhigh',
+          }],
+        },
+      }), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      })
+    }))
+
+    const state = await getThreadQueueState()
+    await setThreadQueueState(state)
+
+    expect(state['thread-1']?.[0]).toMatchObject({
+      model: 'ark-code-latest',
+      modelProvider: 'moon',
+      reasoningEffort: 'xhigh',
+    })
+    expect(requests[1]).toEqual({
+      method: 'PUT',
+      body: {
+        'thread-1': [{
+          id: 'q-1',
+          text: 'follow up',
+          imageUrls: [],
+          skills: [],
+          fileAttachments: [],
+          collaborationMode: 'default',
+          model: 'ark-code-latest',
+          modelProvider: 'moon',
+          reasoningEffort: 'xhigh',
+        }],
+      },
+    })
   })
 })
 

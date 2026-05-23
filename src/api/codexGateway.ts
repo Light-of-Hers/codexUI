@@ -295,6 +295,9 @@ export type StoredQueuedMessage = {
   skills: Array<{ name: string; path: string }>
   fileAttachments: Array<{ label: string; path: string; fsPath: string }>
   collaborationMode: CollaborationModeKind
+  model?: string
+  modelProvider?: string
+  reasoningEffort?: ReasoningEffort | ''
 }
 
 export type ThreadQueueState = Record<string, StoredQueuedMessage[]>
@@ -2701,6 +2704,13 @@ function normalizeStoredQueuedMessage(value: unknown): StoredQueuedMessage | nul
     skills,
     fileAttachments,
     collaborationMode: record.collaborationMode === 'plan' ? 'plan' : 'default',
+    model: typeof record.model === 'string' ? record.model.trim() : '',
+    modelProvider: typeof record.modelProvider === 'string'
+      ? record.modelProvider.trim()
+      : typeof record.model_provider === 'string'
+        ? record.model_provider.trim()
+        : '',
+    reasoningEffort: normalizeReasoningEffort(record.reasoningEffort ?? record.reasoning_effort),
   }
 }
 
