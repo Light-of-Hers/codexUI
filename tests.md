@@ -5762,6 +5762,31 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Rollback/Cleanup
 - Delete disposable TestChat messages and fixture files created for the check.
 
+### Feature: Absolute file-link direct navigation
+
+#### Prerequisites
+- App server is running from this repository.
+- A TestChat workspace is available.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Run `pnpm exec vitest run src/components/content/markdownRenderer.test.ts`.
+2. Open a TestChat thread in light theme.
+3. Send or locate messages containing `[absolute](/root/work/TestChat/context/src/utils/fileLinkResolver.ts:1-5)` and `` `~/work/TestChat/context/src/utils/fileLinkResolver.ts:1-5` ``.
+4. Click each rendered file link.
+5. Confirm the path picker does not open and the browser navigates directly to the local browse/editor route for that absolute path, preserving `line=1-5`.
+6. Send or locate a relative link such as `[relative](src/utils/fileLinkResolver.ts:1-5)`.
+7. Click the relative link and confirm the path picker still opens.
+8. Repeat steps 3-7 in dark theme.
+
+#### Expected Results
+- File links whose source path starts with `/`, `~/`, `file://`, or a Windows drive prefix navigate directly.
+- Relative file links still open the path picker so the user can choose the intended matching file.
+- Direct navigation and picker surfaces remain readable in both light and dark themes.
+
+#### Rollback/Cleanup
+- Delete disposable TestChat messages created for the check.
+
 ### Feature: Session switch restores persisted model state
 
 #### Prerequisites

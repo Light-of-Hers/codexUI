@@ -3168,6 +3168,12 @@ function hrefToLocalBrowsePath(href: string): { path: string; line: number | nul
   }
 }
 
+function isAbsoluteFileLinkSourcePath(pathValue: string): boolean {
+  const normalized = normalizePathSeparators(normalizeFileUrlToPath(pathValue.trim()))
+  if (!normalized) return false
+  return normalized.startsWith('/') || normalized.startsWith('~/') || /^[A-Za-z]:\//u.test(normalized)
+}
+
 function sourcePathFromFileLinkAnchor(anchor: HTMLAnchorElement): { path: string; line: number | null; endLine: number | null } | null {
   const title = (anchor.getAttribute('title') ?? '').trim()
   if (title) {
@@ -3194,6 +3200,11 @@ function sourcePathFromFileLinkAnchor(anchor: HTMLAnchorElement): { path: string
   }
 
   return hrefToLocalBrowsePath(anchor.getAttribute('href') ?? '')
+}
+
+function shouldOpenFileLinkDirectly(anchor: HTMLAnchorElement): boolean {
+  const source = sourcePathFromFileLinkAnchor(anchor)
+  return source ? isAbsoluteFileLinkSourcePath(source.path) : false
 }
 
 function normalizeFileLinkPickerQuery(value: string): string {
@@ -3362,6 +3373,10 @@ function onConversationClick(event: MouseEvent): void {
   if (fileLinkAnchor instanceof HTMLAnchorElement) {
     const href = (fileLinkAnchor.getAttribute('href') ?? '').trim()
     if (href && href !== '#' && hrefToLocalBrowsePath(href)) {
+      if (shouldOpenFileLinkDirectly(fileLinkAnchor)) {
+        closeFileLinkPicker()
+        return
+      }
       event.preventDefault()
       event.stopPropagation()
       openFileLinkPicker(event, fileLinkAnchor)
