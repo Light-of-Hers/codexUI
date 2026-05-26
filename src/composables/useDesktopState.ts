@@ -5761,6 +5761,61 @@ export function useDesktopState() {
     return activeTurnId
   }
 
+  async function refreshActiveTurnStateForThread(threadId: string): Promise<{ activeTurnId: string; inProgress: boolean; refreshed: boolean }> {
+    try {
+      const { activeTurnId, inProgress } = await getThreadDetail(threadId)
+      if (activeTurnId) {
+        activeTurnIdByThreadId.value = {
+          ...activeTurnIdByThreadId.value,
+          [threadId]: activeTurnId,
+        }
+        maybeUnblockInterruptForActiveTurn(threadId, activeTurnId)
+      } else if (activeTurnIdByThreadId.value[threadId]) {
+        activeTurnIdByThreadId.value = omitKey(activeTurnIdByThreadId.value, threadId)
+      }
+      setThreadInProgress(threadId, inProgress)
+      return { activeTurnId, inProgress, refreshed: true }
+    } catch {
+      return {
+        activeTurnId: activeTurnIdByThreadId.value[threadId] ?? '',
+        inProgress: inProgressById.value[threadId] === true,
+        refreshed: false,
+      }
+    }
+  }
+
+  function readConflictingActiveTurnId(errorMessage: string, attemptedTurnId: string): string {
+    const match = errorMessage.match(/expected active turn id\s+([0-9a-z-]+)\s+but found\s+([0-9a-z-]+)/i)
+    if (!match) return ''
+    const first = match[1]?.trim() ?? ''
+    const second = match[2]?.trim() ?? ''
+    if (first && first !== attemptedTurnId) return first
+    if (second && second !== attemptedTurnId) return second
+    return ''
+  }
+
+  async function interruptActiveTurnWithRefresh(threadId: string, turnId: string): Promise<void> {
+    try {
+      await interruptThreadTurn(threadId, turnId)
+      return
+    } catch (unknownError) {
+      const errorMessage = unknownError instanceof Error ? unknownError.message : ''
+      const refreshed = await refreshActiveTurnStateForThread(threadId)
+      const retryTurnId = refreshed.activeTurnId && refreshed.activeTurnId !== turnId
+        ? refreshed.activeTurnId
+        : readConflictingActiveTurnId(errorMessage, turnId)
+      if (retryTurnId && retryTurnId !== turnId) {
+        activeTurnIdByThreadId.value = {
+          ...activeTurnIdByThreadId.value,
+          [threadId]: retryTurnId,
+        }
+        await interruptThreadTurn(threadId, retryTurnId)
+        return
+      }
+      throw unknownError
+    }
+  }
+
   async function steerActiveTurnForThread(
     threadId: string,
     nextText: string,
@@ -5968,16 +6023,12 @@ export function useDesktopState() {
     if (!threadId) return
     if (inProgressById.value[threadId] !== true) { console.warn('[DEBUG:interruptSelectedThreadTurn] skipped — thread not in progress'); return }
     if (interruptBlockedUntilPersistedByThreadId.value[threadId] === true) { console.warn('[DEBUG:interruptSelectedThreadTurn] skipped — interrupt blocked (persistence gate)'); return }
-    let turnId = activeTurnIdByThreadId.value[threadId]
-    if (!turnId) {
-      const { activeTurnId } = await getThreadDetail(threadId)
-      turnId = activeTurnId
-      if (turnId) {
-        activeTurnIdByThreadId.value = {
-          ...activeTurnIdByThreadId.value,
-          [threadId]: turnId,
-        }
-      }
+    const activeTurnState = await refreshActiveTurnStateForThread(threadId)
+    const turnId = activeTurnState.activeTurnId || (!activeTurnState.refreshed ? activeTurnIdByThreadId.value[threadId] : '')
+    if (!turnId && activeTurnState.refreshed && !activeTurnState.inProgress) {
+      setTurnActivityForThread(threadId, null)
+      setTurnErrorForThread(threadId, null)
+      return
     }
     if (!turnId) {
       throw new Error('Could not determine active turn id for interrupt')
@@ -5986,7 +6037,7 @@ export function useDesktopState() {
     isInterruptingTurn.value = true
     error.value = ''
     try {
-      await interruptThreadTurn(threadId, turnId)
+      await interruptActiveTurnWithRefresh(threadId, turnId)
       setThreadInProgress(threadId, false)
       setTurnActivityForThread(threadId, null)
       setTurnErrorForThread(threadId, null)

@@ -946,6 +946,84 @@ describe('session composer model state', () => {
   })
 })
 
+describe('turn interruption', () => {
+  function notification(method: string, params: unknown): RpcNotification {
+    return {
+      method,
+      params,
+      atIso: '2026-05-23T00:00:00.000Z',
+    }
+  }
+
+  function threadDetail(activeTurnId: string, inProgress = true) {
+    return {
+      messages: [],
+      inProgress,
+      activeTurnId,
+      hasMoreOlder: false,
+      turnIndexByTurnId: {},
+    }
+  }
+
+  function createInterruptHarness(): {
+    state: ReturnType<typeof useDesktopState>
+  } {
+    installTestWindow()
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true })) as never)
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({ groups: [], nextCursor: null })
+    const notificationHandlers: Array<(notification: RpcNotification) => void> = []
+    gatewayMocks.subscribeCodexNotifications.mockImplementation((handler: (notification: RpcNotification) => void) => {
+      notificationHandlers.push(handler)
+      return vi.fn()
+    })
+
+    const state = useDesktopState()
+    state.primeSelectedThread('thread-a')
+    state.startPolling()
+
+    const emitNotification = notificationHandlers[0]
+    if (!emitNotification) {
+      throw new Error('Notification subscription was not installed')
+    }
+
+    emitNotification(notification('turn/started', {
+      threadId: 'thread-a',
+      turn: { id: 'turn-stale', threadId: 'thread-a', startedAt: '2026-05-23T00:00:00.000Z' },
+    }))
+
+    return { state }
+  }
+
+  it('refreshes the active turn id before interrupting', async () => {
+    const { state } = createInterruptHarness()
+    gatewayMocks.getThreadDetail.mockResolvedValueOnce(threadDetail('turn-current'))
+    gatewayMocks.interruptThreadTurn.mockResolvedValueOnce(undefined)
+
+    await state.interruptSelectedThreadTurn()
+
+    expect(gatewayMocks.getThreadDetail).toHaveBeenCalledWith('thread-a')
+    expect(gatewayMocks.interruptThreadTurn).toHaveBeenCalledTimes(1)
+    expect(gatewayMocks.interruptThreadTurn).toHaveBeenCalledWith('thread-a', 'turn-current')
+  })
+
+  it('retries interrupt once when the active turn changes during stop', async () => {
+    const { state } = createInterruptHarness()
+    gatewayMocks.getThreadDetail
+      .mockResolvedValueOnce(threadDetail('turn-stale'))
+      .mockResolvedValueOnce(threadDetail('turn-current'))
+    gatewayMocks.interruptThreadTurn
+      .mockRejectedValueOnce(new Error('RPC turn/interrupt failed with HTTP 502: expected active turn id turn-current but found turn-stale'))
+      .mockResolvedValueOnce(undefined)
+
+    await state.interruptSelectedThreadTurn()
+
+    expect(gatewayMocks.interruptThreadTurn).toHaveBeenCalledTimes(2)
+    expect(gatewayMocks.interruptThreadTurn).toHaveBeenNthCalledWith(1, 'thread-a', 'turn-stale')
+    expect(gatewayMocks.interruptThreadTurn).toHaveBeenNthCalledWith(2, 'thread-a', 'turn-current')
+    expect(state.error.value).toBe('')
+  })
+})
+
 describe('live turn rendering', () => {
   function createLiveStateHarness(): {
     state: ReturnType<typeof useDesktopState>

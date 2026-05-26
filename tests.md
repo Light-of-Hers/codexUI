@@ -5762,6 +5762,35 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Rollback/Cleanup
 - Restore the preferred provider, model, and reasoning effort after manual verification.
 
+### Feature: Stop refreshes active turn id before interrupt
+
+#### Prerequisites
+- App server is running from this repository.
+- A thread can start a long-running turn.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Run `pnpm exec vitest run src/composables/useDesktopState.test.ts`.
+2. Run `pnpm exec vue-tsc --noEmit`.
+3. Open a thread in light theme and start a long-running turn.
+4. Before the turn finishes, click the composer stop button.
+5. Start another long-running turn in the same thread and click stop again quickly, especially after a notification or refresh delay.
+6. Repeat steps 3-5 in dark theme.
+
+#### Expected Results
+- Stop calls `turn/interrupt` with the currently active turn id from `thread/read`, not a stale cached id.
+- If the active turn changes between the refresh and interrupt RPC, stop refreshes once and retries with the newer active turn id.
+- No error appears like `expected active turn id ... but found ...`.
+- The thread exits in-progress state and the stop control returns to idle in both light and dark themes.
+
+#### Performance Audit
+- Stop adds one targeted `thread/read` only when the user clicks the stop button.
+- No polling interval, startup request, or background thread-list fanout is changed.
+- Retry is bounded to one additional refresh and one additional interrupt attempt.
+
+#### Rollback/Cleanup
+- No persistent cleanup is required beyond closing any disposable test thread.
+
 ### Feature: Cursor CLI shell payload recovery
 
 #### Prerequisites
