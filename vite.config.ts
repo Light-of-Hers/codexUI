@@ -1,7 +1,7 @@
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 import { createCodexBridgeMiddleware } from "./src/server/codexAppServerBridge";
-import { LocalBrowseMutationError, createDirectoryListingHtml, createLocalBrowseFile, createMarkdownPreviewHtml, createTextEditorHtml, decodeBrowsePath, deleteLocalBrowseFile, getLocalDirectoryListing, isTextEditableFile, normalizeLocalPath, toEditHref } from "./src/server/localBrowseUi";
+import { LocalBrowseMutationError, createDirectoryListingHtml, createLocalBrowseEntry, createMarkdownPreviewHtml, createTextEditorHtml, decodeBrowsePath, deleteLocalBrowseEntry, getLocalDirectoryListing, isTextEditableFile, normalizeLocalPath, toEditHref } from "./src/server/localBrowseUi";
 import { getKatexAssetContentType, KATEX_ASSET_ROUTE, resolveKatexAssetPath } from "./src/server/katexAssets";
 import tailwindcss from "@tailwindcss/vite";
 import { spawnSync } from "node:child_process";
@@ -331,22 +331,23 @@ export default defineConfig({
             }
             const record = payload && typeof payload === "object" ? payload as Record<string, unknown> : null;
             const name = typeof record?.name === "string" ? record.name : "";
+            const type = record?.type === "directory" ? "directory" : "file";
             try {
-              const filePath = await createLocalBrowseFile(localPath, name);
-              sendJson(res, 201, { data: { path: filePath } });
+              const createdPath = await createLocalBrowseEntry(localPath, name, type);
+              sendJson(res, 201, { data: { path: createdPath } });
             } catch (error) {
               const mutationError = error instanceof LocalBrowseMutationError ? error : null;
-              sendJson(res, mutationError?.statusCode ?? 500, { error: mutationError?.message ?? "Create file failed." });
+              sendJson(res, mutationError?.statusCode ?? 500, { error: mutationError?.message ?? "Create failed." });
             }
             return;
           }
 
           try {
-            await deleteLocalBrowseFile(localPath);
+            await deleteLocalBrowseEntry(localPath);
             sendJson(res, 200, { ok: true });
           } catch (error) {
             const mutationError = error instanceof LocalBrowseMutationError ? error : null;
-            sendJson(res, mutationError?.statusCode ?? 500, { error: mutationError?.message ?? "Delete file failed." });
+            sendJson(res, mutationError?.statusCode ?? 500, { error: mutationError?.message ?? "Delete failed." });
           }
         });
         server.middlewares.use(async (req, res, next) => {

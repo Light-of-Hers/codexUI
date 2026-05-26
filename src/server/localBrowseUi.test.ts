@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { createDirectoryListingHtml, createEditorReferenceText, createMarkdownPreviewHtml, createTextEditorHtml, isMarkdownPath } from './localBrowseUi'
+import { createDirectoryListingHtml, createEditorReferenceText, createLocalBrowseEntry, createMarkdownPreviewHtml, createTextEditorHtml, deleteLocalBrowseEntry, isMarkdownPath } from './localBrowseUi'
 import { KATEX_STYLESHEET_HREF } from './katexAssets'
 
 let tempDir = ''
@@ -163,6 +163,9 @@ describe('local browse markdown preview', () => {
     expect(html).toContain('id="newFileForm"')
     expect(html).toContain('id="newFileName"')
     expect(html).toContain('id="createFileBtn"')
+    expect(html).toContain('id="newDirForm"')
+    expect(html).toContain('id="newDirName"')
+    expect(html).toContain('id="createDirBtn"')
     expect(html).toContain('class="icon-btn danger delete-entry-btn"')
     expect(html).toContain('data-name="note.txt"')
     expect(html).toContain('Delete note.txt')
@@ -170,6 +173,20 @@ describe('local browse markdown preview', () => {
     expect(html).toContain(`class="file-link" href="/codex-local-browse${encodeURI(filePath)}"`)
     expect((html.match(/class="icon-btn danger delete-entry-btn"/gu) ?? []).length).toBe(2)
     expect(html).toContain('docs/')
+  })
+
+  it('creates and deletes directory entries through the shared mutation helpers', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'codexui-local-browse-mutation-'))
+    const dirPath = join(tempDir, 'docs')
+
+    const createdPath = await createLocalBrowseEntry(tempDir, 'docs', 'directory')
+
+    expect(createdPath).toBe(dirPath)
+    expect((await stat(dirPath)).isDirectory()).toBe(true)
+
+    await deleteLocalBrowseEntry(dirPath)
+
+    await expect(stat(dirPath)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('skips broken symlinks in directory listings', async () => {

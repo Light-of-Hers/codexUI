@@ -6,7 +6,7 @@ import { writeFile, stat } from 'node:fs/promises'
 import express, { type Express } from 'express'
 import { createCodexBridgeMiddleware } from './codexAppServerBridge.js'
 import { createAuthSession } from './authMiddleware.js'
-import { LocalBrowseMutationError, createDirectoryListingHtml, createLocalBrowseDirectory, createLocalBrowseFile, createMarkdownPreviewHtml, createTextEditorHtml, decodeBrowsePath, deleteLocalBrowseDirectory, deleteLocalBrowseFile, getLocalDirectoryListing, isTextEditableFile, normalizeLocalPath, toEditHref } from './localBrowseUi.js'
+import { LocalBrowseMutationError, createDirectoryListingHtml, createLocalBrowseEntry, createMarkdownPreviewHtml, createTextEditorHtml, decodeBrowsePath, deleteLocalBrowseEntry, getLocalDirectoryListing, isTextEditableFile, normalizeLocalPath, toEditHref } from './localBrowseUi.js'
 import { getKatexAssetContentType, KATEX_ASSET_ROUTE, resolveKatexAssetPath } from './katexAssets.js'
 import { WebSocketServer, type WebSocket } from 'ws'
 
@@ -211,15 +211,10 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
 
     const record = req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : null
     const name = typeof record?.name === 'string' ? record.name : ''
-    const isDirectory = typeof record?.type === 'string' ? record.type === 'directory' : false
+    const type = record?.type === 'directory' ? 'directory' : 'file'
 
     try {
-      let createdPath: string
-      if (isDirectory) {
-        createdPath = await createLocalBrowseDirectory(localPath, name)
-      } else {
-        createdPath = await createLocalBrowseFile(localPath, name)
-      }
+      const createdPath = await createLocalBrowseEntry(localPath, name, type)
       res.status(201).json({ data: { path: createdPath } })
     } catch (error) {
       const mutationError = error instanceof LocalBrowseMutationError ? error : null
@@ -236,12 +231,7 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
     }
 
     try {
-      // Try file first, then directory
-      try {
-        await deleteLocalBrowseFile(localPath)
-      } catch (fileError) {
-        await deleteLocalBrowseDirectory(localPath)
-      }
+      await deleteLocalBrowseEntry(localPath)
       res.status(200).json({ ok: true })
     } catch (error) {
       const mutationError = error instanceof LocalBrowseMutationError ? error : null

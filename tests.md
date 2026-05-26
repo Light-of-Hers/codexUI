@@ -5094,14 +5094,14 @@ Plain Chinese prose containing `/`, such as `系统浅/深色主题`, is not spl
 
 ---
 
-### Local browse file create and delete actions
+### Local browse entry create and delete actions
 
 #### Feature/Change Name
-`/codex-local-browse/...` directory pages can create a new file in the current folder and delete listed files from the same page.
+`/codex-local-browse/...` directory pages can create new files and directories in the current folder and delete listed entries from the same page.
 
 #### Prerequisites/Setup
 1. Dev server running (`pnpm run dev`)
-2. A disposable writable folder exists, for example `tmp/local-browse-file-actions`
+2. A disposable writable folder exists, for example `tmp/local-browse-entry-actions`
 3. Browser or device appearance can be switched between light and dark
 
 #### Steps
@@ -5109,18 +5109,22 @@ Plain Chinese prose containing `/`, such as `系统浅/深色主题`, is not spl
 2. Enter `draft.md` in the new-file input and click `Create file`.
 3. Confirm the page opens `/codex-local-edit/.../draft.md` and the file exists on disk.
 4. Return to the directory browse page.
-5. Click the delete button for `draft.md`, confirm the browser prompt, and verify the row disappears after refresh.
-6. Switch to dark appearance and reload the same directory browse page.
-7. Repeat create/delete with `dark-draft.md`.
+5. Enter `docs` in the new-directory input and click `Create dir`.
+6. Confirm the page refreshes and `docs/` appears as a directory row, and verify `docs` is a real directory on disk.
+7. Click the delete button for `draft.md`, confirm the browser prompt, and verify the row disappears after refresh.
+8. Click the delete button for `docs/`, confirm the directory delete prompt, and verify the row disappears after refresh.
+9. Switch to dark appearance and reload the same directory browse page.
+10. Repeat create/delete with `dark-draft.md` and `dark-docs`.
 
 #### Expected Results
 - New files are created in the currently browsed folder only.
+- New directories are created as real filesystem directories, not zero-byte files.
 - Newly created text files open in the local editor after creation.
-- Delete removes the selected file after confirmation and refreshes the listing.
-- The new input, create button, status text, and delete buttons remain readable in both light and dark themes.
+- Delete removes the selected file or directory after confirmation and refreshes the listing.
+- The new inputs, create buttons, status text, and delete buttons remain readable in both light and dark themes.
 
 #### Rollback/Cleanup
-- Remove the disposable folder, for example `rm -rf tmp/local-browse-file-actions`.
+- Remove the disposable folder, for example `rm -rf tmp/local-browse-entry-actions`.
 
 ---
 

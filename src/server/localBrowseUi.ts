@@ -206,6 +206,16 @@ export async function createLocalBrowseDirectory(parentPath: string, rawName: st
   }
 }
 
+export async function createLocalBrowseEntry(
+  parentPath: string,
+  rawName: string,
+  type: 'file' | 'directory' = 'file',
+): Promise<string> {
+  return type === 'directory'
+    ? createLocalBrowseDirectory(parentPath, rawName)
+    : createLocalBrowseFile(parentPath, rawName)
+}
+
 export async function deleteLocalBrowseDirectory(localPath: string): Promise<void> {
   try {
     const dirStat = await stat(localPath)
@@ -239,6 +249,24 @@ export async function deleteLocalBrowseFile(localPath: string): Promise<void> {
     const code = fileSystemErrorCode(error)
     if (code === 'EACCES' || code === 'EPERM') throw new LocalBrowseMutationError(403, 'Permission denied.')
     throw new LocalBrowseMutationError(500, 'Delete file failed.')
+  }
+}
+
+export async function deleteLocalBrowseEntry(localPath: string): Promise<void> {
+  try {
+    const entryStat = await stat(localPath)
+    if (entryStat.isFile()) {
+      await deleteLocalBrowseFile(localPath)
+      return
+    }
+    if (entryStat.isDirectory()) {
+      await deleteLocalBrowseDirectory(localPath)
+      return
+    }
+    throw new LocalBrowseMutationError(400, 'Expected file or directory path.')
+  } catch (error) {
+    if (error instanceof LocalBrowseMutationError) throw error
+    throw new LocalBrowseMutationError(404, 'File or directory not found.')
   }
 }
 

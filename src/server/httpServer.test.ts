@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Server as HttpServer } from 'node:http'
@@ -111,6 +111,24 @@ describe('local browse file mutations', () => {
     expect(existsSync(join(tempDir, 'draft.md'))).toBe(true)
   })
 
+  it('creates a new directory from a directory browse POST', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'codexui-http-server-create-dir-'))
+    const dirPath = join(tempDir, 'docs')
+    const baseUrl = await startServer()
+    const response = await fetch(`${baseUrl}/codex-local-browse${encodeURI(tempDir)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'docs', type: 'directory' }),
+    })
+
+    expect(response.status).toBe(201)
+    expect(await response.json()).toEqual({ data: { path: dirPath } })
+
+    const dirStat = await stat(dirPath)
+    expect(dirStat.isDirectory()).toBe(true)
+    expect(dirStat.isFile()).toBe(false)
+  })
+
   it('deletes files from browse URLs', async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'codexui-http-server-delete-'))
     const filePath = join(tempDir, 'note.txt')
@@ -124,5 +142,21 @@ describe('local browse file mutations', () => {
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual({ ok: true })
     expect(existsSync(filePath)).toBe(false)
+  })
+
+  it('deletes directories from browse URLs', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'codexui-http-server-delete-dir-'))
+    const dirPath = join(tempDir, 'docs')
+    await mkdir(dirPath)
+    await writeFile(join(dirPath, 'note.txt'), 'hello world\n', 'utf8')
+
+    const baseUrl = await startServer()
+    const response = await fetch(`${baseUrl}/codex-local-browse${encodeURI(dirPath)}`, {
+      method: 'DELETE',
+    })
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ ok: true })
+    expect(existsSync(dirPath)).toBe(false)
   })
 })
