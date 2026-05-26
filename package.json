@@ -36,14 +36,6 @@
     "scripts/dev.cjs",
     "scripts/fix-pty-native-build.cjs"
   ],
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "@firebase/util",
-      "esbuild",
-      "node-pty",
-      "protobufjs"
-    ]
-  },
   "scripts": {
     "dev": "node scripts/dev.cjs",
     "dev:open": "pnpm run build:cli && sh -c 'pnpm run dev & VPID=$!; node dist-cli/index.js --open-project \"${1:-.}\"; wait $VPID' --",
