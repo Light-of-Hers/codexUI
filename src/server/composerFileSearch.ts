@@ -116,17 +116,18 @@ async function listPathsWithRipgrep(cwd: string): Promise<string[]> {
     proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString() })
     proc.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
     proc.on('error', reject)
-    proc.on('close', (code) => {
-      if (code === 0) {
-        const rows = stdout
-          .split(/\r?\n/)
-          .map(normalizeComposerSearchPath)
-          .filter(Boolean)
+    proc.on('close', (code, signal) => {
+      const rows = stdout
+        .split(/\r?\n/)
+        .map(normalizeComposerSearchPath)
+        .filter(Boolean)
+      if (code === 0 || code === 1 || (typeof code === 'number' && rows.length > 0)) {
         resolvePromise(rows)
         return
       }
       const details = [stderr.trim(), stdout.trim()].filter(Boolean).join('\n')
-      reject(new Error(details || 'rg --files failed'))
+      const exitStatus = signal ? `signal ${signal}` : `exit code ${String(code)}`
+      reject(new Error(details || `rg --files failed with ${exitStatus}`))
     })
   })
 }

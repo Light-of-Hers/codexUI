@@ -37,6 +37,17 @@ describe('searchComposerPaths', () => {
     expect(byPath.get('real/nested')?.isSymlink).toBe(false)
   })
 
+  it('keeps partial results when ripgrep reports a symlink loop', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'codexui-composer-search-'))
+
+    await writeFile(join(tempDir, 'alpha.txt'), 'alpha')
+    await symlink(tempDir, join(tempDir, 'loop'))
+
+    const results = await searchComposerPaths(tempDir, 'alpha', 20)
+
+    expect(results.some((entry) => entry.path === 'alpha.txt')).toBe(true)
+  })
+
   it('supports fuzzy matching for misspelled file names', async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'codexui-composer-search-'))
 
