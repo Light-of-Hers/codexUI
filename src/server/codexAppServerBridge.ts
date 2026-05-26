@@ -82,6 +82,8 @@ type RpcExecutor = {
   rpc: (method: string, params: unknown) => Promise<unknown>
 }
 
+const THREAD_MODEL_PROVIDER_OVERRIDE_METHODS = new Set(['thread/start', 'thread/resume', 'thread/fork'])
+
 type ServerRequestReply = {
   result?: unknown
   error?: {
@@ -1667,6 +1669,39 @@ function extractThreadMessageText(threadReadPayload: unknown): string {
 
 function readNonEmptyString(value: unknown): string {
   return typeof value === 'string' && value.trim().length > 0 ? value : ''
+}
+
+async function resolveDefaultCodexModelProvider(appServer: RpcExecutor): Promise<string> {
+  try {
+    const payload = asRecord(await appServer.rpc('config/read', {}))
+    const config = asRecord(payload?.config)
+    const provider = readNonEmptyString(config?.model_provider).trim()
+    return provider && provider !== 'openai' ? provider : ''
+  } catch {
+    return ''
+  }
+}
+
+export async function rewriteOpenAiThreadModelProvider(
+  appServer: RpcExecutor,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  if (!THREAD_MODEL_PROVIDER_OVERRIDE_METHODS.has(method)) return params
+  const paramsRecord = asRecord(params)
+  if (!paramsRecord) return params
+
+  const modelProvider = readNonEmptyString(paramsRecord.modelProvider)
+    || readNonEmptyString(paramsRecord.model_provider)
+  if (modelProvider.trim() !== 'openai') return params
+
+  const defaultProvider = await resolveDefaultCodexModelProvider(appServer)
+  if (!defaultProvider) return params
+
+  return {
+    ...paramsRecord,
+    modelProvider: defaultProvider,
+  }
 }
 
 function readProtocolToken(value: unknown): string {
@@ -7578,9 +7613,10 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           }).catch(() => {})
         }
 
+        const rpcParams = await rewriteOpenAiThreadModelProvider(appServer, body.method, body.params ?? null)
         let rpcResult: unknown
         try {
-          rpcResult = await callRpcWithArchiveRecovery(appServer, body.method, body.params ?? null)
+          rpcResult = await callRpcWithArchiveRecovery(appServer, body.method, rpcParams)
         } catch (error) {
 	          if (body.method === 'account/rateLimits/read' && isUnauthenticatedRateLimitError(error)) {
 	            setJson(res, 200, { result: null })
@@ -7607,7 +7643,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           : sanitizedResult
         let result = skillMergedResult
         if (THREAD_METHODS_WITH_THREAD_SNAPSHOT.has(body.method)) {
-          const explicitModelResult = mergeExplicitModelStateIntoThreadResult(skillMergedResult, body.params)
+          const explicitModelResult = mergeExplicitModelStateIntoThreadResult(skillMergedResult, rpcParams)
           result = explicitModelResult === skillMergedResult
             ? await mergeSessionModelStateIntoThreadResult(skillMergedResult)
             : explicitModelResult

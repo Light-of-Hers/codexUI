@@ -113,6 +113,7 @@ function isCodexCliMissingError(error: unknown): boolean {
 }
 
 export type ProviderId = 'codex' | 'openrouter' | 'opencode-zen' | 'custom' | 'moon' | 'cursor'
+type StoredProviderId = string
 
 function loadReadStateMap(): Record<string, string> {
   if (typeof window === 'undefined') return {}
@@ -198,6 +199,28 @@ export function normalizeProviderId(value: unknown): ProviderId {
   return 'codex'
 }
 
+function normalizeStoredProviderId(value: unknown): StoredProviderId {
+  const raw = typeof value === 'string' ? value.trim() : ''
+  if (!raw) return ''
+  const normalized = raw.toLowerCase()
+  if (normalized === 'codex') return 'codex'
+  if (normalized === 'openai') return 'openai'
+  if (normalized === 'openrouter' || normalized === 'openrouter-free') return 'openrouter'
+  if (normalized === 'opencode-zen') return 'opencode-zen'
+  if (normalized === 'custom' || normalized === 'custom-endpoint') return 'custom'
+  if (normalized === 'moon') return 'moon'
+  if (normalized === 'cursor') return 'cursor'
+  return raw
+}
+
+function normalizeCodexRpcProviderId(value: unknown, fallbackProviderId = ''): string {
+  const providerId = normalizeStoredProviderId(value)
+  if (!providerId || providerId.toLowerCase() === 'codex') {
+    return normalizeStoredProviderId(fallbackProviderId) || 'openai'
+  }
+  return providerId
+}
+
 function createStringKeyedRecord<T>(): Record<string, T> {
   return Object.create(null) as Record<string, T>
 }
@@ -259,6 +282,13 @@ function toRpcModelProviderId(providerId: ProviderId): string {
   if (providerId === 'moon') return 'moon'
   if (providerId === 'cursor') return 'cursor'
   return ''
+}
+
+function toStoredRpcModelProviderId(providerId: unknown, fallbackCodexProviderId = ''): string {
+  const storedProvider = normalizeStoredProviderId(providerId)
+  const normalizedProvider = normalizeProviderId(storedProvider)
+  if (normalizedProvider === 'codex') return normalizeCodexRpcProviderId(storedProvider, fallbackCodexProviderId)
+  return toRpcModelProviderId(normalizedProvider) || storedProvider
 }
 
 function isNewThreadContextId(contextId: string): boolean {
@@ -425,34 +455,32 @@ function saveSelectedReasoningEffortMap(state: Record<string, ReasoningEffort>):
   }
 }
 
-function loadSelectedProviderMap(): Record<string, ProviderId> {
-  if (typeof window === 'undefined') return createStringKeyedRecord<ProviderId>()
+function loadSelectedProviderMap(): Record<string, StoredProviderId> {
+  if (typeof window === 'undefined') return createStringKeyedRecord<StoredProviderId>()
 
   try {
     const raw = window.localStorage.getItem(SELECTED_PROVIDER_BY_CONTEXT_STORAGE_KEY)
-    if (!raw) return createStringKeyedRecord<ProviderId>()
+    if (!raw) return createStringKeyedRecord<StoredProviderId>()
 
     const parsed = JSON.parse(raw) as unknown
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      return createStringKeyedRecord<ProviderId>()
+      return createStringKeyedRecord<StoredProviderId>()
     }
 
-    const next = createStringKeyedRecord<ProviderId>()
+    const next = createStringKeyedRecord<StoredProviderId>()
     for (const [contextId, value] of Object.entries(parsed as Record<string, unknown>)) {
       if (typeof contextId !== 'string' || contextId.length === 0) continue
-      const normalizedProvider = normalizeProviderId(value)
-      if (normalizedProvider !== 'codex' || contextId !== NEW_THREAD_PROVIDER_CONTEXT) {
-        next[contextId] = normalizedProvider
-      }
+      const storedProvider = normalizeStoredProviderId(value)
+      if (storedProvider) next[contextId] = storedProvider
     }
     return next
   } catch {
-    return createStringKeyedRecord<ProviderId>()
+    return createStringKeyedRecord<StoredProviderId>()
   }
 }
 
 export function readSelectedProvider(
-  state: Record<string, ProviderId>,
+  state: Record<string, unknown>,
   threadId: string,
 ): ProviderId {
   const contextId = toProviderSelectionContextId(threadId)
@@ -460,22 +488,24 @@ export function readSelectedProvider(
 }
 
 export function writeSelectedProviderForContext(
-  state: Record<string, ProviderId>,
+  state: Record<string, StoredProviderId>,
   threadId: string,
-  provider: ProviderId,
-): Record<string, ProviderId> {
+  provider: unknown,
+): Record<string, StoredProviderId> {
   const contextId = toProviderSelectionContextId(threadId)
-  const normalizedProvider = normalizeProviderId(provider)
+  const storedProvider = normalizeStoredProviderId(provider)
+  const normalizedProvider = normalizeProviderId(storedProvider)
   if (normalizedProvider === 'codex' && contextId === NEW_THREAD_PROVIDER_CONTEXT) {
     return omitStringKeyedRecordKey(state, contextId)
   }
 
+  const nextProvider = normalizedProvider === 'codex' ? 'codex' : storedProvider
   const next = cloneStringKeyedRecord(state)
-  next[contextId] = normalizedProvider
+  next[contextId] = nextProvider
   return next
 }
 
-function saveSelectedProviderMap(state: Record<string, ProviderId>): void {
+function saveSelectedProviderMap(state: Record<string, StoredProviderId>): void {
   if (typeof window === 'undefined') return
   try {
     if (Object.keys(state).length === 0) {
@@ -1638,7 +1668,7 @@ export function useDesktopState() {
     fileAttachments: FileAttachment[]
     collaborationMode: CollaborationModeKind
     model: string
-    modelProvider: ProviderId
+    modelProvider: StoredProviderId
     reasoningEffort: ReasoningEffort | ''
   }
   type PendingTurnRequest = {
@@ -1666,7 +1696,7 @@ export function useDesktopState() {
   )
   const selectedModelIdByContext = ref<Record<string, string>>(loadSelectedModelMap())
   const selectedReasoningEffortByContext = ref<Record<string, ReasoningEffort>>(loadSelectedReasoningEffortMap())
-  const selectedProviderByContext = ref<Record<string, ProviderId>>(loadSelectedProviderMap())
+  const selectedProviderByContext = ref<Record<string, StoredProviderId>>(loadSelectedProviderMap())
   const selectedCollaborationMode = ref<CollaborationModeKind>(
     readSelectedCollaborationMode(selectedCollaborationModeByContext.value, selectedThreadId.value),
   )
@@ -1677,6 +1707,7 @@ export function useDesktopState() {
   )
   const selectedSpeedMode = ref<SpeedMode>('standard')
   const activeProviderId = ref('')
+  const activeCodexProviderId = ref('')
   const codexCliMissingError = ref('')
   const readStateByThreadId = ref<Record<string, string>>(loadReadStateMap())
   const unreadCutoffIso = ref(loadUnreadCutoffIso())
@@ -1959,7 +1990,12 @@ export function useDesktopState() {
   }
 
   function readThreadRpcProviderId(threadId: string): string {
-    return toRpcModelProviderId(readSelectedProvider(selectedProviderByContext.value, threadId))
+    const contextId = toProviderSelectionContextId(threadId)
+    const hasExplicitProvider = Object.prototype.hasOwnProperty.call(selectedProviderByContext.value, contextId)
+    const storedProvider = hasExplicitProvider ? selectedProviderByContext.value[contextId] : ''
+    if (storedProvider) return toStoredRpcModelProviderId(storedProvider, activeCodexProviderId.value)
+
+    return ''
   }
 
   function invalidateThreadResumeState(threadId: string): void {
@@ -2069,13 +2105,11 @@ export function useDesktopState() {
   function setSelectedProviderForThread(threadId: string, providerId: unknown): void {
     const normalizedProvider = normalizeProviderId(providerId)
     const contextId = toProviderSelectionContextId(threadId)
-    if (normalizedProvider !== 'codex' || contextId !== NEW_THREAD_PROVIDER_CONTEXT) {
-      const nextProviderMap = cloneStringKeyedRecord(selectedProviderByContext.value)
-      nextProviderMap[contextId] = normalizedProvider
-      selectedProviderByContext.value = nextProviderMap
-    } else {
-      selectedProviderByContext.value = omitStringKeyedRecordKey(selectedProviderByContext.value, contextId)
-    }
+    selectedProviderByContext.value = writeSelectedProviderForContext(
+      selectedProviderByContext.value,
+      threadId,
+      providerId,
+    )
 
     if (contextId === toProviderSelectionContextId(selectedThreadId.value)) {
       selectedProvider.value = normalizedProvider
@@ -2426,9 +2460,11 @@ export function useDesktopState() {
       moonBridgeModelIds.value = moonModels
 
       const normalizedConfiguredModelId = currentConfig.model.trim()
+      const rawConfiguredProviderId = currentConfig.providerId.trim()
       const normalizedProviderId = normalizeProviderContextId(currentConfig.providerId)
       const isProviderBacked = normalizedProviderId !== 'codex'
       activeProviderId.value = normalizedProviderId
+      activeCodexProviderId.value = isProviderBacked ? '' : normalizeCodexRpcProviderId(rawConfiguredProviderId)
       const selectedContextId = toThreadContextId(selectedThreadId.value)
       const selectedContextIsNewThread = selectedContextId === NEW_THREAD_COLLABORATION_MODE_CONTEXT
       const normalizedSelectedModelId = readModelIdForThread(selectedThreadId.value)
@@ -2498,6 +2534,15 @@ export function useDesktopState() {
         nextModelMap[providerModelContextId] = nextSelectedModelId
         selectedModelIdByContext.value = nextModelMap
         saveSelectedModelMap(selectedModelIdByContext.value)
+      }
+      if (selectedContextIsNewThread && isProviderBacked && !Object.prototype.hasOwnProperty.call(selectedProviderByContext.value, NEW_THREAD_PROVIDER_CONTEXT)) {
+        selectedProviderByContext.value = writeSelectedProviderForContext(
+          selectedProviderByContext.value,
+          NEW_THREAD_COLLABORATION_MODE_CONTEXT,
+          normalizedProviderId,
+        )
+        selectedProvider.value = readSelectedProvider(selectedProviderByContext.value, selectedThreadId.value)
+        saveSelectedProviderMap(selectedProviderByContext.value)
       }
 
       const normalizedConfigReasoningEffort = normalizeStoredReasoningEffort(currentConfig.reasoningEffort)
@@ -4856,7 +4901,7 @@ export function useDesktopState() {
         })),
         collaborationMode: message.collaborationMode,
         model: message.model,
-        modelProvider: toRpcModelProviderId(message.modelProvider),
+        modelProvider: toStoredRpcModelProviderId(message.modelProvider, activeCodexProviderId.value),
         reasoningEffort: message.reasoningEffort,
       }))
     }
@@ -4871,7 +4916,7 @@ export function useDesktopState() {
       next[normalizedThreadId] = queue.map((message) => ({
         ...message,
         model: typeof message.model === 'string' ? message.model.trim() : readModelIdForThread(normalizedThreadId),
-        modelProvider: normalizeProviderId(message.modelProvider),
+        modelProvider: normalizeStoredProviderId(message.modelProvider),
         reasoningEffort: normalizeStoredReasoningEffort(message.reasoningEffort),
       }))
     }
@@ -5546,7 +5591,7 @@ export function useDesktopState() {
             ? 'default'
             : selectedCollaborationMode.value,
         model: readModelIdForThread(threadId),
-        modelProvider: readSelectedProvider(selectedProviderByContext.value, threadId),
+        modelProvider: readThreadRpcProviderId(threadId),
         reasoningEffort: readReasoningEffortForThread(threadId),
       })
       queuedMessagesByThreadId.value = {

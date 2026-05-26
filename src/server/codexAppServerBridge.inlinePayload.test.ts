@@ -13,6 +13,7 @@ import {
   mergeSessionModelStateIntoThreadResult,
   mergeSessionSkillInputsIntoTurns,
   parseAutomationToml,
+  rewriteOpenAiThreadModelProvider,
   sanitizeThreadTurnsInlinePayloads,
   shouldAutoContinueInterruptedThreadFromThreadRead,
   toAutomationApiRecord,
@@ -44,6 +45,31 @@ function localImagePathFromProxyUrl(value: string): string {
 }
 
 describe('session model state recovery', () => {
+  it('rewrites explicit OpenAI thread provider to the configured Codex provider', async () => {
+    const rpcCalls: Array<{ method: string; params: unknown }> = []
+    const rewritten = await rewriteOpenAiThreadModelProvider({
+      async rpc(method: string, params: unknown): Promise<unknown> {
+        rpcCalls.push({ method, params })
+        return {
+          config: {
+            model_provider: 'rustcat',
+          },
+        }
+      },
+    }, 'thread/resume', {
+      threadId: 'thread-1',
+      model: 'gpt-5.5',
+      modelProvider: 'openai',
+    })
+
+    expect(rewritten).toEqual({
+      threadId: 'thread-1',
+      model: 'gpt-5.5',
+      modelProvider: 'rustcat',
+    })
+    expect(rpcCalls).toEqual([{ method: 'config/read', params: {} }])
+  })
+
   it('overrides stale thread snapshot model metadata from persisted turn context', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'codexui-session-model-'))
     const sessionPath = join(tempDir, 'session.jsonl')

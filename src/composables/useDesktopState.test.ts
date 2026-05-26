@@ -879,6 +879,16 @@ describe('session composer model state', () => {
       hasMoreOlder: false,
       turnIndexByTurnId: {},
     })
+    gatewayMocks.getAvailableCollaborationModes.mockResolvedValue([{ value: 'default', label: 'Default' }])
+    gatewayMocks.getSkillsList.mockResolvedValue([])
+    gatewayMocks.getAccountRateLimits.mockResolvedValue(null)
+    gatewayMocks.getCurrentModelConfig.mockResolvedValue({
+      model: 'gpt-5.5',
+      providerId: 'rustcat',
+      reasoningEffort: 'xhigh',
+      speedMode: 'standard',
+    })
+    gatewayMocks.getAvailableModelIds.mockResolvedValue(['gpt-5.5'])
     gatewayMocks.resumeThread
       .mockResolvedValueOnce({
         model: 'ark-code-latest',
@@ -918,10 +928,11 @@ describe('session composer model state', () => {
 
     state.setSelectedProvider('codex')
     state.setSelectedModelIdForThread('thread-a', 'gpt-5.5')
+    await state.refreshAncillaryState({ providerChanged: true, includeProviderModels: true })
     await state.sendMessageToSelectedThread('use codex now')
 
     expect(gatewayMocks.resumeThread).toHaveBeenNthCalledWith(1, 'thread-a', 'ark-code-latest', 'moon')
-    expect(gatewayMocks.resumeThread).toHaveBeenNthCalledWith(2, 'thread-a', 'gpt-5.5', undefined)
+    expect(gatewayMocks.resumeThread).toHaveBeenNthCalledWith(2, 'thread-a', 'gpt-5.5', 'rustcat')
     expect(gatewayMocks.startThreadTurn).toHaveBeenCalledWith(
       'thread-a',
       'use codex now',
@@ -940,7 +951,7 @@ describe('session composer model state', () => {
 
     await state.loadMessages('thread-a', { force: true })
 
-    expect(gatewayMocks.resumeThread).toHaveBeenNthCalledWith(3, 'thread-a', 'gpt-5.5', undefined)
+    expect(gatewayMocks.resumeThread).toHaveBeenNthCalledWith(3, 'thread-a', 'gpt-5.5', 'rustcat')
     expect(state.selectedProvider.value).toBe('codex')
     expect(state.readModelIdForThread('thread-a')).toBe('gpt-5.5')
   })
