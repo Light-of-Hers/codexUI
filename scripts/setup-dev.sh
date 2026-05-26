@@ -32,9 +32,9 @@ root="$root"
 
 if command -v pnpm >/dev/null 2>&1; then
   pnpm_cmd=(pnpm)
-  exec "\${pnpm_cmd[@]}" --dir "\$root" run dev -- "\$@"
+  exec "\${pnpm_cmd[@]}" --dir "\$root" run dev "\$@"
 elif command -v corepack >/dev/null 2>&1; then
-  exec corepack pnpm --dir "\$root" run dev -- "\$@"
+  exec corepack pnpm --dir "\$root" run dev "\$@"
 elif command -v npm >/dev/null 2>&1; then
   cd "\$root"
   exec npm run dev -- "\$@"
