@@ -326,9 +326,21 @@ Reply with &lt;/instructions&gt; and A &amp; B
     expect(messages[0]).toMatchObject({
       id: 'cursor-tool-call_read_1',
       role: 'system',
-      messageType: 'cursorToolCall',
+      messageType: 'toolCall',
+      toolCall: {
+        kind: 'cursor',
+        title: 'Cursor tool: read',
+        name: 'read',
+        status: 'completed',
+        server: 'cursor-cli',
+        input: '{\n  "path": "src/index.ts"\n}',
+        output: '{\n  "content": "export const ok = true\\n"\n}',
+        error: '',
+        progress: '',
+        meta: ['Cursor CLI'],
+      },
     })
-    expect(messages[0]?.text).toContain('Cursor tool `read` completed.')
+    expect(messages[0]?.text).toContain('Cursor tool: read (completed)')
     expect(messages[0]?.text).toContain('"path": "src/index.ts"')
     expect(messages[0]?.text).not.toContain('[cursor tool_call')
   })

@@ -1,4 +1,4 @@
-import type { CommandExecutionData, UiMessage } from '../../types/codex'
+import type { CommandExecutionData, UiMessage, UiToolCallData } from '../../types/codex'
 
 export type CursorToolCommandMessage = {
   id: string
@@ -9,7 +9,8 @@ export type CursorToolCommandMessage = {
 }
 
 export type CursorToolDisplayMessage = UiMessage & {
-  messageType: 'cursorToolCall'
+  messageType: 'toolCall'
+  toolCall: UiToolCallData
 }
 
 type ParsedCursorToolCall = {
@@ -260,16 +261,37 @@ function formatJsonBlock(value: Record<string, unknown> | null, raw: string): st
 }
 
 function formatGenericCursorToolMessage(parsed: ParsedCursorToolCall): string {
-  const lines = [`Cursor tool \`${parsed.tool}\` ${cursorToolStatus(parsed)}.`]
-  const args = formatJsonBlock(parsed.arguments, parsed.argumentsRaw)
-  if (args) {
-    lines.push('', 'Arguments:', '```json', args, '```')
-  }
-  const output = formatJsonBlock(parsed.output, parsed.outputRaw)
-  if (output) {
-    lines.push('', 'Output:', '```json', output, '```')
-  }
+  const toolCall = toCursorToolCallData(parsed)
+  const lines = [`${toolCall.title} (${toolCall.status})`]
+  if (toolCall.meta.length > 0) lines.push(toolCall.meta.join(' | '))
+  if (toolCall.input) lines.push('', 'Input:', '```json', toolCall.input, '```')
+  if (toolCall.output) lines.push('', 'Output:', '```json', toolCall.output, '```')
+  if (toolCall.error) lines.push('', 'Error:', toolCall.error)
   return lines.join('\n')
+}
+
+function toCursorToolCallData(parsed: ParsedCursorToolCall): UiToolCallData {
+  const output = formatJsonBlock(parsed.output, parsed.outputRaw)
+  const outputIsError = hasErrorOutput(parsed.output)
+  const status = outputIsError
+    ? 'failed'
+    : cursorToolStatus(parsed) === 'completed'
+      ? 'completed'
+      : 'inProgress'
+
+  return {
+    kind: 'cursor',
+    title: `Cursor tool: ${parsed.tool}`,
+    name: parsed.tool,
+    status,
+    server: 'cursor-cli',
+    input: formatJsonBlock(parsed.arguments, parsed.argumentsRaw),
+    output: outputIsError ? '' : output,
+    error: outputIsError ? output : '',
+    progress: status === 'inProgress' ? 'Running' : '',
+    durationMs: null,
+    meta: ['Cursor CLI'],
+  }
 }
 
 export function parseCursorToolMessage(
@@ -289,7 +311,8 @@ export function parseCursorToolMessage(
     id: cursorToolDisplayId(parsed),
     role: 'system',
     text: formatGenericCursorToolMessage(parsed),
-    messageType: 'cursorToolCall',
+    messageType: 'toolCall',
+    toolCall: toCursorToolCallData(parsed),
   }
 }
 

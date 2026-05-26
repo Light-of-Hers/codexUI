@@ -102,7 +102,7 @@ export type CommandExecutionData = {
 }
 
 export type UiToolCallStatus = 'inProgress' | 'completed' | 'failed'
-export type UiToolCallKind = 'mcp' | 'collab' | 'webSearch'
+export type UiToolCallKind = 'mcp' | 'collab' | 'webSearch' | 'cursor'
 export type UiToolCallData = {
   kind: UiToolCallKind
   title: string
