@@ -833,6 +833,8 @@ function toLocalImageProxyUrl(path: string): string {
 
 const CURSOR_TOOL_PAYLOAD_LINE = /^\s*(?:└\s*)?payload:\s*(.+\.json)\s*$/m
 const CURSOR_TOOL_PAYLOAD_FILE = /^[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+\.json$/u
+const CURSOR_TOOL_INLINE_DATA_BLOCK = /<codex-ui-data>([\s\S]*?)<\/codex-ui-data>/
+const CURSOR_TOOL_COMPLETED_MESSAGE = /^(?:Ran `|Called Cursor tool `|Cursor shell completed\b|Cursor tool `?.+?`? completed\b)/
 
 function isCursorToolPayloadRecord(value: unknown): value is Record<string, unknown> {
   const record = asRecord(value)
@@ -849,19 +851,9 @@ function isCursorToolPayloadRecord(value: unknown): value is Record<string, unkn
 }
 
 async function inlineCursorToolPayloadReference(value: string): Promise<{ value: string; changed: boolean }> {
-  const match = value.match(CURSOR_TOOL_PAYLOAD_LINE)
-  const payloadPath = match?.[1]?.trim()
-  if (!payloadPath || !isAbsolute(payloadPath)) return { value, changed: false }
-
-  const payloadRoot = resolve(getCursorToolPayloadsDir())
-  const resolvedPath = resolve(payloadPath)
-  if (resolvedPath !== payloadRoot && !resolvedPath.startsWith(`${payloadRoot}/`)) {
-    return { value, changed: false }
-  }
-  const relativePath = resolvedPath.slice(payloadRoot.length + 1)
-  if (!CURSOR_TOOL_PAYLOAD_FILE.test(relativePath)) {
-    return { value, changed: false }
-  }
+  if (readInlineCursorToolPayloadRecord(value)) return { value, changed: false }
+  const resolvedPath = resolveCursorToolPayloadPath(cursorToolPayloadPathFromText(value))
+  if (!resolvedPath) return { value, changed: false }
 
   try {
     const raw = await readFile(resolvedPath, 'utf8')
@@ -874,6 +866,73 @@ async function inlineCursorToolPayloadReference(value: string): Promise<{ value:
   } catch {
     return { value, changed: false }
   }
+}
+
+function readInlineCursorToolPayloadRecord(value: string): Record<string, unknown> | null {
+  const match = value.match(CURSOR_TOOL_INLINE_DATA_BLOCK)
+  if (!match?.[1]) return null
+  try {
+    const parsed = JSON.parse(match[1]) as unknown
+    return isCursorToolPayloadRecord(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function inlineCursorToolPayloadReferenceSync(value: string): { value: string; changed: boolean } {
+  if (readInlineCursorToolPayloadRecord(value)) return { value, changed: false }
+  const payloadCache: CursorToolPayloadCache = new Map()
+  const parsed = readCursorToolPayloadFromMessageText(value, payloadCache)
+  if (!parsed) return { value, changed: false }
+  return {
+    value: `${value}\n<codex-ui-data>${JSON.stringify(parsed)}</codex-ui-data>`,
+    changed: true,
+  }
+}
+
+function sanitizeCursorToolPayloadReferencesInNotification(
+  notification: { method: string; params: unknown },
+): { method: string; params: unknown } {
+  if (notification.method !== 'item/started' && notification.method !== 'item/completed') return notification
+
+  const params = asRecord(notification.params)
+  const item = asRecord(params?.item)
+  const text = typeof item?.text === 'string' ? item.text : ''
+  if (!params || !item || !text.includes('payload:')) return notification
+
+  const inlinedText = inlineCursorToolPayloadReferenceSync(text)
+  if (!inlinedText.changed) return notification
+
+  return {
+    ...notification,
+    params: {
+      ...params,
+      item: {
+        ...item,
+        text: inlinedText.value,
+      },
+    },
+  }
+}
+
+function cursorToolPayloadPathFromText(value: string): string {
+  const match = value.match(CURSOR_TOOL_PAYLOAD_LINE)
+  return match?.[1]?.trim() ?? ''
+}
+
+function resolveCursorToolPayloadPath(payloadPath: string): string | null {
+  if (!payloadPath || !isAbsolute(payloadPath)) return null
+
+  const payloadRoot = resolve(getCursorToolPayloadsDir())
+  const resolvedPath = resolve(payloadPath)
+  if (resolvedPath !== payloadRoot && !resolvedPath.startsWith(`${payloadRoot}/`)) {
+    return null
+  }
+  const relativePath = resolvedPath.slice(payloadRoot.length + 1)
+  if (!CURSOR_TOOL_PAYLOAD_FILE.test(relativePath)) {
+    return null
+  }
+  return resolvedPath
 }
 
 const INLINE_IMAGE_FIELD_NAMES = new Set([
@@ -2464,6 +2523,8 @@ type SessionRecoveredCommand = {
   aggregatedOutput: string
   exitCode: number | null
   durationMs: number | null
+  source?: 'cursor'
+  cursorCallId?: string
 }
 
 function parseExecCommandOutput(output: string): { exitCode: number | null; wallTime: number | null; cleanOutput: string } {
@@ -2508,8 +2569,124 @@ type SessionRecoveredFileChangeItem = {
 type SessionItemSlot = {
   type: 'agentMessage' | 'commandExecution' | 'fileChange'
   text?: string
+  cursorCallId?: string
   command?: SessionRecoveredCommand
   fileChange?: SessionRecoveredFileChangeItem
+}
+
+type CursorToolPayloadCache = Map<string, Record<string, unknown> | null>
+
+function readOptionalNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function readCursorToolPayloadFromMessageText(
+  text: string,
+  payloadCache: CursorToolPayloadCache,
+): Record<string, unknown> | null {
+  const resolvedPath = resolveCursorToolPayloadPath(cursorToolPayloadPathFromText(text))
+  if (!resolvedPath) return null
+  if (payloadCache.has(resolvedPath)) {
+    return payloadCache.get(resolvedPath) ?? null
+  }
+
+  try {
+    const parsed = JSON.parse(readFileSync(resolvedPath, 'utf8')) as unknown
+    const record = isCursorToolPayloadRecord(parsed) ? parsed : null
+    payloadCache.set(resolvedPath, record)
+    return record
+  } catch {
+    payloadCache.set(resolvedPath, null)
+    return null
+  }
+}
+
+function cursorOutputRecord(value: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!value) return null
+  const success = asRecord(value.success)
+  if (success) return success
+  const error = asRecord(value.error)
+  if (error) return error
+  const failure = asRecord(value.failure)
+  if (failure) return failure
+  return value
+}
+
+function hasCursorErrorOutput(value: Record<string, unknown> | null): boolean {
+  return Boolean(value?.error || value?.failure)
+}
+
+function cursorToolCallIdFromMessageText(text: string): string {
+  const payloadPath = cursorToolPayloadPathFromText(text)
+  if (payloadPath) return basename(payloadPath).replace(/\.json$/iu, '')
+
+  const record = readInlineCursorToolPayloadRecord(text)
+  return record ? readNonEmptyString(record.call_id) : ''
+}
+
+function buildCursorRecoveredCommand(payload: Record<string, unknown>): SessionRecoveredCommand | null {
+  const callId = readNonEmptyString(payload.call_id)
+  const args = asRecord(payload.arguments)
+  const outputPayload = asRecord(payload.output)
+  const output = cursorOutputRecord(outputPayload)
+  const command = readNonEmptyString(args?.command)
+    || readNonEmptyString(args?.cmd)
+    || readNonEmptyString(output?.command)
+  if (!callId || !command) return null
+
+  const stdout = typeof output?.stdout === 'string' ? output.stdout : ''
+  const stderr = typeof output?.stderr === 'string' ? output.stderr : ''
+  const message = typeof output?.message === 'string' ? output.message : ''
+  const interleavedOutput = typeof output?.interleavedOutput === 'string' ? output.interleavedOutput : ''
+  const aggregatedOutput = stdout || stderr
+    ? [stdout, stderr].filter(Boolean).join(stderr && stdout ? '\n' : '')
+    : interleavedOutput || message
+  const exitCode = readOptionalNumber(output?.exitCode)
+  const durationMs = readOptionalNumber(output?.executionTime)
+    ?? readOptionalNumber(output?.localExecutionTimeMs)
+  const outputIsError = hasCursorErrorOutput(outputPayload)
+
+  return {
+    id: `cursor-command-${callId}`,
+    type: 'commandExecution',
+    command,
+    cwd: readNonEmptyString(args?.workingDirectory)
+      || readNonEmptyString(args?.cwd)
+      || readNonEmptyString(output?.workingDirectory)
+      || null,
+    status: outputIsError || (exitCode !== null && exitCode !== 0) ? 'failed' : 'completed',
+    aggregatedOutput,
+    exitCode,
+    durationMs,
+    source: 'cursor',
+    cursorCallId: callId,
+  }
+}
+
+function buildCursorToolSessionSlot(
+  text: string,
+  payloadCache: CursorToolPayloadCache,
+): { matched: boolean; slot: SessionItemSlot | null } {
+  const payload = readCursorToolPayloadFromMessageText(text, payloadCache)
+  if (!payload) return { matched: false, slot: null }
+  if (!CURSOR_TOOL_COMPLETED_MESSAGE.test(text.trimStart())) {
+    return { matched: true, slot: null }
+  }
+
+  const callId = readNonEmptyString(payload.call_id)
+  if (payload.tool === 'shell') {
+    const command = buildCursorRecoveredCommand(payload)
+    return { matched: true, slot: command ? { type: 'commandExecution', command } : null }
+  }
+
+  return {
+    matched: true,
+    slot: {
+      type: 'agentMessage',
+      text: `${text}\n<codex-ui-data>${JSON.stringify(payload)}</codex-ui-data>`,
+      cursorCallId: callId,
+    },
+  }
 }
 
 function readSessionMessageText(payload: Record<string, unknown>): string {
@@ -2535,6 +2712,7 @@ function buildSessionItemOrder(sessionLogRaw: string, turnIds: Set<string>): Map
   let orphanResponseTurnId = ''
   const orderByTurnId = new Map<string, SessionItemSlot[]>()
   const callIdToCommand = new Map<string, SessionRecoveredCommand>()
+  const cursorPayloadCache: CursorToolPayloadCache = new Map()
   const lines = sessionLogRaw.split('\n')
 
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
@@ -2582,7 +2760,13 @@ function buildSessionItemOrder(sessionLogRaw: string, turnIds: Set<string>): Map
     }
 
     if (payload.type === 'message' && payload.role === 'assistant') {
-      slots.push({ type: 'agentMessage', text: readSessionMessageText(payload) })
+      const text = readSessionMessageText(payload)
+      const cursorSlot = buildCursorToolSessionSlot(text, cursorPayloadCache)
+      if (cursorSlot.slot) {
+        slots.push(cursorSlot.slot)
+      } else if (!cursorSlot.matched) {
+        slots.push({ type: 'agentMessage', text })
+      }
       continue
     }
 
@@ -3033,7 +3217,17 @@ function mergeSessionCommandsIntoTurns(turns: unknown[], sessionLogRaw: string):
 
     const existingItems = Array.isArray(turnRecord.items) ? (turnRecord.items as Record<string, unknown>[]) : []
 
-    const agentMessages = existingItems.filter((it) => it.type === 'agentMessage')
+    const representedCursorCallIds = new Set<string>()
+    for (const slot of slots) {
+      const cursorCallId = slot.cursorCallId || slot.command?.cursorCallId || ''
+      if (cursorCallId) representedCursorCallIds.add(cursorCallId)
+    }
+    const agentMessages = existingItems.filter((it) => {
+      if (it.type !== 'agentMessage') return false
+      const text = typeof it.text === 'string' ? it.text : ''
+      const cursorCallId = text ? cursorToolCallIdFromMessageText(text) : ''
+      return !cursorCallId || !representedCursorCallIds.has(cursorCallId)
+    })
     const splitAgentMessages = splitMergedAgentMessageFromSessionSlots(agentMessages, slots)
     const splitAgentMessageApplied = splitAgentMessages !== agentMessages
     const commandMessages = existingItems.filter((it) => it.type === 'commandExecution')
@@ -3053,6 +3247,14 @@ function mergeSessionCommandsIntoTurns(turns: unknown[], sessionLogRaw: string):
 
     for (const slot of slots) {
       if (slot.type === 'agentMessage') {
+        if (slot.cursorCallId && slot.text) {
+          interleaved.push({
+            id: `session-cursor-${slot.cursorCallId}`,
+            type: 'agentMessage',
+            text: slot.text,
+          })
+          continue
+        }
         if (splitAgentMessageApplied && !slot.text) continue
         if (agentIdx < splitAgentMessages.length) {
           interleaved.push(splitAgentMessages[agentIdx]!)
@@ -5490,15 +5692,16 @@ class AppServerProcess {
   }
 
   private emitNotification(notification: { method: string; params: unknown }): void {
-    this.recordStreamEvent(notification)
-    this.captureItemFromNotification(notification)
-    const nThreadId = this.extractThreadIdFromParams(notification.params)
+    const sanitizedNotification = sanitizeCursorToolPayloadReferencesInNotification(notification)
+    this.recordStreamEvent(sanitizedNotification)
+    this.captureItemFromNotification(sanitizedNotification)
+    const nThreadId = this.extractThreadIdFromParams(sanitizedNotification.params)
     if (nThreadId) {
       this.invalidateLiveStateCache(nThreadId)
       this.threadTurnPageReadCacheByThreadId.delete(nThreadId)
     }
     for (const listener of this.notificationListeners) {
-      listener(notification)
+      listener(sanitizedNotification)
     }
   }
 

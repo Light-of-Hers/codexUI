@@ -5762,6 +5762,36 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Rollback/Cleanup
 - Restore the preferred provider, model, and reasoning effort after manual verification.
 
+### Feature: Cursor CLI shell payload recovery
+
+#### Prerequisites
+- App server is running from this repository.
+- A Cursor CLI backed Codex session exists with shell tool payload files under `.codex/cursor-tool-payloads/`.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Run `pnpm exec vitest run src/server/codexAppServerBridge.inlinePayload.test.ts src/api/normalizers/v2.test.ts`.
+2. Run `pnpm exec vue-tsc --noEmit`.
+3. Open a Cursor CLI session that contains shell commands, for example session `019e6342-76cd-7e41-aece-413a748935ae`.
+4. Confirm entries such as `ssh -V` and `ls -la "$HOME/.ssh"` appear as command execution cards rather than raw `Ran ... payload: ...` assistant text.
+5. Expand at least one successful command card and one failed command card, if present.
+6. Switch to dark theme and repeat steps 3-5.
+
+#### Expected Results
+- Historical Cursor CLI shell payload references are recovered into `commandExecution` items.
+- Paired `Running` and `Ran` session records produce one command card, not duplicate cards.
+- Command cards preserve command text, cwd, exit code, status, duration, and output from the payload JSON.
+- Non-shell Cursor tool payloads continue to render as Cursor tool call cards.
+- Command and tool cards remain readable in both light and dark themes.
+
+#### Performance Audit
+- Payload JSON files are only read while recovering turns from the already-loaded session JSONL.
+- Recovery caches payload reads by absolute path, so paired `Running`/`Ran` records do not reread the same JSON file repeatedly.
+- No browser-side requests or polling cadence are added.
+
+#### Rollback/Cleanup
+- No persistent cleanup is required beyond closing the verification session.
+
 ### Feature: File-link click path picker
 
 #### Prerequisites
