@@ -679,6 +679,50 @@ describe('provider model selection', () => {
     })
   })
 
+  it('uses the explicit new-session Moon Bridge provider when config still reports Codex', async () => {
+    installTestWindow({
+      'codex-web-local.provider-by-context.v1': JSON.stringify({
+        '__new-thread-provider__': 'moon',
+      }),
+    })
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({ groups: [], nextCursor: null })
+    gatewayMocks.getAvailableCollaborationModes.mockResolvedValue([{ value: 'default', label: 'Default' }])
+    gatewayMocks.getSkillsList.mockResolvedValue([])
+    gatewayMocks.getAccountRateLimits.mockResolvedValue(null)
+    gatewayMocks.getCurrentModelConfig.mockResolvedValue({
+      model: 'gpt-5.5',
+      providerId: 'codex',
+      reasoningEffort: 'medium',
+      speedMode: 'standard',
+    })
+    gatewayMocks.getAvailableModelIds.mockResolvedValue([
+      'deepseek-v4-pro',
+      'deepseek-v4-flash',
+    ])
+    gatewayMocks.getMoonBridgeModelMetadata.mockResolvedValue([
+      { id: 'deepseek-v4-pro', contextWindow: 128000 },
+      { id: 'deepseek-v4-flash', contextWindow: 64000 },
+    ])
+
+    const state = useDesktopState()
+    await state.refreshAll({ includeSelectedThreadMessages: false, awaitAncillaryRefreshes: true })
+
+    expect(gatewayMocks.getAvailableModelIds).toHaveBeenCalledWith({
+      includeProviderModels: true,
+      requireProviderModels: true,
+    })
+    expect(state.selectedProvider.value).toBe('moon')
+    expect(state.availableModelIds.value).toEqual([
+      'deepseek-v4-pro',
+      'deepseek-v4-flash',
+    ])
+    expect(state.selectedModelId.value).toBe('deepseek-v4-pro')
+    expect(state.readModelIdForThread('').trim()).toBe('deepseek-v4-pro')
+    expect(JSON.parse(window.localStorage.getItem('codex-web-local.selected-model-by-context.v1') ?? '{}')).toEqual({
+      '__new-thread-provider__::moon': 'deepseek-v4-pro',
+    })
+  })
+
   it('keeps Codex model picks scoped to Codex even when the model also exists in Moon Bridge', async () => {
     installTestWindow()
     gatewayMocks.getThreadGroupsPage.mockResolvedValue({ groups: [], nextCursor: null })

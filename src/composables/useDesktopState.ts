@@ -2461,7 +2461,15 @@ export function useDesktopState() {
 
       const normalizedConfiguredModelId = currentConfig.model.trim()
       const rawConfiguredProviderId = currentConfig.providerId.trim()
-      const normalizedProviderId = normalizeProviderContextId(currentConfig.providerId)
+      const configuredProviderId = normalizeProviderContextId(currentConfig.providerId)
+      const selectedProviderContextId = toProviderSelectionContextId(selectedThreadId.value)
+      const hasExplicitSelectedProvider = Object.prototype.hasOwnProperty.call(
+        selectedProviderByContext.value,
+        selectedProviderContextId,
+      )
+      const normalizedProviderId = hasExplicitSelectedProvider
+        ? readSelectedProvider(selectedProviderByContext.value, selectedThreadId.value)
+        : configuredProviderId
       const isProviderBacked = normalizedProviderId !== 'codex'
       activeProviderId.value = normalizedProviderId
       activeCodexProviderId.value = isProviderBacked ? '' : normalizeCodexRpcProviderId(rawConfiguredProviderId)
@@ -2478,7 +2486,9 @@ export function useDesktopState() {
         : ''
       const nextModelIds = [...modelIds]
       if (!options?.providerChanged) {
-        const extraModelIds = isProviderBacked ? [normalizedConfiguredModelId] : [normalizedSelectedModelId, normalizedConfiguredModelId]
+        const extraModelIds = isProviderBacked
+          ? (configuredProviderId === normalizedProviderId ? [normalizedConfiguredModelId] : [])
+          : [normalizedSelectedModelId, normalizedConfiguredModelId]
         for (const modelId of extraModelIds) {
           if (modelId && !nextModelIds.includes(modelId)) {
             nextModelIds.push(modelId)

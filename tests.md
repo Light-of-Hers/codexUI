@@ -5918,3 +5918,35 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - Restore the preferred provider, model, and reasoning effort after manual verification.
+
+### Feature: Moon Bridge new-session model picker
+
+#### Prerequisites
+- App server is running from this repository.
+- Moon Bridge model catalog is available at `~/.local/share/my-agent-configs/moonbridge/codex/models_catalog.json` or through `CODEXUI_MOONBRIDGE_MODEL_CATALOG`.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Run `pnpm exec vitest run src/composables/useDesktopState.test.ts`.
+2. Run `pnpm exec vue-tsc --noEmit`.
+3. Open the home/new-session composer in light theme.
+4. In Settings, change Provider to `Moon Bridge`.
+5. Open the Model dropdown in the new-session composer.
+6. Confirm the dropdown lists Moon Bridge catalog models and does not show Codex-only models from `model/list`.
+7. Select a Moon Bridge model and start a new session.
+8. Confirm the new session starts with Provider `Moon Bridge` and the selected model.
+9. Repeat steps 3-8 in dark theme.
+
+#### Expected Results
+- The new-session composer uses the explicit UI-selected provider when refreshing model choices.
+- If `config/read` still reports Codex while Moon Bridge is selected, the model picker remains scoped to Moon Bridge.
+- The selected Moon Bridge model is persisted under the Moon Bridge provider-scoped new-session model key.
+- Codex model choices remain unchanged when Provider is `Codex`.
+
+#### Performance Audit
+- Provider refresh still uses the existing `refreshAncillaryState` path and does not add new API calls.
+- The added provider check is an O(1) localStorage-backed map lookup during model preference refresh.
+- Startup background refresh still calls model discovery with `includeProviderModels: false`; full provider discovery remains limited to explicit provider changes or awaited ancillary refreshes.
+
+#### Rollback/Cleanup
+- Switch Provider back to the preferred default after manual verification.
