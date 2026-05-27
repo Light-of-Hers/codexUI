@@ -774,6 +774,55 @@ describe('provider model selection', () => {
     expect(state.readModelIdForThread(threadId)).toBe('ark-code-latest')
   })
 
+  it('repairs an existing Moon Bridge session that still has a stale Codex model after reload', async () => {
+    const threadId = '019e6342-76cd-7e41-aece-413a748935ae'
+    installTestWindow({
+      'codex-web-local.provider-by-context.v1': JSON.stringify({
+        [threadId]: 'moon',
+      }),
+      'codex-web-local.selected-model-by-context.v1': JSON.stringify({
+        [threadId]: 'gpt-5.5',
+      }),
+    })
+    gatewayMocks.getAvailableCollaborationModes.mockResolvedValue([{ value: 'default', label: 'Default' }])
+    gatewayMocks.getSkillsList.mockResolvedValue([])
+    gatewayMocks.getAccountRateLimits.mockResolvedValue(null)
+    gatewayMocks.getCurrentModelConfig.mockResolvedValue({
+      model: 'gpt-5.5',
+      providerId: 'codex',
+      reasoningEffort: 'medium',
+      speedMode: 'standard',
+    })
+    gatewayMocks.getAvailableModelIds.mockResolvedValue([
+      'ark-code-latest',
+      'deepseek-v4-pro',
+    ])
+    gatewayMocks.getMoonBridgeModelMetadata.mockResolvedValue([
+      { id: 'ark-code-latest', contextWindow: 256000 },
+      { id: 'deepseek-v4-pro', contextWindow: 128000 },
+    ])
+
+    const state = useDesktopState()
+    state.primeSelectedThread(threadId)
+
+    await state.refreshAncillaryState({
+      providerChanged: false,
+      includeProviderModels: false,
+    })
+
+    expect(gatewayMocks.getAvailableModelIds).toHaveBeenCalledWith({
+      includeProviderModels: true,
+      requireProviderModels: true,
+    })
+    expect(state.selectedProvider.value).toBe('moon')
+    expect(state.availableModelIds.value).toEqual([
+      'ark-code-latest',
+      'deepseek-v4-pro',
+    ])
+    expect(state.selectedModelId.value).toBe('ark-code-latest')
+    expect(state.readModelIdForThread(threadId)).toBe('ark-code-latest')
+  })
+
   it('refreshes Moon Bridge models even when config/read does not return', async () => {
     vi.useFakeTimers()
     const threadId = '019e6342-76cd-7e41-aece-413a748935ae'
@@ -967,7 +1016,7 @@ describe('session composer model state', () => {
     expect(state.selectedReasoningEffort.value).toBe('high')
   })
 
-  it('does not let provider refresh overwrite an existing thread model or reasoning effort', async () => {
+  it('does not let provider refresh overwrite an existing valid provider model or reasoning effort', async () => {
     installTestWindow({
       'codex-web-local.selected-model-by-context.v1': JSON.stringify({
         'thread-a': 'ark-code-latest',
@@ -988,7 +1037,10 @@ describe('session composer model state', () => {
       reasoningEffort: 'none',
       speedMode: 'standard',
     })
-    gatewayMocks.getAvailableModelIds.mockResolvedValue(['gpt-5.5'])
+    gatewayMocks.getAvailableModelIds.mockResolvedValue([
+      'ark-code-latest',
+      'deepseek-v4-pro',
+    ])
 
     const state = useDesktopState()
     state.primeSelectedThread('thread-a')

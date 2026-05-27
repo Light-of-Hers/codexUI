@@ -5973,7 +5973,8 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Expected Results
 - Switching an existing session to Provider `Moon Bridge` refreshes the model picker to the Moon Bridge catalog.
 - If the prior selected model is not in the Moon Bridge catalog, the composer selects the first Moon Bridge model, currently `ark-code-latest`.
-- Existing session restores that are not explicit provider changes still preserve their persisted model state.
+- Existing session restores preserve persisted model state only when the model belongs to the active provider catalog.
+- A reloaded session that already has Provider `Moon Bridge` but still stores an old Codex/Cursor model is repaired to `ark-code-latest`.
 
 #### Performance Audit
 - Explicit provider changes reuse the existing ancillary refresh path and do not add new API calls.

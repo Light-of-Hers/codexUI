@@ -2535,10 +2535,14 @@ export function useDesktopState() {
         }
       }
       availableModelIds.value = nextModelIds
+      const selectedModelProvider = inferProviderFromModel(normalizedSelectedModelId, moonBridgeModelIds.value)
+      const selectedModelMatchesActiveProvider =
+        normalizedProviderId === 'moon' && selectedModelProvider === 'moon'
       const shouldReplaceExistingThreadModel =
         !selectedContextIsNewThread
-        && options?.explicitProviderChange === true
+        && isProviderBacked
         && modelIds.length > 0
+        && (options?.explicitProviderChange === true || (options?.providerChanged !== true && !selectedModelMatchesActiveProvider))
         && (!normalizedSelectedModelId || !modelIds.includes(normalizedSelectedModelId))
       let replacedExistingThreadModel = false
       if (shouldReplaceExistingThreadModel) {
