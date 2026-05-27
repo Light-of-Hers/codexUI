@@ -4130,11 +4130,20 @@ function buildProviderStateSignature(provider: ProviderSelection = selectedProvi
 let lastAppliedProviderStateSignature = ''
 
 async function applySelectedProviderState(
-  options: { force?: boolean; refreshAncillary?: boolean } = {},
+  options: { force?: boolean; refreshAncillary?: boolean; explicitProviderChange?: boolean } = {},
 ): Promise<void> {
   const provider = selectedProvider.value
   const signature = buildProviderStateSignature(provider)
   if (!options.force && signature === lastAppliedProviderStateSignature) {
+    if (options.refreshAncillary !== false && options.explicitProviderChange === true) {
+      providerError.value = ''
+      await loadFreeModeStatus()
+      await refreshAncillaryState({
+        providerChanged: true,
+        includeProviderModels: true,
+        explicitProviderChange: true,
+      })
+    }
     return
   }
 
@@ -4183,7 +4192,11 @@ async function applySelectedProviderState(
     providerError.value = ''
     await loadFreeModeStatus()
     if (options.refreshAncillary !== false) {
-      await refreshAncillaryState({ providerChanged: true, includeProviderModels: true })
+      await refreshAncillaryState({
+        providerChanged: true,
+        includeProviderModels: true,
+        explicitProviderChange: options.explicitProviderChange,
+      })
     }
   } catch (err) {
     providerError.value = err instanceof Error ? err.message : 'Failed to switch provider'
@@ -4197,7 +4210,7 @@ async function onProviderChange(provider: string): Promise<void> {
   try {
     const normalizedProvider = normalizeProviderSelection(provider)
     setSelectedProviderForComposerContext(composerThreadContextId.value, normalizedProvider)
-    await applySelectedProviderState()
+    await applySelectedProviderState({ explicitProviderChange: true })
   } catch (err) {
     providerError.value = err instanceof Error ? err.message : 'Failed to switch provider'
   } finally {

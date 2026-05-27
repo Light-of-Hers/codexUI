@@ -723,6 +723,56 @@ describe('provider model selection', () => {
     })
   })
 
+  it('updates an existing session model list after an explicit Moon Bridge provider change', async () => {
+    const threadId = '019e6342-76cd-7e41-aece-413a748935ae'
+    installTestWindow({
+      'codex-web-local.provider-by-context.v1': JSON.stringify({
+        [threadId]: 'moon',
+      }),
+      'codex-web-local.selected-model-by-context.v1': JSON.stringify({
+        [threadId]: 'gpt-5.5',
+      }),
+    })
+    gatewayMocks.getAvailableCollaborationModes.mockResolvedValue([{ value: 'default', label: 'Default' }])
+    gatewayMocks.getSkillsList.mockResolvedValue([])
+    gatewayMocks.getAccountRateLimits.mockResolvedValue(null)
+    gatewayMocks.getCurrentModelConfig.mockResolvedValue({
+      model: 'gpt-5.5',
+      providerId: 'codex',
+      reasoningEffort: 'medium',
+      speedMode: 'standard',
+    })
+    gatewayMocks.getAvailableModelIds.mockResolvedValue([
+      'ark-code-latest',
+      'deepseek-v4-pro',
+    ])
+    gatewayMocks.getMoonBridgeModelMetadata.mockResolvedValue([
+      { id: 'ark-code-latest', contextWindow: 256000 },
+      { id: 'deepseek-v4-pro', contextWindow: 128000 },
+    ])
+
+    const state = useDesktopState()
+    state.primeSelectedThread(threadId)
+
+    await state.refreshAncillaryState({
+      providerChanged: true,
+      includeProviderModels: true,
+      explicitProviderChange: true,
+    })
+
+    expect(gatewayMocks.getAvailableModelIds).toHaveBeenCalledWith({
+      includeProviderModels: true,
+      requireProviderModels: true,
+    })
+    expect(state.selectedProvider.value).toBe('moon')
+    expect(state.availableModelIds.value).toEqual([
+      'ark-code-latest',
+      'deepseek-v4-pro',
+    ])
+    expect(state.selectedModelId.value).toBe('ark-code-latest')
+    expect(state.readModelIdForThread(threadId)).toBe('ark-code-latest')
+  })
+
   it('keeps Codex model picks scoped to Codex even when the model also exists in Moon Bridge', async () => {
     installTestWindow()
     gatewayMocks.getThreadGroupsPage.mockResolvedValue({ groups: [], nextCursor: null })

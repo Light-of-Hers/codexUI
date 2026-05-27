@@ -5950,3 +5950,62 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - Switch Provider back to the preferred default after manual verification.
+
+### Feature: Moon Bridge existing-session provider switch
+
+#### Prerequisites
+- App server is running from this repository.
+- Moon Bridge model catalog contains `ark-code-latest`.
+- Existing session `019e6342-76cd-7e41-aece-413a748935ae` is available, or another session currently using a Codex/Cursor model is available.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Run `pnpm exec vitest run src/composables/useDesktopState.test.ts src/commandResolution.test.ts`.
+2. Run `pnpm exec vue-tsc --noEmit`.
+3. Restart the app server so it loads the latest server-side command resolver.
+4. Open session `019e6342-76cd-7e41-aece-413a748935ae` in light theme.
+5. Change Provider to `Moon Bridge`.
+6. Open the Model dropdown.
+7. Confirm the dropdown contains `ark-code-latest` and other Moon Bridge catalog models.
+8. Confirm the previous Codex/Cursor-only model is not kept as the active selected model when it is not in the Moon Bridge catalog.
+9. Repeat steps 4-8 in dark theme.
+
+#### Expected Results
+- Switching an existing session to Provider `Moon Bridge` refreshes the model picker to the Moon Bridge catalog.
+- If the prior selected model is not in the Moon Bridge catalog, the composer selects the first Moon Bridge model, currently `ark-code-latest`.
+- Existing session restores that are not explicit provider changes still preserve their persisted model state.
+
+#### Performance Audit
+- Explicit provider changes reuse the existing ancillary refresh path and do not add new API calls.
+- Existing-session model replacement is an O(1) membership check against the already-fetched model list.
+
+#### Rollback/Cleanup
+- Switch the session back to the preferred provider/model after manual verification.
+
+### Feature: Moon Bridge command resolution
+
+#### Prerequisites
+- `codex-moon` is installed or `CODEXUI_CODEX_MOON_COMMAND` points to the Moon Bridge wrapper.
+- Moon Bridge model catalog contains `ark-code-latest`.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Run `pnpm exec vitest run src/commandResolution.test.ts`.
+2. Run `pnpm exec vue-tsc --noEmit`.
+3. Start or restart the app server so it loads the updated resolver.
+4. Open the app in light theme and switch Provider to `Moon Bridge`.
+5. Confirm no `Codex Moon Bridge CLI is not available` error appears.
+6. Open the Model dropdown and confirm `ark-code-latest` appears.
+7. Repeat steps 4-6 in dark theme.
+
+#### Expected Results
+- Moon Bridge command resolution accepts an installed executable even when `codex-moon --version` exits non-zero.
+- Switching to Provider `Moon Bridge` updates `/codex-api/provider-models` to the Moon Bridge catalog.
+- The model picker includes `ark-code-latest`.
+
+#### Performance Audit
+- The resolver now uses PATH/executable checks for `codex-moon`; it no longer starts the Moon Bridge wrapper during availability detection.
+- The change removes the previous `--version` startup probe and does not add browser requests.
+
+#### Rollback/Cleanup
+- Switch Provider back to the preferred default after manual verification.

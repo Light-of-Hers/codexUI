@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { accessSync, constants, existsSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { delimiter, join } from 'node:path'
+import { delimiter, isAbsolute, join } from 'node:path'
 
 export type CommandInvocation = {
   command: string
@@ -20,6 +20,48 @@ function uniqueStrings(values: Array<string | null | undefined>): string[] {
 
 function isPathLike(command: string): boolean {
   return command.includes('/') || command.includes('\\') || /^[a-zA-Z]:/.test(command)
+}
+
+function canAccessExecutable(path: string): boolean {
+  try {
+    accessSync(path, constants.X_OK)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function getPathExecutableCandidates(command: string): string[] {
+  if (process.platform !== 'win32' || /\.[a-z0-9]+$/i.test(command)) {
+    return [command]
+  }
+
+  const pathExt = process.env.PATHEXT?.trim() || '.COM;.EXE;.BAT;.CMD'
+  return pathExt
+    .split(';')
+    .map((ext) => ext.trim())
+    .filter(Boolean)
+    .map((ext) => `${command}${ext.toLowerCase()}`)
+}
+
+function isResolvableExecutable(command: string): boolean {
+  if (isPathLike(command)) {
+    return existsSync(command) && canAccessExecutable(command)
+  }
+
+  const pathEntries = process.env.PATH
+    ?.split(delimiter)
+    .map((value) => value.trim())
+    .filter(Boolean) ?? []
+  for (const pathEntry of pathEntries) {
+    const candidateBase = isAbsolute(pathEntry) ? join(pathEntry, command) : join(process.cwd(), pathEntry, command)
+    for (const candidate of getPathExecutableCandidates(candidateBase)) {
+      if (existsSync(candidate) && canAccessExecutable(candidate)) {
+        return true
+      }
+    }
+  }
+  return false
 }
 
 function isRunnableCommand(command: string, args: string[] = []): boolean {
@@ -143,7 +185,7 @@ function getPotentialCodexMoonCommands(): string[] {
 
 export function resolveCodexMoonCommand(): string | null {
   for (const candidate of getPotentialCodexMoonCommands()) {
-    if (isRunnableCommand(candidate, ['--version'])) {
+    if (isResolvableExecutable(candidate)) {
       return candidate
     }
   }
