@@ -5982,6 +5982,38 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Rollback/Cleanup
 - Switch the session back to the preferred provider/model after manual verification.
 
+### Feature: Moon Bridge model picker when Codex RPC is slow
+
+#### Prerequisites
+- App server is running from this repository.
+- Existing session `019e6342-76cd-7e41-aece-413a748935ae` is available, or another Cursor/Codex-backed session is available.
+- Moon Bridge model catalog contains `ark-code-latest`.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Run `pnpm exec vitest run src/composables/useDesktopState.test.ts src/api/codexGateway.test.ts`.
+2. Run `pnpm exec vue-tsc --noEmit`.
+3. Open the existing session in light theme while it is using a Cursor/Codex model such as `gpt-5.5`.
+4. Change Provider to `Moon Bridge`.
+5. Confirm `/codex-api/free-mode/status` returns `provider: "moon"` and `currentModel: "ark-code-latest"`.
+6. Open the Model dropdown.
+7. Confirm the dropdown shows only Moon Bridge catalog models, including `ark-code-latest`, `deepseek-v3.2`, and `moonbridge`.
+8. Confirm Codex/Cursor models such as `gpt-5.5`, `auto`, and `composer-2` are not listed.
+9. Repeat steps 3-8 in dark theme.
+
+#### Expected Results
+- Provider-backed model discovery reads `/codex-api/provider-models` before `model/list` when provider models are required.
+- A slow or stuck `config/read` RPC does not prevent the Moon Bridge model picker from refreshing.
+- The existing session's stale model is replaced with `ark-code-latest` when the previous model is not in the Moon Bridge catalog.
+
+#### Performance Audit
+- The provider-model request count stays the same for explicit provider changes.
+- The UI no longer blocks indefinitely on provider-backed `config/read`, `model/list`, or ancillary RPCs before updating the model picker.
+- The fallback config path is a short timeout and does not add polling.
+
+#### Rollback/Cleanup
+- Switch the session back to the preferred provider/model after manual verification.
+
 ### Feature: Moon Bridge command resolution
 
 #### Prerequisites

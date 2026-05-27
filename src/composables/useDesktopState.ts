@@ -100,12 +100,15 @@ const NEW_THREAD_PROVIDER_MODEL_CONTEXT_PREFIX = '__new-thread-provider__::'
 const EVENT_SYNC_DEBOUNCE_MS = 220
 const BACKGROUND_THREAD_PAGINATION_DELAY_MS = 10_000
 const RATE_LIMIT_REFRESH_DEBOUNCE_MS = 500
+const MODEL_CONFIG_FETCH_TIMEOUT_MS = 2_000
+const ANCILLARY_REFRESH_TIMEOUT_MS = 6_000
 const TURN_START_FOLLOW_UP_SYNC_DELAY_MS = 3000
 const RECENT_THREAD_MESSAGE_LOAD_REUSE_MS = 2000
 const REASONING_EFFORT_OPTIONS: ReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
 const GLOBAL_SERVER_REQUEST_SCOPE = '__global__'
 const MODEL_FALLBACK_ID = 'gpt-5.4-mini'
 const CODEX_CLI_MISSING_MESSAGE = 'Codex CLI not found. Install @openai/codex or set CODEXUI_CODEX_COMMAND.'
+type CurrentModelConfigSnapshot = Awaited<ReturnType<typeof getCurrentModelConfig>>
 
 function isCodexCliMissingError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error ?? '')
@@ -2448,13 +2451,52 @@ export function useDesktopState() {
     activeTurnIdByThreadId.value = {}
   }
 
+  function readFallbackCurrentModelConfig(providerId: ProviderId): CurrentModelConfigSnapshot {
+    return {
+      model: readModelIdForThread(selectedThreadId.value),
+      providerId: toStoredRpcModelProviderId(providerId, activeCodexProviderId.value),
+      reasoningEffort: readReasoningEffortForThread(selectedThreadId.value),
+      speedMode: selectedSpeedMode.value,
+    }
+  }
+
+  async function getCurrentModelConfigSnapshot(providerId: ProviderId): Promise<CurrentModelConfigSnapshot> {
+    return await new Promise<CurrentModelConfigSnapshot>((resolve) => {
+      let settled = false
+      const timeoutId = setTimeout(() => {
+        settled = true
+        resolve(readFallbackCurrentModelConfig(providerId))
+      }, MODEL_CONFIG_FETCH_TIMEOUT_MS)
+
+      getCurrentModelConfig().then((config) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timeoutId)
+        resolve(config)
+      }).catch(() => {
+        if (settled) return
+        settled = true
+        clearTimeout(timeoutId)
+        resolve(readFallbackCurrentModelConfig(providerId))
+      })
+    })
+  }
+
   async function refreshModelPreferences(
     options?: { providerChanged?: boolean; includeProviderModels?: boolean; explicitProviderChange?: boolean },
   ): Promise<void> {
     codexCliMissingError.value = ''
     try {
+      const selectedProviderContextId = toProviderSelectionContextId(selectedThreadId.value)
+      const hasExplicitSelectedProvider = Object.prototype.hasOwnProperty.call(
+        selectedProviderByContext.value,
+        selectedProviderContextId,
+      )
+      const providerHint = hasExplicitSelectedProvider
+        ? readSelectedProvider(selectedProviderByContext.value, selectedThreadId.value)
+        : selectedProvider.value
       const [currentConfig, moonModels] = await Promise.all([
-        getCurrentModelConfig(),
+        getCurrentModelConfigSnapshot(providerHint),
         moonBridgeModelIds.value.length > 0 && Object.keys(moonBridgeModelContextWindowById.value).length > 0
           ? Promise.resolve(moonBridgeModelIds.value)
           : loadMoonBridgeModelIds(),
@@ -2464,11 +2506,6 @@ export function useDesktopState() {
       const normalizedConfiguredModelId = currentConfig.model.trim()
       const rawConfiguredProviderId = currentConfig.providerId.trim()
       const configuredProviderId = normalizeProviderContextId(currentConfig.providerId)
-      const selectedProviderContextId = toProviderSelectionContextId(selectedThreadId.value)
-      const hasExplicitSelectedProvider = Object.prototype.hasOwnProperty.call(
-        selectedProviderByContext.value,
-        selectedProviderContextId,
-      )
       const normalizedProviderId = hasExplicitSelectedProvider
         ? readSelectedProvider(selectedProviderByContext.value, selectedThreadId.value)
         : configuredProviderId
@@ -5300,18 +5337,40 @@ export function useDesktopState() {
     await refreshSkillsPromise
   }
 
+  async function settleAncillaryRefresh(promise: Promise<unknown>): Promise<void> {
+    await new Promise<void>((resolve) => {
+      let settled = false
+      const timeoutId = setTimeout(() => {
+        settled = true
+        resolve()
+      }, ANCILLARY_REFRESH_TIMEOUT_MS)
+
+      promise.then(() => {
+        if (settled) return
+        settled = true
+        clearTimeout(timeoutId)
+        resolve()
+      }).catch(() => {
+        if (settled) return
+        settled = true
+        clearTimeout(timeoutId)
+        resolve()
+      })
+    })
+  }
+
   async function refreshAncillaryState(
     options: { providerChanged?: boolean; includeProviderModels?: boolean; explicitProviderChange?: boolean } = {},
   ): Promise<void> {
-    await Promise.allSettled([
-      refreshModelPreferences({
+    await Promise.all([
+      settleAncillaryRefresh(refreshModelPreferences({
         providerChanged: options.providerChanged,
         includeProviderModels: options.includeProviderModels,
         explicitProviderChange: options.explicitProviderChange,
-      }),
-      refreshRateLimits(),
-      refreshCollaborationModes(),
-      refreshSkills(),
+      })),
+      settleAncillaryRefresh(refreshRateLimits()),
+      settleAncillaryRefresh(refreshCollaborationModes()),
+      settleAncillaryRefresh(refreshSkills()),
     ])
   }
 

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { forkThread, getThreadQueueState, listDirectoryComposioConnectors, resumeThread, searchComposerFiles, searchFileLinkPaths, setThreadQueueState, startThread, startThreadTurn, steerThreadTurn } from './codexGateway'
+import { forkThread, getAvailableModelIds, getThreadQueueState, listDirectoryComposioConnectors, resumeThread, searchComposerFiles, searchFileLinkPaths, setThreadQueueState, startThread, startThreadTurn, steerThreadTurn } from './codexGateway'
 
 function mockRpcFetch(): { requests: Array<{ method: string, params: Record<string, unknown> }> } {
   const requests: Array<{ method: string, params: Record<string, unknown> }> = []
@@ -266,6 +266,40 @@ describe('thread queue state', () => {
         }],
       },
     })
+  })
+})
+
+describe('provider model discovery', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('uses exclusive provider models without waiting for model/list when provider models are required', async () => {
+    const requests: Array<{ url: string; body?: unknown }> = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const body = typeof init?.body === 'string' ? JSON.parse(init.body) as unknown : undefined
+      requests.push({ url, body })
+
+      if (url.endsWith('/codex-api/provider-models')) {
+        return new Response(JSON.stringify({
+          data: ['ark-code-latest', 'deepseek-v4-pro'],
+          exclusive: true,
+          source: 'moon',
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+
+      throw new Error(`unexpected request: ${url}`)
+    }))
+
+    await expect(getAvailableModelIds({
+      includeProviderModels: true,
+      requireProviderModels: true,
+    })).resolves.toEqual(['ark-code-latest', 'deepseek-v4-pro'])
+    expect(requests).toEqual([{ url: '/codex-api/provider-models', body: undefined }])
   })
 })
 

@@ -97,6 +97,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.unstubAllGlobals()
 })
 
@@ -759,6 +760,54 @@ describe('provider model selection', () => {
       includeProviderModels: true,
       explicitProviderChange: true,
     })
+
+    expect(gatewayMocks.getAvailableModelIds).toHaveBeenCalledWith({
+      includeProviderModels: true,
+      requireProviderModels: true,
+    })
+    expect(state.selectedProvider.value).toBe('moon')
+    expect(state.availableModelIds.value).toEqual([
+      'ark-code-latest',
+      'deepseek-v4-pro',
+    ])
+    expect(state.selectedModelId.value).toBe('ark-code-latest')
+    expect(state.readModelIdForThread(threadId)).toBe('ark-code-latest')
+  })
+
+  it('refreshes Moon Bridge models even when config/read does not return', async () => {
+    vi.useFakeTimers()
+    const threadId = '019e6342-76cd-7e41-aece-413a748935ae'
+    installTestWindow({
+      'codex-web-local.provider-by-context.v1': JSON.stringify({
+        [threadId]: 'moon',
+      }),
+      'codex-web-local.selected-model-by-context.v1': JSON.stringify({
+        [threadId]: 'gpt-5.5',
+      }),
+    })
+    gatewayMocks.getAvailableCollaborationModes.mockResolvedValue([{ value: 'default', label: 'Default' }])
+    gatewayMocks.getSkillsList.mockResolvedValue([])
+    gatewayMocks.getAccountRateLimits.mockResolvedValue(null)
+    gatewayMocks.getCurrentModelConfig.mockReturnValue(new Promise(() => {}))
+    gatewayMocks.getAvailableModelIds.mockResolvedValue([
+      'ark-code-latest',
+      'deepseek-v4-pro',
+    ])
+    gatewayMocks.getMoonBridgeModelMetadata.mockResolvedValue([
+      { id: 'ark-code-latest', contextWindow: 256000 },
+      { id: 'deepseek-v4-pro', contextWindow: 128000 },
+    ])
+
+    const state = useDesktopState()
+    state.primeSelectedThread(threadId)
+    const refreshPromise = state.refreshAncillaryState({
+      providerChanged: true,
+      includeProviderModels: true,
+      explicitProviderChange: true,
+    })
+
+    await vi.advanceTimersByTimeAsync(2100)
+    await refreshPromise
 
     expect(gatewayMocks.getAvailableModelIds).toHaveBeenCalledWith({
       includeProviderModels: true,
