@@ -4435,6 +4435,10 @@ async function initialize(): Promise<void> {
   await router.isReady()
   await refreshMoonBridgeModelIds().catch(() => {})
 
+  if (route.name === 'thread' && routeThreadId.value) {
+    primeSelectedThread(routeThreadId.value)
+  }
+  void applySelectedProviderState().catch(() => {})
   await refreshAll({
     includeSelectedThreadMessages: false,
     refreshAncillary: false,
@@ -4447,10 +4451,11 @@ async function initialize(): Promise<void> {
   void loadAccountsState({ silent: true })
   await applyLaunchProjectPathFromUrl()
   hasInitialized.value = true
-  await syncThreadSelectionWithRoute()
-  await applySelectedProviderState({ refreshAncillary: false }).catch(() => {})
+  void applySelectedProviderState().catch(() => {})
   startPolling()
   scheduleStartupBackgroundRefreshes()
+  await syncThreadSelectionWithRoute()
+  await applySelectedProviderState({ refreshAncillary: false }).catch(() => {})
 }
 
 function threadExistsInSidebar(threadId: string): boolean {

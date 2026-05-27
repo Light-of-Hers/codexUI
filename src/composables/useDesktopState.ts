@@ -2538,11 +2538,16 @@ export function useDesktopState() {
       const selectedModelProvider = inferProviderFromModel(normalizedSelectedModelId, moonBridgeModelIds.value)
       const selectedModelMatchesActiveProvider =
         normalizedProviderId === 'moon' && selectedModelProvider === 'moon'
+      const canTrustActiveProviderCatalog =
+        normalizedProviderId !== 'moon' || moonBridgeModelIds.value.length > 0
       const shouldReplaceExistingThreadModel =
         !selectedContextIsNewThread
         && isProviderBacked
         && modelIds.length > 0
-        && (options?.explicitProviderChange === true || (options?.providerChanged !== true && !selectedModelMatchesActiveProvider))
+        && (
+          options?.explicitProviderChange === true
+          || (!selectedModelMatchesActiveProvider && (options?.providerChanged !== true || canTrustActiveProviderCatalog))
+        )
         && (!normalizedSelectedModelId || !modelIds.includes(normalizedSelectedModelId))
       let replacedExistingThreadModel = false
       if (shouldReplaceExistingThreadModel) {

@@ -6000,11 +6000,14 @@ Markdown files opened through the local editor expose a preview button that rend
 6. Open the Model dropdown.
 7. Confirm the dropdown shows only Moon Bridge catalog models, including `ark-code-latest`, `deepseek-v3.2`, and `moonbridge`.
 8. Confirm Codex/Cursor models such as `gpt-5.5`, `auto`, and `composer-2` are not listed.
-9. Repeat steps 3-8 in dark theme.
+9. Refresh the same route with local storage already containing Provider `Moon Bridge` and a stale model such as `gpt-5.5`.
+10. Confirm the model picker still repairs the selected model to `ark-code-latest` before the stale model can be submitted.
+11. Repeat steps 3-10 in dark theme.
 
 #### Expected Results
 - Provider-backed model discovery reads `/codex-api/provider-models` before `model/list` when provider models are required.
 - A slow or stuck `config/read` RPC does not prevent the Moon Bridge model picker from refreshing.
+- Startup provider/model refresh is kicked off before thread list or resume RPCs can block the route.
 - The existing session's stale model is replaced with `ark-code-latest` when the previous model is not in the Moon Bridge catalog.
 
 #### Performance Audit
