@@ -6092,14 +6092,18 @@ Markdown files opened through the local editor expose a preview button that rend
 4. Submit `/goal Ship goal slash-command support`.
 5. Confirm no normal user prompt is appended and no new turn starts.
 6. Confirm the live overlay shows `Goal active` and includes `Ship goal slash-command support`.
-7. Submit `/goal`.
-8. Confirm the current goal is shown without starting or steering a turn.
-9. Submit `/goal pause`, then confirm the overlay shows `Goal paused`.
-10. Submit `/goal unpause`, then confirm the overlay returns to `Goal active`.
-11. Submit `/goal clear`, then confirm the overlay shows `Goal cleared`.
-12. From the new-thread composer, submit `/goal Validate new-thread goal setup`.
-13. Confirm a new thread is created, the goal notice appears, and no normal turn is started.
-14. Repeat steps 3-13 in dark theme.
+7. Submit `/goal $planning-with-files Track goal slash-command support`.
+8. Confirm the command still routes to the goal workflow, the live overlay shows `Goal active`, and no normal turn starts even though a skill is attached.
+9. Submit `/goal`.
+10. Confirm the current goal is shown without starting or steering a turn.
+11. Submit `/goal pause`, then confirm the overlay shows `Goal paused`.
+12. Submit `/goal unpause`, then confirm the overlay returns to `Goal active`.
+13. Submit `/goal clear`, then confirm the overlay shows `Goal cleared`.
+14. From the new-thread composer, submit `/goal Validate new-thread goal setup`.
+15. Confirm a new thread is created, the goal notice appears, and no normal turn is started.
+16. From the new-thread composer, submit `/goal $planning-with-files Validate new-thread goal setup`.
+17. Confirm a new thread is created, the skill mention does not start a normal turn, and the goal notice appears.
+18. Repeat steps 3-17 in dark theme.
 
 #### Expected Results
 - `/goal <objective>` routes to `thread/goal/set` with `status: active`.
@@ -6107,12 +6111,14 @@ Markdown files opened through the local editor expose a preview button that rend
 - `/goal pause` and `/goal unpause` route to `thread/goal/set` status updates.
 - `/goal clear` routes to `thread/goal/clear`.
 - Goal commands do not call `turn/start` or `turn/steer`.
+- Goal commands that include skill mentions still route to goal RPCs instead of normal turns.
 - New-thread `/goal <objective>` creates the thread, sets the goal, and does not show an interrupt-pending state.
 - Light and dark theme overlays remain readable.
 
 #### Performance Audit
 - Normal prompt submission does not add goal RPCs; command parsing is a single local string check before the existing turn path.
 - Goal submissions perform exactly one goal RPC after the thread id exists, except new-thread goal setup which first creates the thread.
+- Skill mentions on goal commands do not add network calls because the goal branch ignores attachments after local slash-command detection.
 - Goal notices are stored in a per-thread map and pruned with other thread-scoped state.
 
 #### Rollback/Cleanup

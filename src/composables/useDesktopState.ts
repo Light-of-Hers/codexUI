@@ -5804,8 +5804,8 @@ export function useDesktopState() {
     const nextText = text.trim()
     if (!threadId || (!nextText && imageUrls.length === 0 && fileAttachments.length === 0)) return
 
-    const textOnlySubmission = imageUrls.length === 0 && skills.length === 0 && fileAttachments.length === 0
-    if (textOnlySubmission && await runGoalSlashCommandForThread(threadId, nextText)) {
+    const goalSlashCommandSubmission = imageUrls.length === 0 && fileAttachments.length === 0
+    if (goalSlashCommandSubmission && await runGoalSlashCommandForThread(threadId, nextText)) {
       return
     }
 
@@ -5940,8 +5940,8 @@ export function useDesktopState() {
     const selectedProviderForNewThread = selectedProvider.value
     if (!nextText && imageUrls.length === 0 && fileAttachments.length === 0) return ''
 
-    const textOnlySubmission = imageUrls.length === 0 && skills.length === 0 && fileAttachments.length === 0
-    const goalSlashCommand = textOnlySubmission ? parseGoalSlashCommand(nextText) : null
+    const goalSlashCommandSubmission = imageUrls.length === 0 && fileAttachments.length === 0
+    const goalSlashCommand = goalSlashCommandSubmission ? parseGoalSlashCommand(nextText) : null
     if (goalSlashCommand && goalSlashCommand.kind !== 'set') {
       error.value = 'Open an existing thread before using this /goal command.'
       return ''
