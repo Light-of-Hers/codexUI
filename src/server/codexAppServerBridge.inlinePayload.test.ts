@@ -36,14 +36,17 @@ async function writeMockCommand(path: string): Promise<void> {
   await chmod(path, 0o755)
 }
 
-async function writeJsonRpcCommand(path: string, provider: string, logPath: string): Promise<void> {
+async function writeJsonRpcCommand(path: string, provider: string, logPath: string, logMethods = false): Promise<void> {
   await writeFile(path, `#!/usr/bin/env node
 const fs = require('node:fs')
 if (process.argv[2] === '--version') {
   console.log(${JSON.stringify(`${provider} mock`)})
   process.exit(0)
 }
-fs.appendFileSync(${JSON.stringify(logPath)}, ${JSON.stringify(provider)} + '\\n')
+const logMethods = ${JSON.stringify(logMethods)}
+if (!logMethods) {
+  fs.appendFileSync(${JSON.stringify(logPath)}, ${JSON.stringify(provider)} + '\\n')
+}
 process.stdin.setEncoding('utf8')
 let buffer = ''
 process.stdin.on('data', (chunk) => {
@@ -54,6 +57,9 @@ process.stdin.on('data', (chunk) => {
     buffer = buffer.slice(index + 1)
     if (line) {
       const message = JSON.parse(line)
+      if (logMethods) {
+        fs.appendFileSync(${JSON.stringify(logPath)}, ${JSON.stringify(provider)} + ':' + message.method + '\\n')
+      }
       const result = message.method === 'turn/start'
         ? { turn: { id: ${JSON.stringify(provider)} + '-turn' } }
         : message.method === 'config/read'
@@ -1562,8 +1568,8 @@ describe('app-server runtime configuration', () => {
     const commandLogPath = join(tempDir, 'commands.log')
     const codexCommand = join(tempDir, 'codex')
     const cursorCommand = join(tempDir, 'codex-cursor')
-    await writeJsonRpcCommand(codexCommand, 'codex', commandLogPath)
-    await writeJsonRpcCommand(cursorCommand, 'cursor', commandLogPath)
+    await writeJsonRpcCommand(codexCommand, 'codex', commandLogPath, true)
+    await writeJsonRpcCommand(cursorCommand, 'cursor', commandLogPath, true)
     await writeFile(join(tempDir, 'webui-free-mode.json'), JSON.stringify({
       enabled: true,
       apiKey: null,
@@ -1621,7 +1627,81 @@ describe('app-server runtime configuration', () => {
           },
         },
       })
-      expect(await readFile(commandLogPath, 'utf8')).toBe('cursor\n')
+      expect(await readFile(commandLogPath, 'utf8')).toContain('cursor:thread/resume\ncursor:turn/start\n')
+    } finally {
+      middleware.dispose()
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('routes explicit Moon provider RPCs to the Moon runtime even when Cursor is active', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-provider-runtime-route-'))
+    const commandLogPath = join(tempDir, 'commands.log')
+    const codexCommand = join(tempDir, 'codex')
+    const moonCommand = join(tempDir, 'codex-moon')
+    const cursorCommand = join(tempDir, 'codex-cursor')
+    await writeJsonRpcCommand(codexCommand, 'codex', commandLogPath, true)
+    await writeJsonRpcCommand(moonCommand, 'moon', commandLogPath, true)
+    await writeJsonRpcCommand(cursorCommand, 'cursor', commandLogPath, true)
+    await writeFile(join(tempDir, 'webui-free-mode.json'), JSON.stringify({
+      enabled: true,
+      apiKey: null,
+      model: 'gpt-5.5-medium',
+      provider: 'cursor',
+    }), 'utf8')
+    vi.stubEnv('CODEX_HOME', tempDir)
+    vi.stubEnv('CODEXUI_CODEX_COMMAND', codexCommand)
+    vi.stubEnv('CODEXUI_CODEX_MOON_COMMAND', moonCommand)
+    vi.stubEnv('CODEXUI_CODEX_CURSOR_COMMAND', cursorCommand)
+
+    const middleware = createCodexBridgeMiddleware()
+    const responseChunks: string[] = []
+    const response = {
+      statusCode: 0,
+      setHeader: () => undefined,
+      write: (chunk?: unknown) => {
+        if (chunk) responseChunks.push(String(chunk))
+        return true
+      },
+      end: (chunk?: unknown) => {
+        if (chunk) responseChunks.push(String(chunk))
+      },
+      once: () => response,
+    }
+    const body = JSON.stringify({
+      method: 'turn/start',
+      params: {
+        threadId: 'thread-1',
+        input: [{ type: 'text', text: 'use moon now' }],
+        model: 'ark-code-latest',
+        modelProvider: 'moon',
+      },
+    })
+    const request = Readable.from([body]) as Readable & {
+      url: string
+      method: string
+      headers: Record<string, string>
+    }
+    request.url = '/codex-api/rpc'
+    request.method = 'POST'
+    request.headers = { 'content-type': 'application/json' }
+
+    try {
+      await middleware(
+        request as never,
+        response as never,
+        () => { throw new Error('rpc route should handle the request') },
+      )
+
+      expect(response.statusCode).toBe(200)
+      expect(JSON.parse(responseChunks.join(''))).toEqual({
+        result: {
+          turn: {
+            id: 'moon-turn',
+          },
+        },
+      })
+      expect(await readFile(commandLogPath, 'utf8')).toContain('moon:thread/resume\nmoon:turn/start\n')
     } finally {
       middleware.dispose()
       await rm(tempDir, { recursive: true, force: true })
@@ -1633,8 +1713,8 @@ describe('app-server runtime configuration', () => {
     const commandLogPath = join(tempDir, 'commands.log')
     const codexCommand = join(tempDir, 'codex')
     const cursorCommand = join(tempDir, 'codex-cursor')
-    await writeJsonRpcCommand(codexCommand, 'codex', commandLogPath)
-    await writeJsonRpcCommand(cursorCommand, 'cursor', commandLogPath)
+    await writeJsonRpcCommand(codexCommand, 'codex', commandLogPath, true)
+    await writeJsonRpcCommand(cursorCommand, 'cursor', commandLogPath, true)
     await writeFile(join(tempDir, 'webui-free-mode.json'), JSON.stringify({
       enabled: true,
       apiKey: null,
@@ -1685,7 +1765,7 @@ describe('app-server runtime configuration', () => {
 
       expect(response.statusCode).toBe(200)
       expect(JSON.parse(responseChunks.join(''))).toEqual({ result: {} })
-      expect(await readFile(commandLogPath, 'utf8')).toBe('cursor\n')
+      expect(await readFile(commandLogPath, 'utf8')).toContain('cursor:turn/interrupt\n')
     } finally {
       middleware.dispose()
       await rm(tempDir, { recursive: true, force: true })

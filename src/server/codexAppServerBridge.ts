@@ -6922,6 +6922,32 @@ function readRequestedWrapperProvider(method: string, params: unknown): 'moon' |
   return null
 }
 
+async function ensureTurnStartRuntimeThreadState(
+  appServer: RpcExecutor,
+  method: string,
+  params: unknown,
+): Promise<void> {
+  if (method !== 'turn/start') return
+  const requestedProvider = readRequestedWrapperProvider(method, params)
+  if (!requestedProvider) return
+
+  const paramsRecord = asRecord(params)
+  const threadId = readNonEmptyString(paramsRecord?.threadId)
+  if (!threadId) return
+
+  const resumeParams: Record<string, unknown> = {
+    threadId,
+    persistExtendedHistory: true,
+    modelProvider: requestedProvider,
+  }
+  const model = readNonEmptyString(paramsRecord?.model)
+  if (model) {
+    resumeParams.model = model
+  }
+
+  await appServer.rpc('thread/resume', resumeParams)
+}
+
 function buildWrapperRuntimeState(
   currentState: FreeModeState,
   provider: 'moon' | 'cursor',
@@ -7704,6 +7730,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         const rpcParams = await rewriteOpenAiThreadModelProvider(rpcAppServer, body.method, body.params ?? null)
         let rpcResult: unknown
         try {
+          await ensureTurnStartRuntimeThreadState(rpcAppServer, body.method, rpcParams)
           rpcResult = await callRpcWithArchiveRecovery(rpcAppServer, body.method, rpcParams)
         } catch (error) {
 	          if (body.method === 'account/rateLimits/read' && isUnauthenticatedRateLimitError(error)) {

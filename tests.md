@@ -6165,3 +6165,39 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - Switch Provider back to the preferred runtime after manual verification.
+
+### Feature: Rebind wrapper runtime before provider-switched turns
+
+#### Prerequisites
+- `codex-cursor` is installed or configured through `CODEXUI_CODEX_CURSOR_COMMAND`.
+- An existing Codex/default-provider thread is available, preferably one whose session metadata shows a non-Cursor default provider such as `rustcat`.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Run `pnpm vitest run src/api/codexGateway.test.ts src/server/codexAppServerBridge.inlinePayload.test.ts src/composables/useDesktopState.test.ts`.
+2. Run `pnpm run build:cli`.
+3. Open the existing Codex/default-provider thread in light theme.
+4. Switch Provider to `Cursor CLI`.
+5. Send a new prompt after the previous turn is idle.
+6. Confirm the backend handles `thread/resume` with `modelProvider: "cursor"` on the Cursor runtime before handling `turn/start`.
+7. On the same idle thread, switch between Codex/default, Moon Bridge, and Cursor CLI, sending one prompt after each switch.
+8. Confirm each switch triggers a fresh `thread/resume` using the selected provider before the next `turn/start`.
+9. Reload the app and reopen the same thread.
+10. Confirm provider recovery does not fall back to the old session-level provider.
+11. Repeat steps 3-10 in dark theme.
+
+#### Expected Results
+- New Cursor turns on an older Codex/default-provider session are rebound with `thread/resume(modelProvider: "cursor")` before `turn/start`.
+- `turn/start` runs through the Cursor runtime even when the session originally recorded `session_meta.model_provider` as a Codex/default provider.
+- Already-loaded sessions are re-resumed after Codex/default, Moon Bridge, and Cursor CLI provider switches instead of reusing the previous provider's resume state.
+- Explicit Moon Bridge and Cursor CLI `turn/start` RPCs route to the matching wrapper runtime even when the active global runtime is the other wrapper.
+- Queued and auto-continued turns keep using their explicit provider-specific runtime.
+- Light and dark theme provider controls remain readable while switching providers.
+
+#### Performance Audit
+- Provider-switched wrapper `turn/start` adds one local app-server `thread/resume` on the selected runtime before starting the turn.
+- The extra resume is scoped to explicit wrapper providers (`Moon Bridge`/`Cursor CLI`) and reuses runtime instances by signature.
+- No extra model-list fetches or runtime processes are introduced.
+
+#### Rollback/Cleanup
+- Switch Provider back to the preferred runtime after manual verification.

@@ -1348,6 +1348,131 @@ describe('session composer model state', () => {
     )
     expect(state.selectedProvider.value).toBe('cursor')
   })
+
+  it('re-resumes an already loaded session after provider switches before sending', async () => {
+    const scenarios = [
+      {
+        initialProvider: 'codex',
+        initialModel: 'gpt-5.5',
+        initialRpcProvider: 'rustcat',
+        targetProvider: 'cursor',
+        targetModel: 'gpt-5.5-medium',
+        targetRpcProvider: 'cursor',
+      },
+      {
+        initialProvider: 'moon',
+        initialModel: 'ark-code-latest',
+        initialRpcProvider: 'moon',
+        targetProvider: 'cursor',
+        targetModel: 'gpt-5.5-medium',
+        targetRpcProvider: 'cursor',
+      },
+      {
+        initialProvider: 'cursor',
+        initialModel: 'gpt-5.5-medium',
+        initialRpcProvider: 'cursor',
+        targetProvider: 'moon',
+        targetModel: 'ark-code-latest',
+        targetRpcProvider: 'moon',
+      },
+      {
+        initialProvider: 'cursor',
+        initialModel: 'gpt-5.5-medium',
+        initialRpcProvider: 'cursor',
+        targetProvider: 'codex',
+        targetModel: 'gpt-5.5',
+        targetRpcProvider: 'rustcat',
+      },
+    ] as const
+
+    for (const scenario of scenarios) {
+      vi.clearAllMocks()
+      installTestWindow({
+        'codex-web-local.selected-model-by-context.v1': JSON.stringify({
+          'thread-a': scenario.initialModel,
+        }),
+        'codex-web-local.provider-by-context.v1': JSON.stringify({
+          'thread-a': scenario.initialProvider,
+        }),
+        'codex-web-local.reasoning-effort-by-context.v1': JSON.stringify({
+          'thread-a': 'xhigh',
+        }),
+      })
+      gatewayMocks.getThreadQueueState.mockResolvedValue({})
+      gatewayMocks.getThreadTitleCache.mockResolvedValue({ titles: {} })
+      gatewayMocks.getWorkspaceRootsState.mockRejectedValue(new Error('no workspace roots state'))
+      gatewayMocks.getMoonBridgeModelIds.mockResolvedValue([])
+      gatewayMocks.getMoonBridgeModelMetadata.mockResolvedValue([])
+      gatewayMocks.getThreadDetail.mockResolvedValue({
+        messages: [],
+        inProgress: false,
+        activeTurnId: '',
+        hasMoreOlder: false,
+        turnIndexByTurnId: {},
+      })
+      gatewayMocks.getAvailableCollaborationModes.mockResolvedValue([{ value: 'default', label: 'Default' }])
+      gatewayMocks.getSkillsList.mockResolvedValue([])
+      gatewayMocks.getAccountRateLimits.mockResolvedValue(null)
+      gatewayMocks.getCurrentModelConfig.mockResolvedValue({
+        model: 'gpt-5.5',
+        providerId: 'rustcat',
+        reasoningEffort: 'xhigh',
+        speedMode: 'standard',
+      })
+      gatewayMocks.getAvailableModelIds.mockResolvedValue([
+        'gpt-5.5',
+        'gpt-5.5-medium',
+        'ark-code-latest',
+      ])
+      gatewayMocks.resumeThread.mockImplementation(async (_threadId: unknown, model: unknown, provider: unknown) => ({
+        model: String(model ?? scenario.initialModel),
+        modelProvider: String(provider ?? ''),
+        reasoningEffort: 'xhigh',
+        messages: [],
+        inProgress: false,
+        activeTurnId: '',
+        hasMoreOlder: false,
+        turnIndexByTurnId: {},
+      }))
+      gatewayMocks.startThreadTurn.mockResolvedValue('turn-1')
+
+      const state = useDesktopState()
+      state.primeSelectedThread('thread-a')
+      await state.refreshAncillaryState({ providerChanged: true, includeProviderModels: true })
+      await state.loadMessages('thread-a')
+
+      state.setSelectedProvider(scenario.targetProvider)
+      state.setSelectedModelIdForThread('thread-a', scenario.targetModel)
+      if (scenario.targetProvider === 'codex') {
+        await state.refreshAncillaryState({ providerChanged: true, includeProviderModels: true })
+      }
+      await state.sendMessageToSelectedThread(`use ${scenario.targetProvider} now`)
+
+      expect(gatewayMocks.resumeThread).toHaveBeenNthCalledWith(
+        1,
+        'thread-a',
+        scenario.initialModel,
+        scenario.initialRpcProvider,
+      )
+      expect(gatewayMocks.resumeThread).toHaveBeenNthCalledWith(
+        2,
+        'thread-a',
+        scenario.targetModel,
+        scenario.targetRpcProvider,
+      )
+      expect(gatewayMocks.startThreadTurn).toHaveBeenCalledWith(
+        'thread-a',
+        `use ${scenario.targetProvider} now`,
+        [],
+        scenario.targetModel,
+        'xhigh',
+        undefined,
+        [],
+        'default',
+        scenario.targetRpcProvider,
+      )
+    }
+  })
 })
 
 describe('turn interruption', () => {
