@@ -107,6 +107,15 @@ describe('startThreadTurn collaboration mode payloads', () => {
     expect(requests).toHaveLength(1)
     expect(requests[0].method).toBe('turn/start')
     expect(requests[0].params.modelProvider).toBe('cursor')
+    expect(requests[0].params.collaborationMode).toEqual({
+      mode: 'default',
+      settings: {
+        model: 'gpt-5.5',
+        reasoning_effort: 'xhigh',
+        developer_instructions: null,
+        model_provider: 'cursor',
+      },
+    })
   })
 })
 

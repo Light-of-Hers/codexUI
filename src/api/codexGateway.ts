@@ -2052,13 +2052,17 @@ export async function startThreadTurn(
     }
     if (collaborationMode) {
       const collaborationModeSettings = await resolveCollaborationModeSettings(collaborationMode, normalizedModel, effort)
+      const settings: Record<string, unknown> = {
+        model: collaborationModeSettings.model,
+        reasoning_effort: collaborationModeSettings.reasoningEffort,
+        developer_instructions: null,
+      }
+      if (normalizedModelProvider) {
+        settings.model_provider = normalizedModelProvider
+      }
       params.collaborationMode = {
         mode: collaborationMode,
-        settings: {
-          model: collaborationModeSettings.model,
-          reasoning_effort: collaborationModeSettings.reasoningEffort,
-          developer_instructions: null,
-        },
+        settings,
       }
     }
     const payload = await callRpc<{ turn?: Turn }>('turn/start', params)

@@ -6180,15 +6180,17 @@ Markdown files opened through the local editor expose a preview button that rend
 4. Switch Provider to `Cursor CLI`.
 5. Send a new prompt after the previous turn is idle.
 6. Confirm the backend handles `thread/resume` with `modelProvider: "cursor"` on the Cursor runtime before handling `turn/start`.
-7. On the same idle thread, switch between Codex/default, Moon Bridge, and Cursor CLI, sending one prompt after each switch.
-8. Confirm each switch triggers a fresh `thread/resume` using the selected provider before the next `turn/start`.
-9. Reload the app and reopen the same thread.
-10. Confirm provider recovery does not fall back to the old session-level provider.
-11. Repeat steps 3-10 in dark theme.
+7. Inspect the latest session JSONL `turn_context` for that prompt and confirm `collaboration_mode.settings.model_provider` is `cursor`.
+8. On the same idle thread, switch between Codex/default, Moon Bridge, and Cursor CLI, sending one prompt after each switch.
+9. Confirm each switch triggers a fresh `thread/resume` using the selected provider before the next `turn/start`.
+10. Reload the app and reopen the same thread.
+11. Confirm provider recovery does not fall back to the old session-level provider.
+12. Repeat steps 3-11 in dark theme.
 
 #### Expected Results
 - New Cursor turns on an older Codex/default-provider session are rebound with `thread/resume(modelProvider: "cursor")` before `turn/start`.
 - `turn/start` runs through the Cursor runtime even when the session originally recorded `session_meta.model_provider` as a Codex/default provider.
+- The latest provider-specific turn persists `collaboration_mode.settings.model_provider`, so future `thread/read` recovery overrides stale session-level metadata.
 - Already-loaded sessions are re-resumed after Codex/default, Moon Bridge, and Cursor CLI provider switches instead of reusing the previous provider's resume state.
 - Explicit Moon Bridge and Cursor CLI `turn/start` RPCs route to the matching wrapper runtime even when the active global runtime is the other wrapper.
 - Queued and auto-continued turns keep using their explicit provider-specific runtime.

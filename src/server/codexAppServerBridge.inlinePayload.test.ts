@@ -7,12 +7,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   BackendQueueProcessor,
   buildAppServerConfigForState,
+  buildSessionModelState,
   createCodexBridgeMiddleware,
   mergeExplicitModelStateIntoThreadResult,
   mergeRecoveredTurnItemsIntoThreadResult,
   mergeSessionModelStateIntoThreadResult,
   mergeSessionSkillInputsIntoTurns,
   parseAutomationToml,
+  persistTurnStartModelProviderInCollaborationMode,
   rewriteOpenAiThreadModelProvider,
   sanitizeThreadTurnsInlinePayloads,
   shouldAutoContinueInterruptedThreadFromThreadRead,
@@ -194,6 +196,38 @@ describe('session model state recovery', () => {
     }
   })
 
+  it('lets turn context provider override stale session metadata', () => {
+    const state = buildSessionModelState([
+      JSON.stringify({
+        type: 'session_meta',
+        payload: {
+          model_provider: 'rustcat',
+        },
+      }),
+      JSON.stringify({
+        type: 'turn_context',
+        payload: {
+          turn_id: 'turn-1',
+          model: 'gpt-5.5-medium',
+          collaboration_mode: {
+            mode: 'default',
+            settings: {
+              model: 'gpt-5.5-medium',
+              model_provider: 'cursor',
+              reasoning_effort: 'xhigh',
+            },
+          },
+        },
+      }),
+    ].join('\n'))
+
+    expect(state).toEqual({
+      model: 'gpt-5.5-medium',
+      modelProvider: 'cursor',
+      reasoningEffort: 'xhigh',
+    })
+  })
+
   it('keeps explicit lifecycle model state ahead of recovered session metadata', () => {
     const result = mergeExplicitModelStateIntoThreadResult({
       model: 'ark-code-latest',
@@ -221,6 +255,37 @@ describe('session model state recovery', () => {
     expect(result.modelProvider).toBe('openai')
     expect(result.thread.model).toBe('gpt-5.5')
     expect(result.thread.modelProvider).toBe('openai')
+  })
+
+  it('persists explicit turn provider in collaboration mode settings', () => {
+    expect(persistTurnStartModelProviderInCollaborationMode('turn/start', {
+      threadId: 'thread-1',
+      model: 'gpt-5.5-medium',
+      modelProvider: 'cursor',
+      input: [{ type: 'text', text: 'continue' }],
+      collaborationMode: {
+        mode: 'default',
+        settings: {
+          model: 'gpt-5.5-medium',
+          reasoning_effort: 'xhigh',
+          developer_instructions: null,
+        },
+      },
+    })).toEqual({
+      threadId: 'thread-1',
+      model: 'gpt-5.5-medium',
+      modelProvider: 'cursor',
+      input: [{ type: 'text', text: 'continue' }],
+      collaborationMode: {
+        mode: 'default',
+        settings: {
+          model: 'gpt-5.5-medium',
+          reasoning_effort: 'xhigh',
+          developer_instructions: null,
+          model_provider: 'cursor',
+        },
+      },
+    })
   })
 })
 
@@ -1237,6 +1302,7 @@ describe('backend queue scheduling', () => {
                 model: 'gpt-5.5-medium',
                 reasoning_effort: 'xhigh',
                 developer_instructions: null,
+                model_provider: 'cursor',
               },
             },
           },
@@ -1399,6 +1465,7 @@ describe('backend queue scheduling', () => {
                 model: 'ark-code-latest',
                 reasoning_effort: 'xhigh',
                 developer_instructions: null,
+                model_provider: 'moon',
               },
             },
           },

@@ -6416,13 +6416,17 @@ export class BackendQueueProcessor {
       }
       if (resumedReasoningEffort) {
         turnStartParams.effort = resumedReasoningEffort
+        const settings: Record<string, unknown> = {
+          model: resumedModel || (await this.resolveCollaborationModeSettings('default', '', '', continuationAppServer)).model,
+          reasoning_effort: normalizeCollaborationModeReasoningEffort(resumedReasoningEffort),
+          developer_instructions: null,
+        }
+        if (resumedModelProvider) {
+          settings.model_provider = resumedModelProvider
+        }
         turnStartParams.collaborationMode = {
           mode: 'default',
-          settings: {
-            model: resumedModel || (await this.resolveCollaborationModeSettings('default', '', '', continuationAppServer)).model,
-            reasoning_effort: normalizeCollaborationModeReasoningEffort(resumedReasoningEffort),
-            developer_instructions: null,
-          },
+          settings,
         }
       }
       await this.resolveAppServerForRpc('turn/start', turnStartParams).rpc('turn/start', turnStartParams)
@@ -6609,13 +6613,17 @@ export class BackendQueueProcessor {
       if (queuedReasoningEffort) {
         params.effort = queuedReasoningEffort
       }
+      const settingsRecord: Record<string, unknown> = {
+        model: settings.model,
+        reasoning_effort: settings.reasoningEffort,
+        developer_instructions: null,
+      }
+      if (queuedModelProvider) {
+        settingsRecord.model_provider = queuedModelProvider
+      }
       params.collaborationMode = {
         mode: turn.message.collaborationMode,
-        settings: {
-          model: settings.model,
-          reasoning_effort: settings.reasoningEffort,
-          developer_instructions: null,
-        },
+        settings: settingsRecord,
       }
     } catch {
       // Older app-server versions still accept a plain turn/start without collaborationMode.
@@ -6946,6 +6954,32 @@ async function ensureTurnStartRuntimeThreadState(
   }
 
   await appServer.rpc('thread/resume', resumeParams)
+}
+
+export function persistTurnStartModelProviderInCollaborationMode(method: string, params: unknown): unknown {
+  if (method !== 'turn/start') return params
+  const paramsRecord = asRecord(params)
+  if (!paramsRecord) return params
+
+  const modelProvider = readNonEmptyString(paramsRecord.modelProvider)
+    || readNonEmptyString(paramsRecord.model_provider)
+  if (!modelProvider) return params
+
+  const collaborationMode = asRecord(paramsRecord.collaborationMode)
+  const settings = asRecord(collaborationMode?.settings)
+  if (!collaborationMode || !settings) return params
+  if (readNonEmptyString(settings.model_provider) === modelProvider) return params
+
+  return {
+    ...paramsRecord,
+    collaborationMode: {
+      ...collaborationMode,
+      settings: {
+        ...settings,
+        model_provider: modelProvider,
+      },
+    },
+  }
 }
 
 function buildWrapperRuntimeState(
@@ -7727,7 +7761,8 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           }).catch(() => {})
         }
 
-        const rpcParams = await rewriteOpenAiThreadModelProvider(rpcAppServer, body.method, body.params ?? null)
+        const rewrittenRpcParams = await rewriteOpenAiThreadModelProvider(rpcAppServer, body.method, body.params ?? null)
+        const rpcParams = persistTurnStartModelProviderInCollaborationMode(body.method, rewrittenRpcParams)
         let rpcResult: unknown
         try {
           await ensureTurnStartRuntimeThreadState(rpcAppServer, body.method, rpcParams)
