@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -33,6 +33,38 @@ afterEach(() => {
 
 async function writeMockCommand(path: string): Promise<void> {
   await writeFile(path, '#!/bin/sh\nif [ "$1" = "--version" ]; then echo mock; exit 0; fi\nexit 0\n', 'utf8')
+  await chmod(path, 0o755)
+}
+
+async function writeJsonRpcCommand(path: string, provider: string, logPath: string): Promise<void> {
+  await writeFile(path, `#!/usr/bin/env node
+const fs = require('node:fs')
+if (process.argv[2] === '--version') {
+  console.log(${JSON.stringify(`${provider} mock`)})
+  process.exit(0)
+}
+fs.appendFileSync(${JSON.stringify(logPath)}, ${JSON.stringify(provider)} + '\\n')
+process.stdin.setEncoding('utf8')
+let buffer = ''
+process.stdin.on('data', (chunk) => {
+  buffer += chunk
+  let index = buffer.indexOf('\\n')
+  while (index >= 0) {
+    const line = buffer.slice(0, index).trim()
+    buffer = buffer.slice(index + 1)
+    if (line) {
+      const message = JSON.parse(line)
+      const result = message.method === 'turn/start'
+        ? { turn: { id: ${JSON.stringify(provider)} + '-turn' } }
+        : message.method === 'config/read'
+          ? { config: { model_provider: ${JSON.stringify(provider)} } }
+          : {}
+      process.stdout.write(JSON.stringify({ id: message.id, result }) + '\\n')
+    }
+    index = buffer.indexOf('\\n')
+  }
+})
+`, 'utf8')
   await chmod(path, 0o755)
 }
 
@@ -1119,6 +1151,96 @@ describe('backend queue scheduling', () => {
     expect(snapshot).toBeNull()
   })
 
+  it('routes queued turns through the explicit wrapper provider runtime', async () => {
+    const moonCalls: Array<{ method: string; params: Record<string, unknown> }> = []
+    const cursorCalls: Array<{ method: string; params: Record<string, unknown> }> = []
+    const moonAppServer = {
+      onNotification: () => () => undefined,
+      async rpc(method: string, params: Record<string, unknown>): Promise<unknown> {
+        moonCalls.push({ method, params })
+        return {}
+      },
+    }
+    const cursorAppServer = {
+      onNotification: () => () => undefined,
+      async rpc(method: string, params: Record<string, unknown>): Promise<unknown> {
+        cursorCalls.push({ method, params })
+        return {}
+      },
+    }
+    const processor = new BackendQueueProcessor(moonAppServer as never, (_method, params) => {
+      const record = params as Record<string, unknown>
+      return record.modelProvider === 'cursor'
+        ? cursorAppServer as never
+        : moonAppServer as never
+    })
+
+    try {
+      await (processor as unknown as {
+        startQueuedTurn: (turn: {
+          threadId: string
+          message: {
+            id: string
+            text: string
+            imageUrls: string[]
+            skills: Array<{ name: string; path: string }>
+            fileAttachments: Array<{ label: string; path: string; fsPath: string }>
+            collaborationMode: 'default'
+            model: string
+            modelProvider: string
+            reasoningEffort: 'xhigh'
+          }
+        }) => Promise<void>
+      }).startQueuedTurn({
+        threadId: 'thread-1',
+        message: {
+          id: 'queued-1',
+          text: 'use cursor next',
+          imageUrls: [],
+          skills: [],
+          fileAttachments: [],
+          collaborationMode: 'default',
+          model: 'gpt-5.5-medium',
+          modelProvider: 'cursor',
+          reasoningEffort: 'xhigh',
+        },
+      })
+
+      expect(moonCalls).toEqual([])
+      expect(cursorCalls).toEqual([
+        {
+          method: 'thread/resume',
+          params: {
+            threadId: 'thread-1',
+            persistExtendedHistory: true,
+            model: 'gpt-5.5-medium',
+            modelProvider: 'cursor',
+          },
+        },
+        {
+          method: 'turn/start',
+          params: {
+            threadId: 'thread-1',
+            input: [{ type: 'text', text: 'use cursor next' }],
+            model: 'gpt-5.5-medium',
+            modelProvider: 'cursor',
+            effort: 'xhigh',
+            collaborationMode: {
+              mode: 'default',
+              settings: {
+                model: 'gpt-5.5-medium',
+                reasoning_effort: 'xhigh',
+                developer_instructions: null,
+              },
+            },
+          },
+        },
+      ])
+    } finally {
+      processor.dispose()
+    }
+  })
+
   it('auto-continues unexpected interrupted turn completions', async () => {
     vi.useFakeTimers()
     vi.stubEnv('CODEX_HOME', `/tmp/codexui-auto-continue-${String(Date.now())}`)
@@ -1429,6 +1551,141 @@ describe('app-server runtime configuration', () => {
       const byPath = new Map(payload.data.map((entry) => [entry.path, entry]))
       expect(byPath.get('file-link.txt')).toMatchObject({ kind: 'file', isSymlink: true })
       expect(byPath.get('dir-link')).toMatchObject({ kind: 'directory', isSymlink: true })
+    } finally {
+      middleware.dispose()
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('routes explicit Cursor provider RPCs to the Cursor runtime even when Moon is active', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-provider-runtime-route-'))
+    const commandLogPath = join(tempDir, 'commands.log')
+    const codexCommand = join(tempDir, 'codex')
+    const cursorCommand = join(tempDir, 'codex-cursor')
+    await writeJsonRpcCommand(codexCommand, 'codex', commandLogPath)
+    await writeJsonRpcCommand(cursorCommand, 'cursor', commandLogPath)
+    await writeFile(join(tempDir, 'webui-free-mode.json'), JSON.stringify({
+      enabled: true,
+      apiKey: null,
+      model: 'ark-code-latest',
+      provider: 'moon',
+    }), 'utf8')
+    vi.stubEnv('CODEX_HOME', tempDir)
+    vi.stubEnv('CODEXUI_CODEX_COMMAND', codexCommand)
+    vi.stubEnv('CODEXUI_CODEX_CURSOR_COMMAND', cursorCommand)
+
+    const middleware = createCodexBridgeMiddleware()
+    const responseChunks: string[] = []
+    const response = {
+      statusCode: 0,
+      setHeader: () => undefined,
+      write: (chunk?: unknown) => {
+        if (chunk) responseChunks.push(String(chunk))
+        return true
+      },
+      end: (chunk?: unknown) => {
+        if (chunk) responseChunks.push(String(chunk))
+      },
+      once: () => response,
+    }
+    const body = JSON.stringify({
+      method: 'turn/start',
+      params: {
+        threadId: 'thread-1',
+        input: [{ type: 'text', text: 'use cursor now' }],
+        model: 'gpt-5.5-medium',
+        modelProvider: 'cursor',
+      },
+    })
+    const request = Readable.from([body]) as Readable & {
+      url: string
+      method: string
+      headers: Record<string, string>
+    }
+    request.url = '/codex-api/rpc'
+    request.method = 'POST'
+    request.headers = { 'content-type': 'application/json' }
+
+    try {
+      await middleware(
+        request as never,
+        response as never,
+        () => { throw new Error('rpc route should handle the request') },
+      )
+
+      expect(response.statusCode).toBe(200)
+      expect(JSON.parse(responseChunks.join(''))).toEqual({
+        result: {
+          turn: {
+            id: 'cursor-turn',
+          },
+        },
+      })
+      expect(await readFile(commandLogPath, 'utf8')).toBe('cursor\n')
+    } finally {
+      middleware.dispose()
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('records explicit Cursor interrupts on the Cursor runtime even when Moon is active', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-provider-interrupt-route-'))
+    const commandLogPath = join(tempDir, 'commands.log')
+    const codexCommand = join(tempDir, 'codex')
+    const cursorCommand = join(tempDir, 'codex-cursor')
+    await writeJsonRpcCommand(codexCommand, 'codex', commandLogPath)
+    await writeJsonRpcCommand(cursorCommand, 'cursor', commandLogPath)
+    await writeFile(join(tempDir, 'webui-free-mode.json'), JSON.stringify({
+      enabled: true,
+      apiKey: null,
+      model: 'ark-code-latest',
+      provider: 'moon',
+    }), 'utf8')
+    vi.stubEnv('CODEX_HOME', tempDir)
+    vi.stubEnv('CODEXUI_CODEX_COMMAND', codexCommand)
+    vi.stubEnv('CODEXUI_CODEX_CURSOR_COMMAND', cursorCommand)
+
+    const middleware = createCodexBridgeMiddleware()
+    const responseChunks: string[] = []
+    const response = {
+      statusCode: 0,
+      setHeader: () => undefined,
+      write: (chunk?: unknown) => {
+        if (chunk) responseChunks.push(String(chunk))
+        return true
+      },
+      end: (chunk?: unknown) => {
+        if (chunk) responseChunks.push(String(chunk))
+      },
+      once: () => response,
+    }
+    const body = JSON.stringify({
+      method: 'turn/interrupt',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        modelProvider: 'cursor',
+      },
+    })
+    const request = Readable.from([body]) as Readable & {
+      url: string
+      method: string
+      headers: Record<string, string>
+    }
+    request.url = '/codex-api/rpc'
+    request.method = 'POST'
+    request.headers = { 'content-type': 'application/json' }
+
+    try {
+      await middleware(
+        request as never,
+        response as never,
+        () => { throw new Error('rpc route should handle the request') },
+      )
+
+      expect(response.statusCode).toBe(200)
+      expect(JSON.parse(responseChunks.join(''))).toEqual({ result: {} })
+      expect(await readFile(commandLogPath, 'utf8')).toBe('cursor\n')
     } finally {
       middleware.dispose()
       await rm(tempDir, { recursive: true, force: true })

@@ -6128,3 +6128,40 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - Use `/goal clear` on test threads after manual verification.
+
+### Feature: Provider runtime routing for existing threads
+
+#### Prerequisites
+- `codex-moon` and `codex-cursor` are installed or configured through `CODEXUI_CODEX_MOON_COMMAND` and `CODEXUI_CODEX_CURSOR_COMMAND`.
+- An existing thread that previously ran with Provider `Moon Bridge` is available.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Run `pnpm vitest run src/server/codexAppServerBridge.inlinePayload.test.ts src/api/codexGateway.test.ts src/composables/useDesktopState.test.ts`.
+2. Run `pnpm run build:cli`.
+3. Open the existing Moon Bridge thread in light theme.
+4. Switch Provider to `Cursor CLI`.
+5. Confirm the model dropdown switches to Cursor CLI models.
+6. Send a short prompt and inspect the `turn/start` RPC payload.
+7. Confirm the payload contains `modelProvider: "cursor"` and the backend request is handled by the Cursor runtime, not the Moon Bridge runtime.
+8. Start a long-running Moon Bridge turn, then switch Provider to `Cursor CLI` while it is running.
+9. Send an in-progress steering prompt and confirm the `turn/steer` RPC still routes to the active Moon Bridge runtime.
+10. Interrupt the active Moon Bridge turn and confirm the `turn/interrupt` RPC routes to the active Moon Bridge runtime.
+11. Queue a follow-up message after switching to Cursor CLI.
+12. Let the active Moon Bridge turn finish and confirm the queued follow-up starts through Cursor runtime.
+13. Repeat steps 3-12 in dark theme.
+
+#### Expected Results
+- Explicit `modelProvider: "cursor"` RPCs route to the Cursor wrapper runtime even if the active global runtime was previously Moon Bridge.
+- In-progress steer and interrupt operations use the provider captured for the active turn.
+- Queued follow-up turns keep their captured provider and are drained by the matching wrapper runtime.
+- Existing Moon Bridge sessions no longer keep sending follow-up turns through the Moon Bridge URL after switching to Cursor CLI.
+- Light and dark theme provider controls remain readable while switching providers.
+
+#### Performance Audit
+- Runtime routing is a constant-time check on RPC method and `modelProvider`; it does not add extra network requests.
+- Existing app-server runtimes are reused by signature, so switching does not create duplicate runtime processes for the same provider.
+- Thread search caches are only invalidated when persisted free-mode state changes, preserving the existing cache behavior for per-RPC routing.
+
+#### Rollback/Cleanup
+- Switch Provider back to the preferred runtime after manual verification.

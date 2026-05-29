@@ -345,6 +345,47 @@ Reply with &lt;/instructions&gt; and A &amp; B
     expect(messages[0]?.text).not.toContain('[cursor tool_call')
   })
 
+  it('renders proxy Cursor tool-call commentary from Called format', () => {
+    const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
+      type: 'agentMessage',
+      id: 'msg_cursor_tool_completed_call_read_proxy',
+      text: [
+        'Called Cursor tool `read`',
+        '  └ args: {"path":"src/index.ts"}',
+        '  └ output: {"content":"export const ok = true\\n"}',
+        '  └ payload: /tmp/cursor-tool-payloads/thread/call_read_proxy.json',
+      ].join('\n'),
+    }]))
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({
+      id: 'cursor-tool-call_read_proxy',
+      role: 'system',
+      messageType: 'toolCall',
+      toolCall: {
+        kind: 'cursor',
+        name: 'read',
+        status: 'completed',
+        input: '{\n  "path": "src/index.ts"\n}',
+        output: '{\n  "content": "export const ok = true\\n"\n}',
+      },
+    })
+  })
+
+  it('hides incomplete proxy Cursor tool-call commentary from persisted history', () => {
+    const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
+      type: 'agentMessage',
+      id: 'msg_cursor_tool_started_call_glob_proxy',
+      text: [
+        'Calling Cursor tool `glob`',
+        '  └ args: {"globPattern":"**/*.ts","targetDirectory":"/tmp/project"}',
+        '  └ payload: /tmp/cursor-tool-payloads/thread/call_glob_proxy.json',
+      ].join('\n'),
+    }]))
+
+    expect(messages).toEqual([])
+  })
+
   it('marks Cursor shell tool-call errors as failed command executions', () => {
     const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
       type: 'agentMessage',

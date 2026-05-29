@@ -82,7 +82,14 @@ type RpcExecutor = {
   rpc: (method: string, params: unknown) => Promise<unknown>
 }
 
-const THREAD_MODEL_PROVIDER_OVERRIDE_METHODS = new Set(['thread/start', 'thread/resume', 'thread/fork', 'turn/start'])
+const THREAD_MODEL_PROVIDER_OVERRIDE_METHODS = new Set([
+  'thread/start',
+  'thread/resume',
+  'thread/fork',
+  'turn/start',
+  'turn/steer',
+  'turn/interrupt',
+])
 
 type ServerRequestReply = {
   result?: unknown
@@ -6160,7 +6167,10 @@ export class BackendQueueProcessor {
   private readonly unsubscribe: () => void
   private intentionalInterruptTurnIdsReady: Promise<void> = Promise.resolve()
 
-  constructor(private readonly appServer: AppServerProcess) {
+  constructor(
+    private readonly appServer: AppServerProcess,
+    private readonly resolveAppServerForRpc: (method: string, params: unknown) => AppServerProcess = () => appServer,
+  ) {
     this.unsubscribe = appServer.onNotification((notification) => {
       if (isTurnCompletedNotification(notification)) {
         void this.handleTurnCompletedNotification(notification)
@@ -6384,7 +6394,8 @@ export class BackendQueueProcessor {
       if (readModelState.modelProvider) {
         resumeParams.modelProvider = readModelState.modelProvider
       }
-      const resumeResult = await this.appServer.rpc('thread/resume', resumeParams)
+      const continuationAppServer = this.resolveAppServerForRpc('thread/resume', resumeParams)
+      const resumeResult = await continuationAppServer.rpc('thread/resume', resumeParams)
       const enrichedResumeResult = await mergeSessionModelStateIntoThreadResult(resumeResult)
       const resumedModelState = readThreadResultModelState(enrichedResumeResult)
       const turnStartParams: Record<string, unknown> = {
@@ -6408,13 +6419,13 @@ export class BackendQueueProcessor {
         turnStartParams.collaborationMode = {
           mode: 'default',
           settings: {
-            model: resumedModel || (await this.resolveCollaborationModeSettings('default')).model,
+            model: resumedModel || (await this.resolveCollaborationModeSettings('default', '', '', continuationAppServer)).model,
             reasoning_effort: normalizeCollaborationModeReasoningEffort(resumedReasoningEffort),
             developer_instructions: null,
           },
         }
       }
-      await this.appServer.rpc('turn/start', turnStartParams)
+      await this.resolveAppServerForRpc('turn/start', turnStartParams).rpc('turn/start', turnStartParams)
       this.autoContinuedInterruptedTurnIds.add(snapshot.turnId)
       return true
     } catch (error) {
@@ -6486,6 +6497,7 @@ export class BackendQueueProcessor {
     mode: CollaborationModeKind,
     model?: string,
     reasoningEffort?: ReasoningEffort | '',
+    appServer: AppServerProcess = this.appServer,
   ): Promise<ResolvedCollaborationModeSettings> {
     const explicitModel = readNonEmptyString(model)
     if (explicitModel) {
@@ -6497,7 +6509,7 @@ export class BackendQueueProcessor {
 
     let currentConfig: Record<string, unknown> | null = null
     try {
-      const configPayload = asRecord(await this.appServer.rpc('config/read', {}))
+      const configPayload = asRecord(await appServer.rpc('config/read', {}))
       currentConfig = asRecord(configPayload?.config)
     } catch {
       currentConfig = null
@@ -6512,7 +6524,7 @@ export class BackendQueueProcessor {
     }
 
     try {
-      const modelsPayload = asRecord(await this.appServer.rpc('model/list', {}))
+      const modelsPayload = asRecord(await appServer.rpc('model/list', {}))
       const models = Array.isArray(modelsPayload?.data) ? modelsPayload.data : []
       for (const row of models) {
         const record = asRecord(row)
@@ -6531,7 +6543,10 @@ export class BackendQueueProcessor {
     throw new Error(`${mode === 'plan' ? 'Plan' : 'Default'} mode requires an available model.`)
   }
 
-  private async buildQueuedTurnParams(turn: BackendQueuedTurn): Promise<Record<string, unknown>> {
+  private async buildQueuedTurnParams(
+    turn: BackendQueuedTurn,
+    appServer: AppServerProcess = this.appServer,
+  ): Promise<Record<string, unknown>> {
     const localImageAttachments: StoredQueuedMessage['fileAttachments'] = []
     for (const imageUrl of turn.message.imageUrls) {
       const localImagePath = extractLocalImagePathFromUrl(imageUrl.trim())
@@ -6583,6 +6598,7 @@ export class BackendQueueProcessor {
         turn.message.collaborationMode,
         queuedModel,
         queuedReasoningEffort,
+        appServer,
       )
       if (queuedModel) {
         params.model = queuedModel
@@ -6621,8 +6637,10 @@ export class BackendQueueProcessor {
     if (queuedModelProvider) {
       resumeParams.modelProvider = queuedModelProvider
     }
-    await this.appServer.rpc('thread/resume', resumeParams)
-    await this.appServer.rpc('turn/start', await this.buildQueuedTurnParams(turn))
+    const queueAppServer = this.resolveAppServerForRpc('thread/resume', resumeParams)
+    await queueAppServer.rpc('thread/resume', resumeParams)
+    const turnStartParams = await this.buildQueuedTurnParams(turn, queueAppServer)
+    await this.resolveAppServerForRpc('turn/start', turnStartParams).rpc('turn/start', turnStartParams)
   }
 }
 
@@ -6652,11 +6670,12 @@ class AppServerRuntime {
   constructor(
     state: FreeModeState,
     private readonly forwardNotification: (notification: BridgeNotification) => void,
+    resolveAppServerForRpc?: (method: string, params: unknown) => AppServerProcess,
   ) {
     this.signature = getAppServerRuntimeSignature(state)
     this.appServer = new AppServerProcess()
     this.appServer.setFreeModeState(state)
-    this.backendQueueProcessor = new BackendQueueProcessor(this.appServer)
+    this.backendQueueProcessor = new BackendQueueProcessor(this.appServer, resolveAppServerForRpc)
     this.unsubscribeNotifications = this.appServer.onNotification((notification) => {
       this.forwardNotification({
         ...notification,
@@ -6695,8 +6714,15 @@ class AppServerRuntimePool {
   }
 
   private createRuntime(state: FreeModeState): AppServerRuntime {
-    const runtime = new AppServerRuntime(state, (notification) => {
+    let runtime: AppServerRuntime
+    runtime = new AppServerRuntime(state, (notification) => {
       this.emitNotification(notification)
+    }, (method, params) => {
+      const requestedProvider = readRequestedWrapperProvider(method, params)
+      if (!requestedProvider) return runtime.appServer
+
+      const routedState = buildWrapperRuntimeState(this.activeState, requestedProvider, params)
+      return this.getOrCreateRuntime(routedState).appServer
     })
     this.runtimesBySignature.set(runtime.signature, runtime)
     return runtime
@@ -6715,6 +6741,10 @@ class AppServerRuntimePool {
   setActiveState(state: FreeModeState): AppServerRuntime {
     this.activeState = cloneFreeModeState(state)
     return this.getOrCreateRuntime(this.activeState)
+  }
+
+  getRuntimeForState(state: FreeModeState): AppServerRuntime {
+    return this.getOrCreateRuntime(state)
   }
 
   getActiveState(): FreeModeState {
@@ -6878,6 +6908,41 @@ function createLazyBridgeDependency<T extends object>(resolve: () => T): T {
       return Reflect.set(resolve(), property, value)
     },
   })
+}
+
+function readRequestedWrapperProvider(method: string, params: unknown): 'moon' | 'cursor' | null {
+  if (!THREAD_MODEL_PROVIDER_OVERRIDE_METHODS.has(method)) return null
+
+  const paramsRecord = asRecord(params)
+  const provider = readNonEmptyString(paramsRecord?.modelProvider)
+    || readNonEmptyString(paramsRecord?.model_provider)
+  const normalizedProvider = provider.trim().toLowerCase()
+  if (normalizedProvider === MOONBRIDGE_PROVIDER_ID) return MOONBRIDGE_PROVIDER_ID
+  if (normalizedProvider === CURSOR_PROVIDER_ID) return CURSOR_PROVIDER_ID
+  return null
+}
+
+function buildWrapperRuntimeState(
+  currentState: FreeModeState,
+  provider: 'moon' | 'cursor',
+  params: unknown,
+): FreeModeState {
+  const paramsRecord = asRecord(params)
+  const requestedModel = readNonEmptyString(paramsRecord?.model).trim()
+  const fallbackModel = provider === CURSOR_PROVIDER_ID
+    ? getCursorModelSelection(currentState.model).currentModel
+    : getMoonBridgeModels()[0] ?? currentState.model
+  const state: FreeModeState = {
+    ...currentState,
+    enabled: true,
+    apiKey: null,
+    model: requestedModel || fallbackModel || currentState.model,
+    customKey: false,
+    provider,
+    customBaseUrl: undefined,
+    wireApi: undefined,
+  }
+  return normalizeFreeModeState(state) ?? state
 }
 
 type SharedBridgeState = {
@@ -7066,6 +7131,18 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 
   function getActiveBackendQueueProcessor(): BackendQueueProcessor {
     return getActiveRuntime().backendQueueProcessor
+  }
+
+  function getRpcRuntime(method: string, params: unknown): AppServerRuntime {
+    const requestedProvider = readRequestedWrapperProvider(method, params)
+    if (!requestedProvider) return getActiveRuntime()
+
+    const state = buildWrapperRuntimeState(runtimePool.getActiveState(), requestedProvider, params)
+    return runtimePool.getRuntimeForState(state)
+  }
+
+  function getRpcAppServer(method: string, params: unknown): AppServerProcess {
+    return getRpcRuntime(method, params).appServer
   }
 
   async function applyActiveFreeModeState(state: FreeModeState): Promise<void> {
@@ -7610,21 +7687,24 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 	          return
 	        }
 
+        const rpcRuntime = getRpcRuntime(body.method, body.params ?? null)
+        const rpcAppServer = rpcRuntime.appServer
+
         if (body.method === 'turn/interrupt') {
           const paramsRecord = asRecord(body.params)
           const threadId = readNonEmptyString(paramsRecord?.threadId)
           const turnId = readNonEmptyString(paramsRecord?.turnId)
-          backendQueueProcessor.recordIntentionalInterrupt(threadId, turnId)
+          rpcRuntime.backendQueueProcessor.recordIntentionalInterrupt(threadId, turnId)
           writeDebugLog('rpc-turn-interrupt', 'RPC turn/interrupt received', {
             threadId,
             turnId,
           }).catch(() => {})
         }
 
-        const rpcParams = await rewriteOpenAiThreadModelProvider(appServer, body.method, body.params ?? null)
+        const rpcParams = await rewriteOpenAiThreadModelProvider(rpcAppServer, body.method, body.params ?? null)
         let rpcResult: unknown
         try {
-          rpcResult = await callRpcWithArchiveRecovery(appServer, body.method, rpcParams)
+          rpcResult = await callRpcWithArchiveRecovery(rpcAppServer, body.method, rpcParams)
         } catch (error) {
 	          if (body.method === 'account/rateLimits/read' && isUnauthenticatedRateLimitError(error)) {
 	            setJson(res, 200, { result: null })
@@ -7633,7 +7713,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 	          if (body.method === 'thread/read' && isEmptyThreadReadError(error)) {
 	            const params = asRecord(body.params)
 	            const threadId = typeof params?.threadId === 'string' ? params.threadId.trim() : ''
-	            const snapshot = threadId ? appServer.getLastThreadReadSnapshot(threadId) : null
+	            const snapshot = threadId ? rpcAppServer.getLastThreadReadSnapshot(threadId) : null
 	            if (snapshot) {
 	              setJson(res, 200, { result: await mergeSessionModelStateIntoThreadResult(snapshot) })
 	              return
@@ -7642,7 +7722,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 	          throw error
 	        }
         const recoveredResult = THREAD_METHODS_WITH_TURNS.has(body.method)
-          ? await mergeRecoveredTurnItemsIntoThreadResultFromSession(appServer, rpcResult)
+          ? await mergeRecoveredTurnItemsIntoThreadResultFromSession(rpcAppServer, rpcResult)
           : rpcResult
         const trimmedResult = trimThreadTurnsInRpcResult(body.method, recoveredResult)
         const sanitizedResult = await sanitizeThreadTurnsInlinePayloads(body.method, trimmedResult)
@@ -7662,7 +7742,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 	          const rpcThread = asRecord(rpcRecord?.thread)
 	          const rpcThreadId = typeof rpcThread?.id === 'string' ? rpcThread.id : ''
           if (rpcThreadId) {
-            appServer.storeThreadReadSnapshot(rpcThreadId, result)
+            rpcAppServer.storeThreadReadSnapshot(rpcThreadId, result)
           }
         }
 

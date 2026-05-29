@@ -27,7 +27,6 @@ const CURSOR_TOOL_HEADER = /^\[cursor tool_call ([^\]]+)\]\n/
 const CURSOR_TOOL_COMPACT_HEADER = /^Cursor tool (`?.+?`?) (started|running|completed)(?: \(exit (-?\d+)\))?\n/
 const CURSOR_SHELL_COMPACT_HEADER = /^Cursor shell (running|completed)(?: \(exit (-?\d+)\))?\n/
 const CURSOR_TOOL_CALLED_HEADER = /^(Called|Calling) Cursor tool (`?.+?`?)\n/
-const CURSOR_SHELL_RAN_HEADER = /^(Ran|Running) (`.+?`)(?: \(exit (-?\d+)\))?\n/
 const CODEX_UI_DATA_BLOCK = /<codex-ui-data>([\s\S]*?)<\/codex-ui-data>/
 const CODEX_UI_DATA_BASE64_BLOCK = /\[codex-ui-data:base64\]([A-Za-z0-9+/=]+)\[\/codex-ui-data\]/
 const CURSOR_PAYLOAD_FILE_LINE = /^\s*(?:└\s*)?payload:\s*(.+\.json)\s*$/m
@@ -151,24 +150,8 @@ function parseCursorToolCallText(value: string): ParsedCursorToolCall | null {
       tool,
       argumentsRaw: parseLineTextAfterLabel(value, 'args:'),
       arguments: parseJsonLineAfterLabel(value, 'args:'),
-      outputRaw: parseTextAfterLabel(value, 'output:'),
-      output: parseJsonAfterLabel(value, 'output:'),
-    }
-  }
-
-  // New proxy shell commentary format: "Running/Ran `cmd`"
-  const ranHeader = value.match(CURSOR_SHELL_RAN_HEADER)
-  if (ranHeader) {
-    const subtype = ranHeader[1] === 'Ran' ? 'completed' : 'started'
-    const callId = callIdFromPayloadPath(value) || readLineValue(value, 'call_id')
-    return {
-      subtype,
-      callId,
-      tool: 'shell',
-      argumentsRaw: parseLineTextAfterLabel(value, 'args:'),
-      arguments: parseJsonLineAfterLabel(value, 'args:'),
-      outputRaw: parseTextAfterLabel(value, 'output:'),
-      output: parseJsonAfterLabel(value, 'output:'),
+      outputRaw: parseLineTextAfterLabel(value, 'output:'),
+      output: parseJsonLineAfterLabel(value, 'output:'),
     }
   }
 
