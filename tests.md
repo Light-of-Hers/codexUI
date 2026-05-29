@@ -5951,6 +5951,38 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Rollback/Cleanup
 - Switch Provider back to the preferred default after manual verification.
 
+### Feature: Cursor tool call grouping and compact payload summaries
+
+#### Prerequisites
+- App server is running from this repository with Provider set to `Cursor CLI`.
+- A thread is available where Cursor CLI can make two or more consecutive non-shell tool calls.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Run `pnpm exec vitest run src/api/normalizers/v2.test.ts src/server/codexAppServerBridge.inlinePayload.test.ts`.
+2. Run `pnpm exec vue-tsc --noEmit`.
+3. Open the Cursor CLI thread in light theme.
+4. Trigger or open a turn containing consecutive Cursor tool call cards, such as multiple `read`/`edit` calls with no assistant text between them.
+5. Confirm the consecutive Cursor tool calls are represented by one compact grouped row.
+6. Expand the grouped row and confirm each individual tool call can still be expanded.
+7. Confirm long tool input/output appears as a shortened preview in the message body while the `payload: ...json` path remains present for full payload recovery.
+8. Repeat steps 3-7 in dark theme.
+
+#### Expected Results
+- Consecutive Cursor CLI tool calls group into one collapsible row, matching consecutive shell command behavior.
+- Expanding the group reveals each original tool call in order.
+- Long Cursor tool arguments and output are shortened in visible commentary instead of flooding the timeline.
+- The payload path remains available so server-side inline payload recovery can hydrate complete tool call details.
+- Light and dark theme grouped tool call rows remain readable.
+
+#### Performance Audit
+- Grouping is computed with one linear pass over the already-normalized message list.
+- Hidden grouped tool call IDs are stored in a `Set`, keeping row visibility checks O(1).
+- The proxy still writes one payload file per Cursor tool call and avoids embedding long command/output text in streaming messages.
+
+#### Rollback/Cleanup
+- No cleanup is required.
+
 ### Feature: Moon Bridge existing-session provider switch
 
 #### Prerequisites

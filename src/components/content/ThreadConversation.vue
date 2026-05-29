@@ -22,7 +22,7 @@
       </li>
       <template v-for="(message, messageIndex) in visibleMessages" :key="message.id">
       <li
-        v-if="!hiddenGroupedCommandIds.has(message.id) && !hiddenFileChangeMessageIds.has(message.id)"
+        v-if="!hiddenGroupedCommandIds.has(message.id) && !hiddenGroupedToolCallIds.has(message.id) && !hiddenFileChangeMessageIds.has(message.id)"
         class="conversation-item"
         :data-role="message.role"
         :data-message-type="message.messageType || ''"
@@ -190,6 +190,70 @@
         <div v-else-if="isToolCallMessage(message)" class="message-row" data-role="system">
           <div class="message-stack" data-role="system">
             <button
+              v-if="getGroupedToolCallsForLatest(message).length > 0"
+              type="button"
+              class="cmd-row cmd-row-group cmd-compact"
+              :class="[toolCallStatusClass(message), { 'cmd-expanded': isToolCallGroupExpanded(message) }]"
+              @click="toggleToolCallGroup(message)"
+            >
+              <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isToolCallGroupExpanded(message) }">▶</span>
+              <span class="cmd-group-label">{{ toolCallGroupSummaryLabel(message) }}</span>
+              <span class="cmd-status">{{ toolCallGroupSummaryStatus(message) }}</span>
+            </button>
+            <div
+              v-if="getGroupedToolCallsForLatest(message).length > 0"
+              class="cmd-group-wrap"
+              :class="{ 'cmd-group-visible': isToolCallGroupExpanded(message) }"
+            >
+              <div class="cmd-group-inner">
+                <div
+                  v-for="call in getToolCallBlockForLatest(message)"
+                  :key="`grouped-tool-call-${call.id}`"
+                  class="worked-cmd-item"
+                >
+                  <button
+                    type="button"
+                    class="tool-call-row"
+                    :class="[toolCallStatusClass(call), { 'tool-call-expanded': isToolCallExpanded(call) }]"
+                    @click="toggleToolCallExpand(call)"
+                  >
+                    <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isToolCallExpanded(call) }">▶</span>
+                    <span class="tool-call-main">
+                      <span class="tool-call-title" :title="toolCallDisplayTitle(call)">{{ toolCallDisplayTitle(call) }}</span>
+                      <span v-if="toolCallMetaLabel(call)" class="tool-call-meta" :title="toolCallMetaLabel(call)">
+                        {{ toolCallMetaLabel(call) }}
+                      </span>
+                    </span>
+                    <span class="tool-call-status">{{ toolCallStatusLabel(call) }}</span>
+                  </button>
+                  <div class="tool-call-detail-wrap" :class="{ 'tool-call-detail-visible': isToolCallExpanded(call) }">
+                    <div class="tool-call-detail-inner">
+                      <div v-if="toolCallProgressText(call)" class="tool-call-section">
+                        <span class="tool-call-section-label">Progress</span>
+                        <p class="tool-call-progress" v-text="toolCallProgressText(call)"></p>
+                      </div>
+                      <div v-if="toolCallInputText(call)" class="tool-call-section">
+                        <span class="tool-call-section-label">Input</span>
+                        <pre class="tool-call-code-box" v-text="toolCallInputText(call)"></pre>
+                      </div>
+                      <div v-if="toolCallOutputText(call)" class="tool-call-section">
+                        <span class="tool-call-section-label">Output</span>
+                        <pre class="tool-call-code-box" v-text="toolCallOutputText(call)"></pre>
+                      </div>
+                      <div v-if="toolCallErrorText(call)" class="tool-call-section">
+                        <span class="tool-call-section-label">Error</span>
+                        <pre class="tool-call-code-box tool-call-code-box-error" v-text="toolCallErrorText(call)"></pre>
+                      </div>
+                      <div v-if="!hasToolCallDetails(call)" class="tool-call-section">
+                        <p class="tool-call-progress">No additional details.</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <template v-else>
+            <button
               type="button"
               class="tool-call-row"
               :class="[toolCallStatusClass(message), { 'tool-call-expanded': isToolCallExpanded(message) }]"
@@ -227,6 +291,7 @@
                 </div>
               </div>
             </div>
+            </template>
           </div>
         </div>
 
@@ -904,6 +969,7 @@ const expandedCommandIds = ref<Set<string>>(new Set())
 const collapsedAutoCommandIds = ref<Set<string>>(new Set())
 const expandedCommandGroupIds = ref<Set<string>>(new Set())
 const expandedToolCallIds = ref<Set<string>>(new Set())
+const expandedToolCallGroupIds = ref<Set<string>>(new Set())
 const expandedWorkedIds = ref<Set<string>>(new Set())
 const expandedFileChangeSummaryIds = ref<Set<string>>(new Set())
 const expandedResponseSourceIds = ref<Set<string>>(new Set())
@@ -1277,6 +1343,36 @@ const hiddenGroupedCommandIds = computed(() => {
   return next
 })
 
+const groupedToolCallsByLatestId = computed<Record<string, UiMessage[]>>(() => {
+  const next: Record<string, UiMessage[]> = {}
+  for (let index = 0; index < props.messages.length;) {
+    const message = props.messages[index]
+    if (!(isToolCallMessage(message) && message.toolCall?.kind === 'cursor')) {
+      index += 1
+      continue
+    }
+    const block: UiMessage[] = []
+    while (index < props.messages.length && isToolCallMessage(props.messages[index]) && props.messages[index].toolCall?.kind === 'cursor') {
+      block.push(props.messages[index])
+      index += 1
+    }
+    if (block.length <= 1) continue
+    const latest = block[block.length - 1]
+    next[latest.id] = block.slice(0, -1)
+  }
+  return next
+})
+
+const hiddenGroupedToolCallIds = computed(() => {
+  const next = new Set<string>()
+  for (const toolCalls of Object.values(groupedToolCallsByLatestId.value)) {
+    for (const toolCall of toolCalls) {
+      next.add(toolCall.id)
+    }
+  }
+  return next
+})
+
 function readPlanExplanation(message: UiMessage): string {
   return readPlanData(message)?.explanation ?? ''
 }
@@ -1368,6 +1464,40 @@ function commandGroupSummaryLabel(message: UiMessage): string {
 
 function commandGroupSummaryStatus(message: UiMessage): string {
   return commandStatusLabel(message)
+}
+
+function getGroupedToolCallsForLatest(message: UiMessage): UiMessage[] {
+  return groupedToolCallsByLatestId.value[message.id] ?? []
+}
+
+function getToolCallBlockForLatest(message: UiMessage): UiMessage[] {
+  if (!isToolCallMessage(message)) return []
+  return [...getGroupedToolCallsForLatest(message), message]
+}
+
+function toggleToolCallGroup(message: UiMessage): void {
+  const grouped = getGroupedToolCallsForLatest(message)
+  if (grouped.length === 0) return
+  const next = new Set(expandedToolCallGroupIds.value)
+  if (next.has(message.id)) next.delete(message.id)
+  else next.add(message.id)
+  expandedToolCallGroupIds.value = next
+}
+
+function isToolCallGroupExpanded(message: UiMessage): boolean {
+  return expandedToolCallGroupIds.value.has(message.id)
+}
+
+function toolCallGroupSummaryLabel(message: UiMessage): string {
+  const calls = getToolCallBlockForLatest(message)
+  const count = calls.length
+  const latestTool = message.toolCall?.name?.trim() || message.toolCall?.title?.trim() || '(tool)'
+  const countLabel = count === 1 ? '1 tool call' : `${count} tool calls`
+  return `${countLabel} · latest: ${latestTool}`
+}
+
+function toolCallGroupSummaryStatus(message: UiMessage): string {
+  return toolCallStatusLabel(message)
 }
 
 function toggleWorkedExpand(message: UiMessage): void {
@@ -4935,6 +5065,10 @@ watch(
     expandedToolCallIds.value = pruneCommandIdSet(
       expandedToolCallIds.value,
       new Set(next.filter((message) => isToolCallMessage(message)).map((message) => message.id)),
+    )
+    expandedToolCallGroupIds.value = pruneCommandIdSet(
+      expandedToolCallGroupIds.value,
+      new Set(Object.keys(groupedToolCallsByLatestId.value)),
     )
     expandedFileChangeSummaryIds.value = pruneCommandIdSet(
       expandedFileChangeSummaryIds.value,
