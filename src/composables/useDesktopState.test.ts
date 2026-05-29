@@ -671,7 +671,7 @@ describe('goal slash commands', () => {
 
     await state.sendMessageToSelectedThread('/goal clear')
     expect(gatewayMocks.clearThreadGoal).toHaveBeenCalledWith('thread-a')
-    expect(state.selectedLiveOverlay.value?.activityLabel).toBe('Goal cleared')
+    expect(state.selectedLiveOverlay.value).toBeNull()
     expect(gatewayMocks.startThreadTurn).not.toHaveBeenCalled()
   })
 

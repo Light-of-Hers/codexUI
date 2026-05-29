@@ -6103,7 +6103,7 @@ Markdown files opened through the local editor expose a preview button that rend
 10. Confirm the current goal is shown without starting or steering a turn.
 11. Submit `/goal pause`, then confirm the overlay shows `Goal paused`.
 12. Submit `/goal unpause`, then confirm the overlay returns to `Goal active`.
-13. Submit `/goal clear`, then confirm the overlay shows `Goal cleared`.
+13. Submit `/goal clear`, then confirm the goal overlay disappears without showing a success notice.
 14. From the new-thread composer, submit `/goal Validate new-thread goal setup`.
 15. Confirm a new thread is created, the goal notice appears, and no normal turn is started.
 16. From the new-thread composer, submit `/goal $planning-with-files Validate new-thread goal setup`.
