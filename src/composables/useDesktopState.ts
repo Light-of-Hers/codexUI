@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue'
 import {
-
   archiveThread,
+  clearThreadGoal,
   forkThread,
   getAvailableCollaborationModes,
   getAccountRateLimits,
@@ -14,6 +14,7 @@ import {
   getThreadDetail,
   getOlderThreadMessages,
   getBackgroundThreadListLimit,
+  getThreadGoal,
   interruptThreadTurn,
   pickCodexRateLimitSnapshot,
   replyToServerRequest,
@@ -30,11 +31,13 @@ import {
   persistThreadTitle,
   generateThreadTitle,
   resumeThread,
-
+  setThreadGoal,
   startThread,
   subscribeCodexNotifications,
   startThreadTurn,
   steerThreadTurn,
+  type ThreadGoal,
+  type ThreadGoalStatus,
   type RpcNotification,
   type SkillInfo,
   type MoonBridgeModelMetadata,
@@ -1080,6 +1083,17 @@ type TurnErrorState = {
   transient: boolean
 }
 
+type ThreadNoticeState = {
+  label: string
+  text: string
+}
+
+type GoalSlashCommand =
+  | { kind: 'show' }
+  | { kind: 'clear' }
+  | { kind: 'status'; status: Extract<ThreadGoalStatus, 'active' | 'paused'> }
+  | { kind: 'set'; objective: string }
+
 type TurnStartedInfo = {
   threadId: string
   turnId: string
@@ -1094,6 +1108,47 @@ type TurnCompletedInfo = {
 }
 
 const WORKED_MESSAGE_TYPE = 'worked'
+
+export function parseGoalSlashCommand(value: string): GoalSlashCommand | null {
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  if (!/^\/goal(?:\s|$)/u.test(trimmed)) return null
+
+  const args = trimmed.slice('/goal'.length).trim()
+  if (!args) return { kind: 'show' }
+
+  switch (args.toLowerCase()) {
+    case 'clear':
+      return { kind: 'clear' }
+    case 'pause':
+      return { kind: 'status', status: 'paused' }
+    case 'resume':
+    case 'unpause':
+      return { kind: 'status', status: 'active' }
+    default:
+      return { kind: 'set', objective: args }
+  }
+}
+
+function goalStatusLabel(status: ThreadGoalStatus): string {
+  switch (status) {
+    case 'active':
+      return 'active'
+    case 'paused':
+      return 'paused'
+    case 'budgetLimited':
+      return 'budget limited'
+    case 'complete':
+      return 'complete'
+  }
+}
+
+function goalNoticeForGoal(goal: ThreadGoal): ThreadNoticeState {
+  return {
+    label: `Goal ${goalStatusLabel(goal.status)}`,
+    text: goal.objective,
+  }
+}
 
 function parseIsoTimestamp(value: string): number | null {
   if (!value) return null
@@ -1725,6 +1780,7 @@ export function useDesktopState() {
   const turnSummaryByThreadId = ref<Record<string, TurnSummaryState>>({})
   const turnActivityByThreadId = ref<Record<string, TurnActivityState>>({})
   const turnErrorByThreadId = ref<Record<string, TurnErrorState>>({})
+  const threadNoticeByThreadId = ref<Record<string, ThreadNoticeState>>({})
   const activeTurnIdByThreadId = ref<Record<string, string>>({})
   const interruptBlockedUntilPersistedByThreadId = ref<Record<string, boolean>>({})
   const threadListedByServerById = ref<Record<string, boolean>>({})
@@ -1839,6 +1895,16 @@ export function useDesktopState() {
       ? (liveReasoningTextByThreadId.value[threadId] ?? '').trim()
       : ''
     const errorText = (turnErrorByThreadId.value[threadId]?.message ?? '').trim()
+    const notice = threadNoticeByThreadId.value[threadId]
+
+    if (!activity && !reasoningText && !errorText && notice) {
+      return {
+        activityLabel: notice.label,
+        activityDetails: [],
+        reasoningText: notice.text,
+        errorText: '',
+      }
+    }
 
     if (!activity && !reasoningText && !errorText) return null
     return {
@@ -2867,6 +2933,7 @@ export function useDesktopState() {
     turnSummaryByThreadId.value = pruneThreadStateMap(turnSummaryByThreadId.value, activeThreadIds)
     turnActivityByThreadId.value = pruneThreadStateMap(turnActivityByThreadId.value, activeThreadIds)
     turnErrorByThreadId.value = pruneThreadStateMap(turnErrorByThreadId.value, activeThreadIds)
+    threadNoticeByThreadId.value = pruneThreadStateMap(threadNoticeByThreadId.value, activeThreadIds)
     activeTurnIdByThreadId.value = pruneThreadStateMap(activeTurnIdByThreadId.value, activeThreadIds)
     interruptBlockedUntilPersistedByThreadId.value = pruneThreadStateMap(
       interruptBlockedUntilPersistedByThreadId.value,
@@ -3079,6 +3146,28 @@ export function useDesktopState() {
     turnErrorByThreadId.value = {
       ...turnErrorByThreadId.value,
       [threadId]: { message: normalizedMessage, transient },
+    }
+  }
+
+  function setThreadNoticeForThread(threadId: string, notice: ThreadNoticeState | null): void {
+    if (!threadId) return
+
+    const previous = threadNoticeByThreadId.value[threadId]
+    if (!notice) {
+      if (previous) {
+        threadNoticeByThreadId.value = omitKey(threadNoticeByThreadId.value, threadId)
+      }
+      return
+    }
+
+    const nextNotice = {
+      label: sanitizeDisplayText(notice.label) || 'Notice',
+      text: notice.text.trim(),
+    }
+    if (previous?.label === nextNotice.label && previous.text === nextNotice.text) return
+    threadNoticeByThreadId.value = {
+      ...threadNoticeByThreadId.value,
+      [threadId]: nextNotice,
     }
   }
 
@@ -3355,6 +3444,39 @@ export function useDesktopState() {
 
   function readNumber(value: unknown): number | null {
     return typeof value === 'number' && Number.isFinite(value) ? value : null
+  }
+
+  function normalizeThreadGoal(value: unknown): ThreadGoal | null {
+    const record = asRecord(value)
+    if (!record) return null
+    const threadId = readString(record.threadId ?? record.thread_id)
+    const objective = readString(record.objective)
+    const status = readString(record.status) as ThreadGoalStatus
+    const tokensUsed = readNumber(record.tokensUsed ?? record.tokens_used)
+    const timeUsedSeconds = readNumber(record.timeUsedSeconds ?? record.time_used_seconds)
+    const createdAt = readNumber(record.createdAt ?? record.created_at)
+    const updatedAt = readNumber(record.updatedAt ?? record.updated_at)
+    if (
+      !threadId ||
+      !objective ||
+      !['active', 'paused', 'budgetLimited', 'complete'].includes(status) ||
+      tokensUsed === null ||
+      timeUsedSeconds === null ||
+      createdAt === null ||
+      updatedAt === null
+    ) {
+      return null
+    }
+    return {
+      threadId,
+      objective,
+      status,
+      tokenBudget: readNumber(record.tokenBudget ?? record.token_budget),
+      tokensUsed,
+      timeUsedSeconds,
+      createdAt,
+      updatedAt,
+    }
   }
 
   function getRateLimitSnapshotKey(snapshot: UiRateLimitSnapshot): string {
@@ -4484,6 +4606,25 @@ export function useDesktopState() {
         threadTitleById.value = { ...threadTitleById.value, [threadId]: threadName }
         applyThreadFlags()
         void persistThreadTitle(threadId, threadName)
+      }
+    }
+
+    if (notification.method === 'thread/goal/updated') {
+      const params = asRecord(notification.params)
+      const threadId = extractThreadIdFromNotification(notification)
+      const goal = normalizeThreadGoal(params?.goal)
+      if (threadId && goal) {
+        setThreadNoticeForThread(threadId, goalNoticeForGoal(goal))
+      }
+    }
+
+    if (notification.method === 'thread/goal/cleared') {
+      const threadId = extractThreadIdFromNotification(notification)
+      if (threadId) {
+        setThreadNoticeForThread(threadId, {
+          label: 'Goal cleared',
+          text: '',
+        })
       }
     }
 
@@ -5663,9 +5804,16 @@ export function useDesktopState() {
     const nextText = text.trim()
     if (!threadId || (!nextText && imageUrls.length === 0 && fileAttachments.length === 0)) return
 
+    const textOnlySubmission = imageUrls.length === 0 && skills.length === 0 && fileAttachments.length === 0
+    if (textOnlySubmission && await runGoalSlashCommandForThread(threadId, nextText)) {
+      return
+    }
+
     if (await maybeReplyToPendingUserInputRequest(threadId, nextText, imageUrls, skills, fileAttachments)) {
       return
     }
+
+    setThreadNoticeForThread(threadId, null)
 
     let isInProgress = inProgressById.value[threadId] === true
 
@@ -5792,6 +5940,13 @@ export function useDesktopState() {
     const selectedProviderForNewThread = selectedProvider.value
     if (!nextText && imageUrls.length === 0 && fileAttachments.length === 0) return ''
 
+    const textOnlySubmission = imageUrls.length === 0 && skills.length === 0 && fileAttachments.length === 0
+    const goalSlashCommand = textOnlySubmission ? parseGoalSlashCommand(nextText) : null
+    if (goalSlashCommand && goalSlashCommand.kind !== 'set') {
+      error.value = 'Open an existing thread before using this /goal command.'
+      return ''
+    }
+
     isSendingMessage.value = true
     error.value = ''
     let threadId = ''
@@ -5833,13 +5988,31 @@ export function useDesktopState() {
       }
       if (!threadId) return ''
 
-      insertOptimisticThread(threadId, targetCwd, nextText || '[Image]')
-      blockInterruptUntilThreadIsPersisted(threadId)
+      insertOptimisticThread(threadId, targetCwd, goalSlashCommand?.objective || nextText || '[Image]')
       resumedThreadById.value = {
         ...resumedThreadById.value,
         [threadId]: true,
       }
       setSelectedThreadId(threadId)
+      const capturedThreadId = threadId
+      const capturedCwd = targetCwd || null
+      const capturedPrompt = goalSlashCommand?.objective || nextText
+      if (goalSlashCommand) {
+        setTurnSummaryForThread(threadId, null)
+        setTurnActivityForThread(threadId, null)
+        setTurnErrorForThread(threadId, null)
+        setThreadInProgress(threadId, false)
+        const goal = await setThreadGoal(threadId, {
+          objective: goalSlashCommand.objective,
+          status: 'active',
+        })
+        setThreadNoticeForThread(threadId, goalNoticeForGoal(goal))
+        isSendingMessage.value = false
+        void requestThreadTitleGeneration(capturedThreadId, capturedPrompt, capturedCwd)
+        return threadId
+      }
+
+      blockInterruptUntilThreadIsPersisted(threadId)
       shouldAutoScrollOnNextAgentEvent = true
       setTurnSummaryForThread(threadId, null)
       setTurnActivityForThread(
@@ -5855,9 +6028,6 @@ export function useDesktopState() {
       )
       setTurnErrorForThread(threadId, null)
       setThreadInProgress(threadId, true)
-      const capturedThreadId = threadId
-      const capturedCwd = targetCwd || null
-      const capturedPrompt = nextText
       void startTurnForThread(threadId, nextText, imageUrls, skills, fileAttachments, selectedMode)
         .catch((unknownError) => {
           shouldAutoScrollOnNextAgentEvent = false
@@ -6584,6 +6754,7 @@ export function useDesktopState() {
     turnActivityByThreadId.value = {}
     turnSummaryByThreadId.value = {}
     turnErrorByThreadId.value = {}
+    threadNoticeByThreadId.value = {}
     activeTurnIdByThreadId.value = {}
     interruptBlockedUntilPersistedByThreadId.value = {}
     threadListedByServerById.value = {}
@@ -6643,6 +6814,56 @@ export function useDesktopState() {
     removeQueuedMessage(messageId)
     setSelectedCollaborationMode(msg.collaborationMode)
     void sendMessageToSelectedThread(msg.text, msg.imageUrls, msg.skills, 'steer', msg.fileAttachments)
+  }
+
+  async function runGoalSlashCommandForThread(threadId: string, text: string): Promise<boolean> {
+    const command = parseGoalSlashCommand(text)
+    if (!command) return false
+
+    error.value = ''
+    setTurnErrorForThread(threadId, null)
+
+    try {
+      if (command.kind === 'show') {
+        const goal = await getThreadGoal(threadId)
+        setThreadNoticeForThread(threadId, goal
+          ? goalNoticeForGoal(goal)
+          : {
+              label: 'No goal set',
+              text: 'Use /goal <objective> to start one.',
+            })
+        return true
+      }
+
+      if (command.kind === 'clear') {
+        const cleared = await clearThreadGoal(threadId)
+        setThreadNoticeForThread(threadId, cleared
+          ? {
+              label: 'Goal cleared',
+              text: '',
+            }
+          : {
+              label: 'No goal to clear',
+              text: 'This thread does not currently have a goal.',
+            })
+        return true
+      }
+
+      const goal = command.kind === 'status'
+        ? await setThreadGoal(threadId, { status: command.status })
+        : await setThreadGoal(threadId, {
+            objective: command.objective,
+            status: 'active',
+          })
+      setThreadNoticeForThread(threadId, goalNoticeForGoal(goal))
+      return true
+    } catch (unknownError) {
+      const errorMessage = unknownError instanceof Error ? unknownError.message : 'Unknown application error'
+      setThreadNoticeForThread(threadId, null)
+      setTurnErrorForThread(threadId, errorMessage)
+      error.value = errorMessage
+      throw unknownError
+    }
   }
 
   function primeSelectedThread(threadId: string): void {

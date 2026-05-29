@@ -308,6 +308,27 @@ export type StoredQueuedMessage = {
 
 export type ThreadQueueState = Record<string, StoredQueuedMessage[]>
 
+const THREAD_GOAL_STATUSES = ['active', 'paused', 'budgetLimited', 'complete'] as const
+
+export type ThreadGoalStatus = typeof THREAD_GOAL_STATUSES[number]
+
+export type ThreadGoal = {
+  threadId: string
+  objective: string
+  status: ThreadGoalStatus
+  tokenBudget: number | null
+  tokensUsed: number
+  timeUsedSeconds: number
+  createdAt: number
+  updatedAt: number
+}
+
+export type ThreadGoalSetInput = {
+  objective?: string
+  status?: ThreadGoalStatus
+  tokenBudget?: number | null
+}
+
 export type ComposerFileSuggestion = {
   path: string
   kind: 'file' | 'directory'
@@ -464,6 +485,48 @@ function readBoolean(value: unknown): boolean | null {
 
 function readStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string' && item.length > 0) : []
+}
+
+function normalizeThreadGoalStatus(value: unknown): ThreadGoalStatus | null {
+  return typeof value === 'string' && (THREAD_GOAL_STATUSES as readonly string[]).includes(value)
+    ? (value as ThreadGoalStatus)
+    : null
+}
+
+function normalizeThreadGoal(value: unknown): ThreadGoal | null {
+  const record = asRecord(value)
+  if (!record) return null
+
+  const threadId = readString(record.threadId ?? record.thread_id)
+  const objective = readString(record.objective)
+  const status = normalizeThreadGoalStatus(record.status)
+  const tokensUsed = readNumber(record.tokensUsed ?? record.tokens_used)
+  const timeUsedSeconds = readNumber(record.timeUsedSeconds ?? record.time_used_seconds)
+  const createdAt = readNumber(record.createdAt ?? record.created_at)
+  const updatedAt = readNumber(record.updatedAt ?? record.updated_at)
+  if (
+    !threadId ||
+    !objective ||
+    !status ||
+    tokensUsed === null ||
+    timeUsedSeconds === null ||
+    createdAt === null ||
+    updatedAt === null
+  ) {
+    return null
+  }
+
+  const rawTokenBudget = record.tokenBudget ?? record.token_budget
+  return {
+    threadId,
+    objective,
+    status,
+    tokenBudget: rawTokenBudget === null || rawTokenBudget === undefined ? null : readNumber(rawTokenBudget),
+    tokensUsed,
+    timeUsedSeconds,
+    createdAt,
+    updatedAt,
+  }
 }
 
 function normalizeAccountUnavailableReason(value: unknown): UiAccountUnavailableReason | null {
@@ -1544,6 +1607,65 @@ export async function renameThread(threadId: string, threadName: string): Promis
 export async function rollbackThread(threadId: string, numTurns: number): Promise<UiMessage[]> {
   const payload = await callRpc<ThreadReadResponse>('thread/rollback', { threadId, numTurns })
   return normalizeThreadMessagesV2(payload, readThreadTurnStartIndex(payload))
+}
+
+export async function getThreadGoal(threadId: string): Promise<ThreadGoal | null> {
+  const normalizedThreadId = threadId.trim()
+  if (!normalizedThreadId) return null
+
+  const payload = await callRpc<{ goal?: unknown }>('thread/goal/get', {
+    threadId: normalizedThreadId,
+  })
+  if (payload.goal === null || payload.goal === undefined) return null
+
+  const goal = normalizeThreadGoal(payload.goal)
+  if (!goal) {
+    throw new Error('thread/goal/get response was malformed')
+  }
+  return goal
+}
+
+export async function setThreadGoal(threadId: string, input: ThreadGoalSetInput): Promise<ThreadGoal> {
+  const normalizedThreadId = threadId.trim()
+  if (!normalizedThreadId) {
+    throw new Error('thread/goal/set requires threadId')
+  }
+
+  const params: Record<string, unknown> = {
+    threadId: normalizedThreadId,
+  }
+  const objective = input.objective?.trim() ?? ''
+  if (objective) {
+    params.objective = objective
+  }
+  if (input.status && (THREAD_GOAL_STATUSES as readonly string[]).includes(input.status)) {
+    params.status = input.status
+  }
+  if (Object.prototype.hasOwnProperty.call(input, 'tokenBudget')) {
+    const tokenBudget = input.tokenBudget
+    if (tokenBudget === null) {
+      params.tokenBudget = null
+    } else if (typeof tokenBudget === 'number' && Number.isFinite(tokenBudget)) {
+      params.tokenBudget = Math.trunc(tokenBudget)
+    }
+  }
+
+  const payload = await callRpc<{ goal?: unknown }>('thread/goal/set', params)
+  const goal = normalizeThreadGoal(payload.goal)
+  if (!goal) {
+    throw new Error('thread/goal/set response was malformed')
+  }
+  return goal
+}
+
+export async function clearThreadGoal(threadId: string): Promise<boolean> {
+  const normalizedThreadId = threadId.trim()
+  if (!normalizedThreadId) return false
+
+  const payload = await callRpc<{ cleared?: unknown }>('thread/goal/clear', {
+    threadId: normalizedThreadId,
+  })
+  return payload.cleared === true
 }
 
 export async function revertThreadFileChanges(threadId: string, turnId: string, cwd: string): Promise<{ reverted: number; errors: string[] }> {

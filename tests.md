@@ -6077,3 +6077,43 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - Switch Provider back to the preferred default after manual verification.
+
+### Feature: Goal slash command workflow
+
+#### Prerequisites
+- App server is running from this repository against a Codex build that exposes `thread/goal/get`, `thread/goal/set`, and `thread/goal/clear`.
+- At least one existing thread is available.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Run `pnpm vitest run src/api/codexGateway.test.ts src/composables/useDesktopState.test.ts`.
+2. Run `pnpm run build:frontend`.
+3. Open an existing thread in light theme.
+4. Submit `/goal Ship goal slash-command support`.
+5. Confirm no normal user prompt is appended and no new turn starts.
+6. Confirm the live overlay shows `Goal active` and includes `Ship goal slash-command support`.
+7. Submit `/goal`.
+8. Confirm the current goal is shown without starting or steering a turn.
+9. Submit `/goal pause`, then confirm the overlay shows `Goal paused`.
+10. Submit `/goal unpause`, then confirm the overlay returns to `Goal active`.
+11. Submit `/goal clear`, then confirm the overlay shows `Goal cleared`.
+12. From the new-thread composer, submit `/goal Validate new-thread goal setup`.
+13. Confirm a new thread is created, the goal notice appears, and no normal turn is started.
+14. Repeat steps 3-13 in dark theme.
+
+#### Expected Results
+- `/goal <objective>` routes to `thread/goal/set` with `status: active`.
+- `/goal` routes to `thread/goal/get`.
+- `/goal pause` and `/goal unpause` route to `thread/goal/set` status updates.
+- `/goal clear` routes to `thread/goal/clear`.
+- Goal commands do not call `turn/start` or `turn/steer`.
+- New-thread `/goal <objective>` creates the thread, sets the goal, and does not show an interrupt-pending state.
+- Light and dark theme overlays remain readable.
+
+#### Performance Audit
+- Normal prompt submission does not add goal RPCs; command parsing is a single local string check before the existing turn path.
+- Goal submissions perform exactly one goal RPC after the thread id exists, except new-thread goal setup which first creates the thread.
+- Goal notices are stored in a per-thread map and pruned with other thread-scoped state.
+
+#### Rollback/Cleanup
+- Use `/goal clear` on test threads after manual verification.

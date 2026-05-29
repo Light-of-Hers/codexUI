@@ -8,6 +8,7 @@ import {
   inferProviderFromModel,
   isThreadUnreadByLastRead,
   normalizeProviderId,
+  parseGoalSlashCommand,
   removeThreadFromGroups,
   useDesktopState,
   readSelectedProvider,
@@ -19,11 +20,13 @@ import type { RpcNotification, WorkspaceRootsState } from '../api/codexGateway'
 
 const gatewayMocks = vi.hoisted(() => ({
   archiveThread: vi.fn(),
+  clearThreadGoal: vi.fn(),
   forkThread: vi.fn(),
   getAccountRateLimits: vi.fn(),
   getAvailableCollaborationModes: vi.fn(),
   getAvailableModelIds: vi.fn(),
   getCurrentModelConfig: vi.fn(),
+  getThreadGoal: vi.fn(),
   getMoonBridgeModelIds: vi.fn(),
   getMoonBridgeModelMetadata: vi.fn(),
   getPendingServerRequests: vi.fn(),
@@ -42,10 +45,12 @@ const gatewayMocks = vi.hoisted(() => ({
   revertThreadFileChanges: vi.fn(),
   rollbackThread: vi.fn(),
   setCodexSpeedMode: vi.fn(),
+  setThreadGoal: vi.fn(),
   setThreadQueueState: vi.fn(),
   setWorkspaceRootsState: vi.fn(),
   startThread: vi.fn(),
   startThreadTurn: vi.fn(),
+  steerThreadTurn: vi.fn(),
   subscribeCodexNotifications: vi.fn(),
 }))
 
@@ -582,6 +587,99 @@ describe('Codex CLI availability', () => {
     await state.refreshAll({ awaitAncillaryRefreshes: true })
     expect(state.error.value).toBe('Connection lost')
     expect(state.codexCliMissingError.value).toBe('')
+  })
+})
+
+describe('goal slash commands', () => {
+  const activeGoal = {
+    threadId: 'thread-a',
+    objective: 'Ship goal support',
+    status: 'active' as const,
+    tokenBudget: null,
+    tokensUsed: 0,
+    timeUsedSeconds: 0,
+    createdAt: 1,
+    updatedAt: 1,
+  }
+
+  it('parses goal slash command variants', () => {
+    expect(parseGoalSlashCommand('/goal')).toEqual({ kind: 'show' })
+    expect(parseGoalSlashCommand('/goal clear')).toEqual({ kind: 'clear' })
+    expect(parseGoalSlashCommand('/goal pause')).toEqual({ kind: 'status', status: 'paused' })
+    expect(parseGoalSlashCommand('/goal unpause')).toEqual({ kind: 'status', status: 'active' })
+    expect(parseGoalSlashCommand('/goal resume')).toEqual({ kind: 'status', status: 'active' })
+    expect(parseGoalSlashCommand('/goal Ship goal support')).toEqual({ kind: 'set', objective: 'Ship goal support' })
+    expect(parseGoalSlashCommand('/goals Ship goal support')).toBeNull()
+  })
+
+  it('routes selected-thread /goal objectives to goal RPCs instead of turn/start', async () => {
+    installTestWindow()
+    gatewayMocks.setThreadGoal.mockResolvedValue(activeGoal)
+
+    const state = useDesktopState()
+    state.primeSelectedThread('thread-a')
+
+    await state.sendMessageToSelectedThread('/goal Ship goal support')
+
+    expect(gatewayMocks.setThreadGoal).toHaveBeenCalledWith('thread-a', {
+      objective: 'Ship goal support',
+      status: 'active',
+    })
+    expect(gatewayMocks.startThreadTurn).not.toHaveBeenCalled()
+    expect(gatewayMocks.steerThreadTurn).not.toHaveBeenCalled()
+    expect(state.selectedLiveOverlay.value?.activityLabel).toBe('Goal active')
+    expect(state.selectedLiveOverlay.value?.reasoningText).toContain('Ship goal support')
+  })
+
+  it('supports selected-thread goal status, show, and clear commands', async () => {
+    installTestWindow()
+    gatewayMocks.getThreadGoal.mockResolvedValue(activeGoal)
+    gatewayMocks.setThreadGoal.mockResolvedValue({ ...activeGoal, status: 'paused' })
+    gatewayMocks.clearThreadGoal.mockResolvedValue(true)
+
+    const state = useDesktopState()
+    state.primeSelectedThread('thread-a')
+
+    await state.sendMessageToSelectedThread('/goal')
+    expect(gatewayMocks.getThreadGoal).toHaveBeenCalledWith('thread-a')
+    expect(state.selectedLiveOverlay.value?.activityLabel).toBe('Goal active')
+
+    await state.sendMessageToSelectedThread('/goal pause')
+    expect(gatewayMocks.setThreadGoal).toHaveBeenCalledWith('thread-a', { status: 'paused' })
+    expect(state.selectedLiveOverlay.value?.activityLabel).toBe('Goal paused')
+
+    await state.sendMessageToSelectedThread('/goal clear')
+    expect(gatewayMocks.clearThreadGoal).toHaveBeenCalledWith('thread-a')
+    expect(state.selectedLiveOverlay.value?.activityLabel).toBe('Goal cleared')
+    expect(gatewayMocks.startThreadTurn).not.toHaveBeenCalled()
+  })
+
+  it('creates a new thread for new-thread /goal objectives without sending a normal turn', async () => {
+    installTestWindow()
+    gatewayMocks.startThread.mockResolvedValue({
+      threadId: 'thread-new',
+      model: 'gpt-5.4',
+      modelProvider: 'openai',
+      reasoningEffort: 'medium',
+    })
+    gatewayMocks.setThreadGoal.mockResolvedValue({
+      ...activeGoal,
+      threadId: 'thread-new',
+    })
+
+    const state = useDesktopState()
+    const threadId = await state.sendMessageToNewThread('/goal Ship goal support', '/tmp/project')
+
+    expect(threadId).toBe('thread-new')
+    expect(gatewayMocks.startThread).toHaveBeenCalledWith('/tmp/project', undefined, undefined)
+    expect(gatewayMocks.setThreadGoal).toHaveBeenCalledWith('thread-new', {
+      objective: 'Ship goal support',
+      status: 'active',
+    })
+    expect(gatewayMocks.startThreadTurn).not.toHaveBeenCalled()
+    expect(state.selectedThreadId.value).toBe('thread-new')
+    expect(state.isSelectedThreadInterruptPending.value).toBe(false)
+    expect(state.selectedLiveOverlay.value?.activityLabel).toBe('Goal active')
   })
 })
 

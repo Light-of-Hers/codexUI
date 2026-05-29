@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { forkThread, getAvailableModelIds, getThreadQueueState, listDirectoryComposioConnectors, resumeThread, searchComposerFiles, searchFileLinkPaths, setThreadQueueState, startThread, startThreadTurn, steerThreadTurn } from './codexGateway'
+import { clearThreadGoal, forkThread, getAvailableModelIds, getThreadGoal, getThreadQueueState, listDirectoryComposioConnectors, resumeThread, searchComposerFiles, searchFileLinkPaths, setThreadGoal, setThreadQueueState, startThread, startThreadTurn, steerThreadTurn } from './codexGateway'
 
 function mockRpcFetch(): { requests: Array<{ method: string, params: Record<string, unknown> }> } {
   const requests: Array<{ method: string, params: Record<string, unknown> }> = []
@@ -131,6 +131,72 @@ describe('steerThreadTurn payloads', () => {
         { type: 'skill', name: 'brainstorming', path: '/skills/brainstorming' },
       ],
     })
+  })
+})
+
+describe('thread goal payloads', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('uses app-server goal RPC methods', async () => {
+    const { requests } = mockRpcFetchWithResponder((request) => {
+      if (request.method === 'thread/goal/get') {
+        return {
+          goal: null,
+        }
+      }
+      if (request.method === 'thread/goal/set') {
+        return {
+          goal: {
+            threadId: request.params.threadId,
+            objective: request.params.objective ?? 'Existing goal',
+            status: request.params.status ?? 'active',
+            tokenBudget: null,
+            tokensUsed: 0,
+            timeUsedSeconds: 0,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        }
+      }
+      if (request.method === 'thread/goal/clear') {
+        return {
+          cleared: true,
+        }
+      }
+      return {}
+    })
+
+    await expect(getThreadGoal('thread-1')).resolves.toBeNull()
+    await expect(setThreadGoal('thread-1', { objective: 'Ship goal support', status: 'active' })).resolves.toMatchObject({
+      threadId: 'thread-1',
+      objective: 'Ship goal support',
+      status: 'active',
+    })
+    await expect(setThreadGoal('thread-1', { status: 'paused' })).resolves.toMatchObject({
+      status: 'paused',
+    })
+    await expect(clearThreadGoal('thread-1')).resolves.toBe(true)
+
+    expect(requests).toEqual([
+      {
+        method: 'thread/goal/get',
+        params: { threadId: 'thread-1' },
+      },
+      {
+        method: 'thread/goal/set',
+        params: { threadId: 'thread-1', objective: 'Ship goal support', status: 'active' },
+      },
+      {
+        method: 'thread/goal/set',
+        params: { threadId: 'thread-1', status: 'paused' },
+      },
+      {
+        method: 'thread/goal/clear',
+        params: { threadId: 'thread-1' },
+      },
+    ])
   })
 })
 
