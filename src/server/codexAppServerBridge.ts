@@ -82,7 +82,7 @@ type RpcExecutor = {
   rpc: (method: string, params: unknown) => Promise<unknown>
 }
 
-const THREAD_MODEL_PROVIDER_OVERRIDE_METHODS = new Set(['thread/start', 'thread/resume', 'thread/fork'])
+const THREAD_MODEL_PROVIDER_OVERRIDE_METHODS = new Set(['thread/start', 'thread/resume', 'thread/fork', 'turn/start'])
 
 type ServerRequestReply = {
   result?: unknown
@@ -6395,9 +6395,13 @@ export class BackendQueueProcessor {
         }],
       }
       const resumedModel = readModelState.model || resumedModelState.model
+      const resumedModelProvider = readModelState.modelProvider || resumedModelState.modelProvider
       const resumedReasoningEffort = readModelState.reasoningEffort || resumedModelState.reasoningEffort
       if (resumedModel) {
         turnStartParams.model = resumedModel
+      }
+      if (resumedModelProvider) {
+        turnStartParams.modelProvider = resumedModelProvider
       }
       if (resumedReasoningEffort) {
         turnStartParams.effort = resumedReasoningEffort
@@ -6573,6 +6577,7 @@ export class BackendQueueProcessor {
 
     try {
       const queuedModel = readNonEmptyString(turn.message.model)
+      const queuedModelProvider = readNonEmptyString(turn.message.modelProvider)
       const queuedReasoningEffort = normalizeReasoningEffort(turn.message.reasoningEffort)
       const settings = await this.resolveCollaborationModeSettings(
         turn.message.collaborationMode,
@@ -6581,6 +6586,9 @@ export class BackendQueueProcessor {
       )
       if (queuedModel) {
         params.model = queuedModel
+      }
+      if (queuedModelProvider) {
+        params.modelProvider = queuedModelProvider
       }
       if (queuedReasoningEffort) {
         params.effort = queuedReasoningEffort

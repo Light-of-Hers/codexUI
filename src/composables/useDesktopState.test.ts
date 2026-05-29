@@ -1288,6 +1288,7 @@ describe('session composer model state', () => {
       undefined,
       [],
       'default',
+      'rustcat',
     )
     expect(state.selectedProvider.value).toBe('codex')
     expect(state.readModelIdForThread('thread-a')).toBe('gpt-5.5')
@@ -1300,6 +1301,52 @@ describe('session composer model state', () => {
     expect(gatewayMocks.resumeThread).toHaveBeenNthCalledWith(3, 'thread-a', 'gpt-5.5', 'rustcat')
     expect(state.selectedProvider.value).toBe('codex')
     expect(state.readModelIdForThread('thread-a')).toBe('gpt-5.5')
+  })
+
+  it('passes an explicit Cursor provider override when sending on an existing session', async () => {
+    installTestWindow({
+      'codex-web-local.selected-model-by-context.v1': JSON.stringify({
+        'thread-a': 'gpt-5.5',
+      }),
+    })
+    gatewayMocks.getThreadDetail.mockResolvedValue({
+      messages: [],
+      inProgress: false,
+      activeTurnId: '',
+      hasMoreOlder: false,
+      turnIndexByTurnId: {},
+    })
+    gatewayMocks.resumeThread.mockResolvedValue({
+      model: 'gpt-5.5',
+      modelProvider: 'cursor',
+      reasoningEffort: 'xhigh',
+      messages: [],
+      inProgress: false,
+      activeTurnId: '',
+      hasMoreOlder: false,
+      turnIndexByTurnId: {},
+    })
+    gatewayMocks.startThreadTurn.mockResolvedValue('turn-1')
+
+    const state = useDesktopState()
+    state.primeSelectedThread('thread-a')
+    state.setSelectedProvider('cursor')
+    state.setSelectedModelIdForThread('thread-a', 'gpt-5.5')
+    await state.sendMessageToSelectedThread('use cursor now')
+
+    expect(gatewayMocks.resumeThread).toHaveBeenCalledWith('thread-a', 'gpt-5.5', 'cursor')
+    expect(gatewayMocks.startThreadTurn).toHaveBeenCalledWith(
+      'thread-a',
+      'use cursor now',
+      [],
+      'gpt-5.5',
+      undefined,
+      undefined,
+      [],
+      'default',
+      'cursor',
+    )
+    expect(state.selectedProvider.value).toBe('cursor')
   })
 })
 

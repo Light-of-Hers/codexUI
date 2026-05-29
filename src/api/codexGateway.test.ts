@@ -98,6 +98,16 @@ describe('startThreadTurn collaboration mode payloads', () => {
       },
     })
   })
+
+  it('sends explicit model provider overrides on turn start', async () => {
+    const { requests } = mockRpcFetch()
+
+    await startThreadTurn('thread-1', 'use cursor now', [], 'gpt-5.5', 'xhigh', undefined, [], 'default', 'cursor')
+
+    expect(requests).toHaveLength(1)
+    expect(requests[0].method).toBe('turn/start')
+    expect(requests[0].params.modelProvider).toBe('cursor')
+  })
 })
 
 describe('steerThreadTurn payloads', () => {

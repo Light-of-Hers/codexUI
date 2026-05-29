@@ -26,6 +26,8 @@ type ParsedCursorToolCall = {
 const CURSOR_TOOL_HEADER = /^\[cursor tool_call ([^\]]+)\]\n/
 const CURSOR_TOOL_COMPACT_HEADER = /^Cursor tool (`?.+?`?) (started|running|completed)(?: \(exit (-?\d+)\))?\n/
 const CURSOR_SHELL_COMPACT_HEADER = /^Cursor shell (running|completed)(?: \(exit (-?\d+)\))?\n/
+const CURSOR_TOOL_CALLED_HEADER = /^(Called|Calling) Cursor tool (`?.+?`?)\n/
+const CURSOR_SHELL_RAN_HEADER = /^(Ran|Running) (`.+?`)(?: \(exit (-?\d+)\))?\n/
 const CODEX_UI_DATA_BLOCK = /<codex-ui-data>([\s\S]*?)<\/codex-ui-data>/
 const CODEX_UI_DATA_BASE64_BLOCK = /\[codex-ui-data:base64\]([A-Za-z0-9+/=]+)\[\/codex-ui-data\]/
 const CURSOR_PAYLOAD_FILE_LINE = /^\s*(?:└\s*)?payload:\s*(.+\.json)\s*$/m
@@ -115,25 +117,74 @@ function parseCursorToolCallText(value: string): ParsedCursorToolCall | null {
   const compactToolHeader = value.match(CURSOR_TOOL_COMPACT_HEADER)
   const compactShellHeader = value.match(CURSOR_SHELL_COMPACT_HEADER)
   const compactHeader = compactToolHeader ?? compactShellHeader
-  if (!compactHeader) return null
 
-  const tool = compactToolHeader
+  if (compactHeader) {
+    const tool = compactToolHeader
     ? compactToolHeader[1]?.replace(/^`|`$/g, '').trim() ?? ''
     : 'shell'
-  const subtype = compactToolHeader
+    const subtype = compactToolHeader
     ? (compactToolHeader[2] ?? 'started')
     : (compactShellHeader?.[1] === 'completed' ? 'completed' : 'started')
-  const callId = readLineValue(value, 'call_id')
-  if (!subtype || !callId || !tool) return null
-  return {
-    subtype,
-    callId,
-    tool,
-    argumentsRaw: parseLineTextAfterLabel(value, 'args:') || parseLineTextAfterLabel(value, 'arguments:'),
-    arguments: parseJsonLineAfterLabel(value, 'args:') || parseJsonLineAfterLabel(value, 'arguments:'),
-    outputRaw: parseTextAfterLabel(value, 'output:'),
-    output: parseJsonAfterLabel(value, 'output:'),
+    const callId = readLineValue(value, 'call_id')
+    if (!subtype || !callId || !tool) return null
+    return {
+      subtype,
+      callId,
+      tool,
+      argumentsRaw: parseLineTextAfterLabel(value, 'args:') || parseLineTextAfterLabel(value, 'arguments:'),
+      arguments: parseJsonLineAfterLabel(value, 'args:') || parseJsonLineAfterLabel(value, 'arguments:'),
+      outputRaw: parseTextAfterLabel(value, 'output:'),
+      output: parseJsonAfterLabel(value, 'output:'),
+    }
   }
+
+  // New proxy commentary format: "Called/Calling Cursor tool `name`"
+  const calledHeader = value.match(CURSOR_TOOL_CALLED_HEADER)
+  if (calledHeader) {
+    const tool = calledHeader[2]?.replace(/^`|`$/g, '').trim() ?? ''
+    const subtype = calledHeader[1] === 'Called' ? 'completed' : 'started'
+    const callId = callIdFromPayloadPath(value) || readLineValue(value, 'call_id')
+    if (!tool) return null
+    return {
+      subtype,
+      callId,
+      tool,
+      argumentsRaw: parseLineTextAfterLabel(value, 'args:'),
+      arguments: parseJsonLineAfterLabel(value, 'args:'),
+      outputRaw: parseTextAfterLabel(value, 'output:'),
+      output: parseJsonAfterLabel(value, 'output:'),
+    }
+  }
+
+  // New proxy shell commentary format: "Running/Ran `cmd`"
+  const ranHeader = value.match(CURSOR_SHELL_RAN_HEADER)
+  if (ranHeader) {
+    const subtype = ranHeader[1] === 'Ran' ? 'completed' : 'started'
+    const callId = callIdFromPayloadPath(value) || readLineValue(value, 'call_id')
+    return {
+      subtype,
+      callId,
+      tool: 'shell',
+      argumentsRaw: parseLineTextAfterLabel(value, 'args:'),
+      arguments: parseJsonLineAfterLabel(value, 'args:'),
+      outputRaw: parseTextAfterLabel(value, 'output:'),
+      output: parseJsonAfterLabel(value, 'output:'),
+    }
+  }
+
+  return null
+}
+
+function callIdFromPayloadPath(value: string): string {
+  const path = value.match(CURSOR_PAYLOAD_FILE_LINE)?.[1]?.trim() ?? ''
+  if (!path) return ''
+  const filename = path.split('/').pop() ?? ''
+  return filename.replace(/\.json$/i, '')
+}
+
+function callIdFromMessageId(id: string): string {
+  const match = id.match(/^msg_cursor_tool_\w+_(.+)$/)
+  return match?.[1]?.trim() ?? ''
 }
 
 function parseHiddenCursorToolPayload(value: string): ParsedCursorToolCall | null {
@@ -304,6 +355,7 @@ export function parseCursorToolMessage(
 
   const parsed = parseCursorToolCallText(text)
   if (!parsed) return null
+  if (!parsed.callId) parsed.callId = callIdFromMessageId(id) || id
   const completed = parsed.subtype === 'completed' || parsed.outputRaw !== ''
   if (!completed && !options.includeInProgress) return null
 
@@ -323,6 +375,7 @@ export function parseCursorToolCommandMessage(
 ): CursorToolCommandMessage | null {
   const parsed = parseCursorToolCallText(text)
   if (!parsed || parsed.tool !== 'shell') return null
+  if (!parsed.callId) parsed.callId = callIdFromMessageId(id) || id
 
   const command = commandFromArguments(parsed.arguments)
   if (!command) return null

@@ -5485,7 +5485,7 @@ Markdown files opened through the local editor expose a preview button that rend
 - Light theme and dark theme are both available from Settings.
 
 #### Steps
-1. Run `./node_modules/.bin/vitest run src/server/freeMode.test.ts src/server/codexAppServerBridge.inlinePayload.test.ts`.
+1. Run `./node_modules/.bin/vitest run src/server/freeMode.test.ts src/server/codexAppServerBridge.inlinePayload.test.ts src/api/codexGateway.test.ts src/composables/useDesktopState.test.ts`.
 2. Run `./node_modules/.bin/vue-tsc --noEmit`.
 3. Run `cargo fmt --check && cargo test` from `tooling/cursor-codex-proxy`.
 4. Open Settings in light theme and select `Cursor CLI` from the provider dropdown.
@@ -5496,7 +5496,9 @@ Markdown files opened through the local editor expose a preview button that rend
 9. Confirm the command card shows the shell command, thread workspace, exit status, and `stdout`, and the final assistant message contains the output path.
 10. Run a Cursor shell command that exits non-zero after writing stdout, such as `printf 'cursor failure stdout\n'; false`, and confirm the command card is marked failed while still showing stdout.
 11. Refresh the thread and confirm the persisted history still shows a single command card rather than separate started/completed raw text messages.
-12. Switch to dark theme and repeat the command-card and Settings provider/model dropdown checks.
+12. From an existing Cursor CLI session, send a follow-up prompt and confirm the outgoing `turn/start` request carries `modelProvider: "cursor"` rather than falling back to the configured Codex provider.
+13. Open or create a Cursor CLI turn that emits compact `Calling Cursor tool`, `Called Cursor tool`, `Running \`...\``, or `Ran \`...\`` commentary and confirm these messages normalize into tool or command cards.
+14. Switch to dark theme and repeat the command-card and Settings provider/model dropdown checks.
 
 #### Expected Results
 - Cursor CLI provider does not inherit stale OpenRouter model ids such as `openrouter/free`.
@@ -5505,7 +5507,9 @@ Markdown files opened through the local editor expose a preview button that rend
 - Cursor shell tool calls are not rejected by Cursor's own approval layer during provider execution.
 - Cursor shell tool calls run in the thread workspace, not the `repos/codexUI` server launch directory.
 - Cursor shell tool-call started/completed commentary is normalized into the existing command execution UI without losing command, cwd, exit code, or output details.
+- Cursor proxy `Calling`/`Called` and `Running`/`Ran` commentary formats normalize into the same tool and command cards.
 - Cursor shell tool-call `failure` payloads preserve stdout/stderr in the command card even when the command exits non-zero.
+- Follow-up turns on existing Cursor sessions preserve the explicit Cursor provider on `turn/start`.
 - Provider controls and model dropdown remain readable in both light and dark themes.
 
 #### Performance Audit
@@ -5513,6 +5517,7 @@ Markdown files opened through the local editor expose a preview button that rend
 - `/codex-api/free-mode/status` now uses the same local catalog selection logic as `/codex-api/provider-models`, avoiding stale model fallback and duplicate provider discovery.
 - `cursor-local-server` still starts only through the provider runtime wrapper; no always-on local daemon was added.
 - Cursor tool-call display normalization runs only while normalizing a single agent message or completed realtime item; it adds no extra API requests and does not scan full session logs.
+- Explicit turn provider propagation adds one scalar field to existing `turn/start` RPC payloads and does not add extra RPCs.
 - No browser profile was captured for this server-side/provider-runtime fix; use `PROFILE_BASE_URL=http://127.0.0.1:4173 PROFILE_WAIT_MS=7000 pnpm run profile:browser` if a later UI-rendering change touches the provider settings surface.
 
 #### Rollback/Cleanup

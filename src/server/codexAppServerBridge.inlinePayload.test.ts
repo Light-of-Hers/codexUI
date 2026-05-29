@@ -70,6 +70,30 @@ describe('session model state recovery', () => {
     expect(rpcCalls).toEqual([{ method: 'config/read', params: {} }])
   })
 
+  it('rewrites explicit OpenAI turn provider to the configured Codex provider', async () => {
+    const rewritten = await rewriteOpenAiThreadModelProvider({
+      async rpc(): Promise<unknown> {
+        return {
+          config: {
+            model_provider: 'rustcat',
+          },
+        }
+      },
+    }, 'turn/start', {
+      threadId: 'thread-1',
+      model: 'gpt-5.5',
+      modelProvider: 'openai',
+      input: [{ type: 'text', text: 'continue' }],
+    })
+
+    expect(rewritten).toEqual({
+      threadId: 'thread-1',
+      model: 'gpt-5.5',
+      modelProvider: 'rustcat',
+      input: [{ type: 'text', text: 'continue' }],
+    })
+  })
+
   it('overrides stale thread snapshot model metadata from persisted turn context', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'codexui-session-model-'))
     const sessionPath = join(tempDir, 'session.jsonl')
@@ -1239,6 +1263,7 @@ describe('backend queue scheduling', () => {
             threadId: 'thread-1',
             input: [{ type: 'text', text: 'Please continue.' }],
             model: 'ark-code-latest',
+            modelProvider: 'moon',
             effort: 'xhigh',
             collaborationMode: {
               mode: 'default',
