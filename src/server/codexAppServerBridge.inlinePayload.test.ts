@@ -1895,6 +1895,31 @@ describe('app-server runtime configuration', () => {
       await rm(tempDir, { recursive: true, force: true })
     }
   })
+
+  it('uses the Codex Ark command for ark provider runtimes', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-runtime-config-'))
+    try {
+      const codexCommand = join(tempDir, 'codex')
+      const arkCommand = join(tempDir, 'codex-ark')
+      await writeMockCommand(codexCommand)
+      await writeMockCommand(arkCommand)
+      vi.stubEnv('CODEXUI_CODEX_COMMAND', codexCommand)
+      vi.stubEnv('CODEXUI_CODEX_ARK_COMMAND', arkCommand)
+
+      const arkConfig = buildAppServerConfigForState({
+        enabled: true,
+        apiKey: null,
+        model: 'doubao-seed-2-0-code-preview-260215',
+        provider: 'ark',
+      })
+
+      expect(arkConfig.command).toBe(arkCommand)
+      expect(arkConfig.args[0]).toBe('app-server')
+      expect(arkConfig.args.some((arg) => arg.includes('model_provider'))).toBe(false)
+    } finally {
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('automation TOML handling', () => {

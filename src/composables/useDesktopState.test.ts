@@ -25,6 +25,8 @@ const gatewayMocks = vi.hoisted(() => ({
   getAccountRateLimits: vi.fn(),
   getAvailableCollaborationModes: vi.fn(),
   getAvailableModelIds: vi.fn(),
+  getArkModelIds: vi.fn(),
+  getArkModelMetadata: vi.fn(),
   getCurrentModelConfig: vi.fn(),
   getThreadGoal: vi.fn(),
   getMoonBridgeModelIds: vi.fn(),
@@ -97,6 +99,8 @@ beforeEach(() => {
   gatewayMocks.getThreadQueueState.mockResolvedValue({})
   gatewayMocks.getThreadTitleCache.mockResolvedValue({ titles: {} })
   gatewayMocks.getWorkspaceRootsState.mockRejectedValue(new Error('no workspace roots state'))
+  gatewayMocks.getArkModelIds.mockResolvedValue([])
+  gatewayMocks.getArkModelMetadata.mockResolvedValue([])
   gatewayMocks.getMoonBridgeModelIds.mockResolvedValue([])
   gatewayMocks.getMoonBridgeModelMetadata.mockResolvedValue([])
 })
@@ -392,6 +396,7 @@ describe('provider session helpers', () => {
     expect(normalizeProviderId('rustcat')).toBe('codex')
     expect(normalizeProviderId('openrouter-free')).toBe('openrouter')
     expect(normalizeProviderId('custom-endpoint')).toBe('custom')
+    expect(normalizeProviderId('ark')).toBe('ark')
     expect(normalizeProviderId('cursor')).toBe('cursor')
     expect(readSelectedProvider({}, '')).toBe('codex')
   })
@@ -457,6 +462,10 @@ describe('provider session helpers', () => {
   it('infers Moon Bridge provider from session model catalog entries', () => {
     expect(inferProviderFromModel('glm-5.1', ['glm-5.1', 'kimi-k2.6'])).toBe('moon')
     expect(inferProviderFromModel('gpt-5.4-mini', ['glm-5.1', 'kimi-k2.6'])).toBeNull()
+  })
+
+  it('infers Ark provider from Ark catalog entries', () => {
+    expect(inferProviderFromModel('doubao-seed-2-0-code-preview-260215', [], ['doubao-seed-2-0-code-preview-260215'])).toBe('ark')
   })
 
   it('keeps the new-thread model selection scoped to the active session provider', () => {
@@ -872,6 +881,50 @@ describe('provider model selection', () => {
     expect(state.readModelIdForThread('').trim()).toBe('deepseek-v4-pro')
     expect(JSON.parse(window.localStorage.getItem('codex-web-local.selected-model-by-context.v1') ?? '{}')).toEqual({
       '__new-thread-provider__::moon': 'deepseek-v4-pro',
+    })
+  })
+
+  it('uses the explicit new-session Ark provider when config still reports Codex', async () => {
+    installTestWindow({
+      'codex-web-local.provider-by-context.v1': JSON.stringify({
+        '__new-thread-provider__': 'ark',
+      }),
+    })
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({ groups: [], nextCursor: null })
+    gatewayMocks.getAvailableCollaborationModes.mockResolvedValue([{ value: 'default', label: 'Default' }])
+    gatewayMocks.getSkillsList.mockResolvedValue([])
+    gatewayMocks.getAccountRateLimits.mockResolvedValue(null)
+    gatewayMocks.getCurrentModelConfig.mockResolvedValue({
+      model: 'gpt-5.5',
+      providerId: 'codex',
+      reasoningEffort: 'medium',
+      speedMode: 'standard',
+    })
+    gatewayMocks.getAvailableModelIds.mockResolvedValue([
+      'doubao-seed-2-0-code-preview-260215',
+      'deepseek-v4-pro-260425',
+    ])
+    gatewayMocks.getArkModelMetadata.mockResolvedValue([
+      { id: 'doubao-seed-2-0-code-preview-260215', contextWindow: 262144 },
+      { id: 'deepseek-v4-pro-260425', contextWindow: 1048576 },
+    ])
+
+    const state = useDesktopState()
+    await state.refreshAll({ includeSelectedThreadMessages: false, awaitAncillaryRefreshes: true })
+
+    expect(gatewayMocks.getAvailableModelIds).toHaveBeenCalledWith({
+      includeProviderModels: true,
+      requireProviderModels: true,
+    })
+    expect(state.selectedProvider.value).toBe('ark')
+    expect(state.availableModelIds.value).toEqual([
+      'doubao-seed-2-0-code-preview-260215',
+      'deepseek-v4-pro-260425',
+    ])
+    expect(state.selectedModelId.value).toBe('doubao-seed-2-0-code-preview-260215')
+    expect(state.readModelIdForThread('').trim()).toBe('doubao-seed-2-0-code-preview-260215')
+    expect(JSON.parse(window.localStorage.getItem('codex-web-local.selected-model-by-context.v1') ?? '{}')).toEqual({
+      '__new-thread-provider__::ark': 'doubao-seed-2-0-code-preview-260215',
     })
   })
 
@@ -1401,6 +1454,8 @@ describe('session composer model state', () => {
       gatewayMocks.getThreadQueueState.mockResolvedValue({})
       gatewayMocks.getThreadTitleCache.mockResolvedValue({ titles: {} })
       gatewayMocks.getWorkspaceRootsState.mockRejectedValue(new Error('no workspace roots state'))
+      gatewayMocks.getArkModelIds.mockResolvedValue([])
+      gatewayMocks.getArkModelMetadata.mockResolvedValue([])
       gatewayMocks.getMoonBridgeModelIds.mockResolvedValue([])
       gatewayMocks.getMoonBridgeModelMetadata.mockResolvedValue([])
       gatewayMocks.getThreadDetail.mockResolvedValue({

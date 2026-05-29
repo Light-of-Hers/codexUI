@@ -192,6 +192,23 @@ export function resolveCodexMoonCommand(): string | null {
   return null
 }
 
+function getPotentialCodexArkCommands(): string[] {
+  return uniqueStrings([
+    process.env.CODEXUI_CODEX_ARK_COMMAND?.trim(),
+    process.env.CODEX_ARK_COMMAND?.trim(),
+    'codex-ark',
+  ])
+}
+
+export function resolveCodexArkCommand(): string | null {
+  for (const candidate of getPotentialCodexArkCommands()) {
+    if (isRunnableCommand(candidate, ['--version'])) {
+      return candidate
+    }
+  }
+  return null
+}
+
 function getPotentialCodexCursorCommands(): string[] {
   return uniqueStrings([
     process.env.CODEXUI_CODEX_CURSOR_COMMAND?.trim(),

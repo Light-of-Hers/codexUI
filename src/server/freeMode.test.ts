@@ -5,10 +5,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   FREE_MODE_DEFAULT_MODEL,
   FREE_MODE_PROVIDER_ID,
+  ARK_FALLBACK_MODEL,
+  ARK_PROVIDER_ID,
   OPENCODE_ZEN_DEFAULT_MODEL,
   OPENCODE_ZEN_PROVIDER_ID,
   createDefaultFreeModeState,
   createDefaultOpenCodeZenFreeModeState,
+  getArkModelMetadata,
+  getArkModelSelection,
+  getArkModels,
   getCursorModelMetadata,
   getCursorModelSelection,
   getCursorModels,
@@ -143,6 +148,82 @@ describe('Cursor catalog loading', () => {
     } finally {
       await rm(tempDir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('Ark catalog loading', () => {
+  it('reads model slugs from the generated catalog', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-ark-'))
+    const catalogPath = join(tempDir, 'models_catalog.json')
+    try {
+      await writeFile(
+        catalogPath,
+        JSON.stringify({
+          models: [
+            { slug: 'doubao-seed-2-0-code-preview-260215', context_window: 262144 },
+            { slug: 'deepseek-v4-pro-260425', context_window: '1048576' },
+            { slug: 'doubao-seed-2-0-code-preview-260215', context_window: 128000 },
+          ],
+        }),
+        'utf8',
+      )
+
+      vi.stubEnv('CODEXUI_ARK_MODEL_CATALOG', catalogPath)
+
+      expect(getArkModels()).toEqual(['doubao-seed-2-0-code-preview-260215', 'deepseek-v4-pro-260425'])
+      expect(getArkModelMetadata()).toEqual([
+        { id: 'doubao-seed-2-0-code-preview-260215', contextWindow: 262144 },
+        { id: 'deepseek-v4-pro-260425', contextWindow: 1048576 },
+      ])
+    } finally {
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('uses the Ark catalog instead of a persisted OpenRouter model', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-ark-selection-'))
+    const catalogPath = join(tempDir, 'models_catalog.json')
+    try {
+      await writeFile(
+        catalogPath,
+        JSON.stringify({
+          models: [
+            { slug: 'doubao-seed-2-0-code-preview-260215' },
+            { slug: 'deepseek-v4-pro-260425' },
+          ],
+        }),
+        'utf8',
+      )
+
+      vi.stubEnv('CODEXUI_ARK_MODEL_CATALOG', catalogPath)
+
+      expect(getArkModelSelection('openrouter/free')).toEqual({
+        models: ['doubao-seed-2-0-code-preview-260215', 'deepseek-v4-pro-260425'],
+        currentModel: 'doubao-seed-2-0-code-preview-260215',
+      })
+      expect(normalizeFreeModeState({
+        enabled: false,
+        apiKey: null,
+        model: 'openrouter/free',
+        provider: ARK_PROVIDER_ID,
+        wireApi: 'responses',
+      })).toEqual({
+        enabled: true,
+        apiKey: null,
+        model: 'doubao-seed-2-0-code-preview-260215',
+        provider: ARK_PROVIDER_ID,
+        wireApi: undefined,
+      })
+    } finally {
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('falls back to the Ark coding default when the catalog is missing', () => {
+    expect(getArkModelSelection('openrouter/free')).toEqual({
+      models: [ARK_FALLBACK_MODEL],
+      currentModel: ARK_FALLBACK_MODEL,
+    })
   })
 })
 

@@ -2,7 +2,7 @@ import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { resolveCodexCursorCommand, resolveCodexMoonCommand } from './commandResolution'
+import { resolveCodexArkCommand, resolveCodexCursorCommand, resolveCodexMoonCommand } from './commandResolution'
 
 afterEach(() => {
   vi.unstubAllEnvs()
@@ -40,6 +40,19 @@ describe('command resolution', () => {
       vi.stubEnv('CODEXUI_CODEX_MOON_COMMAND', command)
 
       expect(resolveCodexMoonCommand()).toBe(command)
+    } finally {
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('resolves the explicit Codex Ark command', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-command-resolution-'))
+    try {
+      const command = join(tempDir, 'codex-ark')
+      await writeVersionCommand(command)
+      vi.stubEnv('CODEXUI_CODEX_ARK_COMMAND', command)
+
+      expect(resolveCodexArkCommand()).toBe(command)
     } finally {
       await rm(tempDir, { recursive: true, force: true })
     }

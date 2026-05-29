@@ -100,6 +100,9 @@ export const FREE_MODE_BASE_URL = 'https://openrouter.ai/api/v1'
 export const MOONBRIDGE_PROVIDER_ID = 'moon'
 export const MOONBRIDGE_PROVIDER_NAME = 'Moon Bridge'
 export const MOONBRIDGE_MODEL_CATALOG_FILE = 'models_catalog.json'
+export const ARK_PROVIDER_ID = 'ark'
+export const ARK_PROVIDER_NAME = 'Ark Coding Plan'
+export const ARK_MODEL_CATALOG_FILE = 'models_catalog.json'
 export const CURSOR_PROVIDER_ID = 'cursor'
 export const CURSOR_MODEL_CATALOG_FILE = 'models_catalog.json'
 
@@ -186,6 +189,11 @@ function getCursorDataHomeDir(): string {
   return explicit && explicit.length > 0 ? explicit : join(homedir(), '.local', 'share')
 }
 
+function getArkDataHomeDir(): string {
+  const explicit = process.env.XDG_DATA_HOME?.trim()
+  return explicit && explicit.length > 0 ? explicit : join(homedir(), '.local', 'share')
+}
+
 export function getMoonBridgeModelCatalogPath(): string {
   const explicit = process.env.CODEXUI_MOONBRIDGE_MODEL_CATALOG?.trim()
     || process.env.CODEX_MOON_MODEL_CATALOG?.trim()
@@ -198,6 +206,13 @@ export function getCursorModelCatalogPath(): string {
     || process.env.CODEX_CURSOR_MODEL_CATALOG?.trim()
   if (explicit && explicit.length > 0) return explicit
   return join(getCursorDataHomeDir(), 'my-agent-configs', 'cursor', 'codex', CURSOR_MODEL_CATALOG_FILE)
+}
+
+export function getArkModelCatalogPath(): string {
+  const explicit = process.env.CODEXUI_ARK_MODEL_CATALOG?.trim()
+    || process.env.CODEX_ARK_MODEL_CATALOG?.trim()
+  if (explicit && explicit.length > 0) return explicit
+  return join(getArkDataHomeDir(), 'my-agent-configs', 'ark', 'codex', ARK_MODEL_CATALOG_FILE)
 }
 
 function readMoonBridgeModelCatalogRows(value: unknown): unknown[] {
@@ -262,6 +277,36 @@ export function getMoonBridgeModels(): string[] {
   return getMoonBridgeModelMetadata().map((model) => model.id)
 }
 
+export function getArkModelMetadata(): MoonBridgeModelMetadata[] {
+  try {
+    const raw = JSON.parse(readFileSync(getArkModelCatalogPath(), 'utf8')) as unknown
+    const rows = readMoonBridgeModelCatalogRows(raw)
+    const models: MoonBridgeModelMetadata[] = []
+    for (const row of rows) {
+      if (!row || typeof row !== 'object' || Array.isArray(row)) continue
+      const record = row as Record<string, unknown>
+      const id = readMoonBridgeModelId(record)
+      if (!id || models.some((model) => model.id === id)) continue
+      models.push({
+        id,
+        contextWindow: readMoonBridgeTokenCount(
+          record.context_window
+            ?? record.contextWindow
+            ?? record.max_context_window
+            ?? record.maxContextWindow,
+        ),
+      })
+    }
+    return models
+  } catch {
+    return []
+  }
+}
+
+export function getArkModels(): string[] {
+  return getArkModelMetadata().map((model) => model.id)
+}
+
 export function getCursorModelMetadata(): MoonBridgeModelMetadata[] {
   try {
     const raw = JSON.parse(readFileSync(getCursorModelCatalogPath(), 'utf8')) as unknown
@@ -293,11 +338,32 @@ export function getCursorModels(): string[] {
 }
 
 export const CURSOR_FALLBACK_MODEL = 'gpt-5.5-medium'
+export const ARK_FALLBACK_MODEL = 'doubao-seed-2-0-code-preview-260215'
 
 export function getCursorModelSelection(candidate: string | null | undefined): { models: string[]; currentModel: string } {
   const catalogModels = getCursorModels()
   const trimmedCandidate = candidate?.trim() ?? ''
   const fallbackModel = catalogModels[0] ?? CURSOR_FALLBACK_MODEL
+  const hasValidCatalogCandidate = trimmedCandidate.length > 0 && catalogModels.includes(trimmedCandidate)
+  const hasUsableUncatalogedCandidate = catalogModels.length === 0
+    && trimmedCandidate.length > 0
+    && trimmedCandidate !== FREE_MODE_DEFAULT_MODEL
+
+  const currentModel = hasValidCatalogCandidate || hasUsableUncatalogedCandidate
+    ? trimmedCandidate
+    : fallbackModel
+  const baseModels = catalogModels.length > 0 ? catalogModels : [currentModel]
+  const models = baseModels.includes(currentModel)
+    ? [currentModel, ...baseModels.filter((model) => model !== currentModel)]
+    : [currentModel, ...baseModels]
+
+  return { models, currentModel }
+}
+
+export function getArkModelSelection(candidate: string | null | undefined): { models: string[]; currentModel: string } {
+  const catalogModels = getArkModels()
+  const trimmedCandidate = candidate?.trim() ?? ''
+  const fallbackModel = catalogModels[0] ?? ARK_FALLBACK_MODEL
   const hasValidCatalogCandidate = trimmedCandidate.length > 0 && catalogModels.includes(trimmedCandidate)
   const hasUsableUncatalogedCandidate = catalogModels.length === 0
     && trimmedCandidate.length > 0
@@ -321,7 +387,7 @@ export interface FreeModeState {
   apiKey: string | null
   model: string
   customKey?: boolean
-  provider?: 'openrouter' | 'custom' | 'opencode-zen' | 'moon' | 'cursor'
+  provider?: 'openrouter' | 'custom' | 'opencode-zen' | 'moon' | 'ark' | 'cursor'
   customBaseUrl?: string
   wireApi?: WireApi
   providerKeys?: Record<string, string>
@@ -335,6 +401,15 @@ export function normalizeFreeModeState(state: FreeModeState | null): FreeModeSta
       ...state,
       enabled: true,
       model: cursorSelection.currentModel,
+      wireApi: undefined,
+    }
+  }
+  if (state.provider === ARK_PROVIDER_ID) {
+    const arkSelection = getArkModelSelection(state.model)
+    return {
+      ...state,
+      enabled: true,
+      model: arkSelection.currentModel,
       wireApi: undefined,
     }
   }

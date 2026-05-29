@@ -6166,6 +6166,40 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Rollback/Cleanup
 - Switch Provider back to the preferred runtime after manual verification.
 
+### Feature: Ark Coding Plan provider runtime
+
+#### Prerequisites
+- `codex-ark` is installed or `CODEXUI_CODEX_ARK_COMMAND` points to the Ark wrapper.
+- `ARK_API_KEY` is set for the wrapper process.
+- The Ark model catalog exists at `CODEXUI_ARK_MODEL_CATALOG`, `CODEX_ARK_MODEL_CATALOG`, or `~/.local/share/my-agent-configs/ark/codex/models_catalog.json`.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Run `pnpm exec vitest run src/commandResolution.test.ts src/server/freeMode.test.ts src/server/codexAppServerBridge.inlinePayload.test.ts src/composables/useDesktopState.test.ts`.
+2. Run `pnpm exec vue-tsc --noEmit`.
+3. Start or restart the app server so it loads the updated resolver.
+4. Open the app in light theme and switch Provider to `Ark Coding Plan`.
+5. Confirm no `Codex Ark CLI is not available` error appears.
+6. Open the Model dropdown and confirm Ark Coding Plan models from the Ark catalog appear, such as `doubao-seed-2-0-code-preview-260215`.
+7. Send a short prompt and inspect the backend command/RPC path.
+8. Confirm the app-server runtime command is `codex-ark` and the `turn/start` payload carries `modelProvider: "ark"`.
+9. Repeat steps 4-8 in dark theme.
+
+#### Expected Results
+- Provider `Ark Coding Plan` appears alongside Codex, OpenRouter, OpenCode Zen, Moon Bridge, Cursor CLI, and Custom endpoint.
+- Switching to Ark persists free-mode provider state with `provider: "ark"` and no provider API key.
+- Ark model discovery reads the Ark catalog and scopes the model picker to Ark models.
+- Active Ark turns run through `codex-ark app-server`, not the default Codex command and not the Moon Bridge or Cursor CLI wrappers.
+- Light and dark theme provider controls remain readable while switching providers.
+
+#### Performance Audit
+- Ark catalog reads reuse the existing local catalog pattern used by Moon Bridge and Cursor CLI.
+- Provider switching adds no polling and no remote model-list request; the model picker reads local catalog data through the existing provider-models endpoint.
+- Runtime routing remains a constant-time provider check and reuses app-server runtimes by signature.
+
+#### Rollback/Cleanup
+- Switch Provider back to the preferred runtime after manual verification.
+
 ### Feature: Rebind wrapper runtime before provider-switched turns
 
 #### Prerequisites

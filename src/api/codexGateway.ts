@@ -2160,7 +2160,7 @@ export interface FreeModeStatus {
   currentModel: string | null
   customKey: boolean
   maskedKey: string | null
-  provider?: 'openrouter' | 'custom' | 'opencode-zen' | 'moon' | 'cursor'
+  provider?: 'openrouter' | 'custom' | 'opencode-zen' | 'moon' | 'ark' | 'cursor'
   customBaseUrl?: string
   wireApi?: 'responses' | 'chat' | null
 }
@@ -2191,7 +2191,7 @@ export async function setFreeModeCustomKey(key: string): Promise<{ ok: boolean; 
 export async function setCustomProvider(
   baseUrl: string,
   apiKey: string,
-  options?: { wireApi?: 'responses' | 'chat'; provider?: 'custom' | 'opencode-zen' | 'openrouter' | 'moon' | 'cursor' },
+  options?: { wireApi?: 'responses' | 'chat'; provider?: 'custom' | 'opencode-zen' | 'openrouter' | 'moon' | 'ark' | 'cursor' },
 ): Promise<{ ok: boolean }> {
   const response = await fetch('/codex-api/free-mode/custom-provider', {
     method: 'POST',
@@ -2332,6 +2332,51 @@ function normalizeMoonBridgeModelMetadataRow(value: unknown): MoonBridgeModelMet
 export async function getMoonBridgeModelMetadata(): Promise<MoonBridgeModelMetadata[]> {
   try {
     const response = await fetch('/codex-api/moonbridge/model-metadata', {
+      signal: AbortSignal.timeout(PROVIDER_MODELS_FETCH_TIMEOUT_MS),
+    })
+    if (!response.ok) return []
+
+    const payload = (await response.json()) as unknown
+    const record = asRecord(payload)
+    const rows = Array.isArray(record?.data) ? record.data : []
+    const models: MoonBridgeModelMetadata[] = []
+    for (const row of rows) {
+      const model = normalizeMoonBridgeModelMetadataRow(row)
+      if (!model || models.some((existing) => existing.id === model.id)) continue
+      models.push(model)
+    }
+    return models
+  } catch {
+    return []
+  }
+}
+
+export async function getArkModelIds(): Promise<string[]> {
+  try {
+    const response = await fetch('/codex-api/ark/models', {
+      signal: AbortSignal.timeout(PROVIDER_MODELS_FETCH_TIMEOUT_MS),
+    })
+    if (!response.ok) return []
+
+    const payload = (await response.json()) as unknown
+    const record = asRecord(payload)
+    const rows = Array.isArray(record?.data) ? record.data : []
+    const ids: string[] = []
+    for (const row of rows) {
+      if (typeof row !== 'string') continue
+      const normalized = row.trim()
+      if (!normalized || ids.includes(normalized)) continue
+      ids.push(normalized)
+    }
+    return ids
+  } catch {
+    return []
+  }
+}
+
+export async function getArkModelMetadata(): Promise<MoonBridgeModelMetadata[]> {
+  try {
+    const response = await fetch('/codex-api/ark/model-metadata', {
       signal: AbortSignal.timeout(PROVIDER_MODELS_FETCH_TIMEOUT_MS),
     })
     if (!response.ok) return []
