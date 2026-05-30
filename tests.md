@@ -5971,13 +5971,14 @@ Markdown files opened through the local editor expose a preview button that rend
 5. Confirm the consecutive Cursor tool calls are represented by one compact grouped row.
 6. Expand the grouped row and confirm each individual tool call can still be expanded.
 7. Confirm long tool input/output appears as a shortened preview in the message body while the `payload: ...json` path remains present for full payload recovery.
-8. Repeat steps 3-7 in dark theme.
+8. Confirm the payload reference is compact, using `<session>/<short-file>.json` rather than an absolute `.codex/cursor-tool-payloads/...` path with the full raw call id.
+9. Repeat steps 3-8 in dark theme.
 
 #### Expected Results
 - Consecutive Cursor CLI tool calls group into one collapsible row, matching consecutive shell command behavior.
 - Expanding the group reveals each original tool call in order.
 - Long Cursor tool arguments and output are shortened in visible commentary instead of flooding the timeline.
-- The payload path remains available so server-side inline payload recovery can hydrate complete tool call details.
+- The compact payload path remains available so server-side inline payload recovery can hydrate complete tool call details.
 - Light and dark theme grouped tool call rows remain readable.
 
 #### Performance Audit

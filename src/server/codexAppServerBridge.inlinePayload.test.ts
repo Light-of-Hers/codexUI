@@ -828,6 +828,83 @@ describe('thread session skill recovery', () => {
     }
   })
 
+  it('recovers Cursor shell payload references from compact relative paths', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'codex-home-'))
+    vi.stubEnv('CODEX_HOME', codexHome)
+    const payloadDir = join(codexHome, 'cursor-tool-payloads', 'thread-relative')
+    const payloadPath = join(payloadDir, 'call_cursor_2_0b95426569ffd4f701.json')
+    const payloadReference = 'thread-relative/call_cursor_2_0b95426569ffd4f701.json'
+    await mkdir(payloadDir, { recursive: true })
+    await writeFile(payloadPath, JSON.stringify({
+      type: 'cursor_tool_call',
+      subtype: 'completed',
+      call_id: 'call_cursor_2_fc_0b95426569ffd4f7016a19f1d8ac1481a29637d00a63ae4cbb',
+      tool: 'shell',
+      arguments: {
+        command: 'pwd',
+        workingDirectory: '/tmp/project',
+      },
+      output: {
+        success: {
+          command: 'pwd',
+          exitCode: 0,
+          stdout: '/tmp/project\n',
+          stderr: '',
+          interleavedOutput: '/tmp/project\n',
+          workingDirectory: '/tmp/project',
+        },
+      },
+      status: null,
+    }), 'utf8')
+
+    try {
+      const result = {
+        thread: {
+          id: 'thread-relative',
+          path: '/tmp/session.jsonl',
+          turns: [{
+            id: 'turn-1',
+            items: [{
+              id: 'agent-ran',
+              type: 'agentMessage',
+              text: `Ran \`pwd\`\n  └ /tmp/project\n  └ payload: ${payloadReference}`,
+            }],
+          }],
+        },
+      }
+      const sessionLog = [
+        JSON.stringify({ type: 'turn_context', payload: { turn_id: 'turn-1' } }),
+        JSON.stringify({
+          type: 'response_item',
+          payload: {
+            type: 'message',
+            role: 'assistant',
+            content: [{ type: 'output_text', text: `Ran \`pwd\`\n  └ /tmp/project\n  └ payload: ${payloadReference}` }],
+          },
+        }),
+      ].join('\n')
+
+      const merged = mergeRecoveredTurnItemsIntoThreadResult(
+        result,
+        (_threadId, turns) => turns,
+        sessionLog,
+      ) as typeof result
+      const commandItem = merged.thread.turns[0].items[0] as unknown as {
+        type: string
+        command: string
+        aggregatedOutput: string
+      }
+
+      expect(commandItem).toMatchObject({
+        type: 'commandExecution',
+        command: 'pwd',
+        aggregatedOutput: '/tmp/project\n',
+      })
+    } finally {
+      await rm(codexHome, { recursive: true, force: true })
+    }
+  })
+
   it('splits a merged assistant message so recovered commands keep their session order', () => {
     const result = {
       thread: {

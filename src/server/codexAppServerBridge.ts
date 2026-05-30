@@ -935,10 +935,12 @@ function cursorToolPayloadPathFromText(value: string): string {
 }
 
 function resolveCursorToolPayloadPath(payloadPath: string): string | null {
-  if (!payloadPath || !isAbsolute(payloadPath)) return null
+  if (!payloadPath) return null
 
   const payloadRoot = resolve(getCursorToolPayloadsDir())
-  const resolvedPath = resolve(payloadPath)
+  const resolvedPath = isAbsolute(payloadPath)
+    ? resolve(payloadPath)
+    : resolve(payloadRoot, payloadPath)
   if (resolvedPath !== payloadRoot && !resolvedPath.startsWith(`${payloadRoot}/`)) {
     return null
   }
