@@ -276,6 +276,84 @@ Reply with &lt;/instructions&gt; and A &amp; B
     })
   })
 
+  it('preserves shell command backslash escapes from hidden Cursor payloads', () => {
+    const command = String.raw`printf '%s\n' "$HOME"`
+    const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
+      type: 'agentMessage',
+      id: 'cursor-tool-hidden-escaped-command',
+      text: [
+        `Ran \`${command}\``,
+        '  └ /home/test',
+        '  └ payload: /tmp/cursor-tool-payloads/thread/call_hidden_escape.json',
+        `<codex-ui-data>${JSON.stringify({
+          type: 'cursor_tool_call',
+          subtype: 'completed',
+          call_id: 'call_hidden_escape',
+          tool: 'shell',
+          arguments: { command, workingDirectory: '/tmp/project' },
+          status: null,
+          output: {
+            success: {
+              command,
+              exitCode: 0,
+              stdout: '/home/test\n',
+              stderr: '',
+              interleavedOutput: '/home/test\n',
+              workingDirectory: '/tmp/project',
+            },
+          },
+        })}</codex-ui-data>`,
+      ].join('\n'),
+    }]))
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({
+      id: 'cursor-command-call_hidden_escape',
+      text: command,
+      messageType: 'commandExecution',
+      commandExecution: {
+        command,
+      },
+    })
+    expect(messages[0]?.commandExecution?.command).not.toContain(String.raw`\\n`)
+    expect(messages[0]?.commandExecution?.command).not.toContain("'%s\n'")
+  })
+
+  it('preserves shell command newline escapes from Cursor args previews', () => {
+    const escapedCommand = String.raw`printf '%s\n' "$HOME"`
+    const previewCommand = `printf '%s\n' "$HOME"`
+    const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
+      type: 'agentMessage',
+      id: 'cursor-tool-preview-escaped-command',
+      text: [
+        `Cursor shell completed`,
+        'call_id: call_preview_escape',
+        `args: ${JSON.stringify({ command: previewCommand, workingDirectory: '/tmp/project' })}`,
+        `output: ${JSON.stringify({
+          success: {
+            exitCode: 0,
+            stdout: '/home/test\n',
+            stderr: '',
+            interleavedOutput: '/home/test\n',
+            workingDirectory: '/tmp/project',
+          },
+        })}`,
+      ].join('\n'),
+    }]))
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({
+      id: 'cursor-command-call_preview_escape',
+      text: escapedCommand,
+      messageType: 'commandExecution',
+      commandExecution: {
+        command: escapedCommand,
+        aggregatedOutput: '/home/test\n',
+      },
+    })
+    expect(messages[0]?.commandExecution?.command).not.toContain("'%s\n'")
+  })
+
   it('does not render payload-path-only Cursor commentary as a fake tool card', () => {
     const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
       type: 'agentMessage',

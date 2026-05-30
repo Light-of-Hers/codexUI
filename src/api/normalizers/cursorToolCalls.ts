@@ -73,6 +73,24 @@ function parseJsonLineAfterLabel(value: string, label: string): Record<string, u
   }
 }
 
+function parseArgumentsPreviewAfterLabel(value: string, label: string): Record<string, unknown> | null {
+  return normalizeCommandFieldsFromPreview(parseJsonLineAfterLabel(value, label))
+}
+
+function normalizeCommandFieldsFromPreview(value: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!value) return null
+  let next: Record<string, unknown> | null = null
+  for (const key of ['command', 'cmd']) {
+    const raw = value[key]
+    if (typeof raw !== 'string') continue
+    const normalized = raw.replace(/\r/gu, '\\r').replace(/\n/gu, '\\n')
+    if (normalized === raw) continue
+    next ??= { ...value }
+    next[key] = normalized
+  }
+  return next ?? value
+}
+
 function parseTextAfterLabel(value: string, label: string): string {
   const start = value.indexOf(label)
   if (start < 0) return ''
@@ -107,7 +125,7 @@ function parseCursorToolCallText(value: string): ParsedCursorToolCall | null {
       callId,
       tool,
       argumentsRaw: parseLineTextAfterLabel(value, 'arguments:'),
-      arguments: parseJsonLineAfterLabel(value, 'arguments:'),
+      arguments: parseArgumentsPreviewAfterLabel(value, 'arguments:'),
       outputRaw: parseTextAfterLabel(value, 'output:'),
       output: parseJsonAfterLabel(value, 'output:'),
     }
@@ -131,7 +149,7 @@ function parseCursorToolCallText(value: string): ParsedCursorToolCall | null {
       callId,
       tool,
       argumentsRaw: parseLineTextAfterLabel(value, 'args:') || parseLineTextAfterLabel(value, 'arguments:'),
-      arguments: parseJsonLineAfterLabel(value, 'args:') || parseJsonLineAfterLabel(value, 'arguments:'),
+      arguments: parseArgumentsPreviewAfterLabel(value, 'args:') || parseArgumentsPreviewAfterLabel(value, 'arguments:'),
       outputRaw: parseTextAfterLabel(value, 'output:'),
       output: parseJsonAfterLabel(value, 'output:'),
     }
@@ -149,7 +167,7 @@ function parseCursorToolCallText(value: string): ParsedCursorToolCall | null {
       callId,
       tool,
       argumentsRaw: parseLineTextAfterLabel(value, 'args:'),
-      arguments: parseJsonLineAfterLabel(value, 'args:'),
+      arguments: parseArgumentsPreviewAfterLabel(value, 'args:'),
       outputRaw: parseLineTextAfterLabel(value, 'output:'),
       output: parseJsonLineAfterLabel(value, 'output:'),
     }

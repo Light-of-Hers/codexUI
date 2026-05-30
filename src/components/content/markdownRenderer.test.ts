@@ -129,6 +129,14 @@ const answer = 42
     expect(html).not.toContain('message-file-link')
   })
 
+  it('preserves backslash escapes in command inline code', () => {
+    const html = render(String.raw`Ran \`printf '%s\n' "$HOME"\``)
+
+    expect(html).toContain(String.raw`printf '%s\n' "$HOME"`)
+    expect(html).not.toContain(String.raw`printf '%s\\n' "$HOME"`)
+    expect(html).not.toContain("printf '%s\n' &quot;$HOME&quot;")
+  })
+
   it('parses local markdown links with spaces in the target', () => {
     const html = render('MARK [hosting_manager.py](/home/ubuntu/Documents/New Project (2)/hosting_manager.py)')
 

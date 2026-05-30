@@ -6237,3 +6237,32 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - Switch Provider back to the preferred runtime after manual verification.
+
+### Feature: Cursor shell command newline escape rendering
+
+#### Prerequisites
+- `codex-cursor` is installed or configured through `CODEXUI_CODEX_CURSOR_COMMAND`.
+- A Cursor CLI thread is available.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Run `pnpm exec vitest run src/api/normalizers/v2.test.ts src/server/codexAppServerBridge.inlinePayload.test.ts src/components/content/markdownRenderer.test.ts`.
+2. Run `pnpm exec vue-tsc --noEmit`.
+3. Open the Cursor CLI thread in light theme.
+4. Run or inspect a Cursor shell command shaped like `printf '%s\n' "$HOME"`.
+5. Expand the command execution row.
+6. Confirm the command line displays the literal `\n` sequence inside the printf format string.
+7. Confirm the command is not split into multiple lines at that sequence and does not display `\\n`.
+8. Repeat steps 3-7 in dark theme.
+
+#### Expected Results
+- Cursor shell command preview parsing keeps `printf '%s\n' "$HOME"` as a single command line.
+- The command card preserves the literal newline escape as `\n`, while command output still renders real newlines normally.
+- Light and dark theme command rows remain readable.
+
+#### Performance Audit
+- The normalization is a constant-time string replacement on the parsed `command`/`cmd` fields from Cursor preview lines.
+- Hidden payload parsing remains unchanged and no additional filesystem reads or network requests are introduced.
+
+#### Rollback/Cleanup
+- No persistent cleanup is required beyond deleting any temporary test thread if one was created.

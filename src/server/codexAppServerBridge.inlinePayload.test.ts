@@ -743,6 +743,91 @@ describe('thread session skill recovery', () => {
     }
   })
 
+  it('recovers Cursor shell commands with backslash escapes from payload references', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'codex-home-'))
+    vi.stubEnv('CODEX_HOME', codexHome)
+    const payloadDir = join(codexHome, 'cursor-tool-payloads', 'thread-escaped-command')
+    const payloadPath = join(payloadDir, 'call_cursor_escape.json')
+    const command = String.raw`printf '%s\n' "$HOME"`
+    await mkdir(payloadDir, { recursive: true })
+    await writeFile(payloadPath, JSON.stringify({
+      type: 'cursor_tool_call',
+      subtype: 'completed',
+      call_id: 'call_cursor_escape',
+      tool: 'shell',
+      arguments: {
+        command,
+        workingDirectory: '/tmp/project',
+      },
+      output: {
+        success: {
+          command,
+          executionTime: 17,
+          exitCode: 0,
+          stdout: '/home/test\n',
+          stderr: '',
+          interleavedOutput: '/home/test\n',
+          workingDirectory: '/tmp/project',
+        },
+      },
+      status: null,
+    }), 'utf8')
+
+    try {
+      const result = {
+        thread: {
+          id: 'thread-escaped-command',
+          path: '/tmp/session.jsonl',
+          turns: [{
+            id: 'turn-1',
+            items: [
+              {
+                id: 'agent-ran',
+                type: 'agentMessage',
+                text: `Ran \`${command}\`\n  └ /home/test\n  └ payload: ${payloadPath}`,
+              },
+            ],
+          }],
+        },
+      }
+      const sessionLog = [
+        JSON.stringify({ type: 'turn_context', payload: { turn_id: 'turn-1' } }),
+        JSON.stringify({
+          type: 'response_item',
+          payload: {
+            type: 'message',
+            role: 'assistant',
+            content: [{ type: 'output_text', text: `Ran \`${command}\`\n  └ /home/test\n  └ payload: ${payloadPath}` }],
+          },
+        }),
+      ].join('\n')
+
+      const merged = mergeRecoveredTurnItemsIntoThreadResult(
+        result,
+        (_threadId, turns) => turns,
+        sessionLog,
+      ) as typeof result
+      const items = merged.thread.turns[0].items
+      const commandItem = items[0] as typeof items[0] & { command: string }
+
+      expect(items).toHaveLength(1)
+      expect(commandItem).toMatchObject({
+        id: 'cursor-command-call_cursor_escape',
+        type: 'commandExecution',
+        command,
+        cwd: '/tmp/project',
+        status: 'completed',
+        aggregatedOutput: '/home/test\n',
+        exitCode: 0,
+      })
+      expect(commandItem.command).not.toContain(String.raw`\\n`)
+      expect(commandItem.command).not.toContain("'%s\n'")
+    } finally {
+      vi.unstubAllEnvs()
+      await rm(codexHome, { recursive: true, force: true })
+    }
+  })
+
   it('splits a merged assistant message so recovered commands keep their session order', () => {
     const result = {
       thread: {
