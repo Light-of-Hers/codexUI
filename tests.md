@@ -6321,7 +6321,7 @@ Markdown files opened through the local editor expose a preview button that rend
 - Light and dark theme suggestion rows remain readable.
 
 #### Performance Audit
-- Sorting adds only constant-time path segment and length comparisons per candidate.
+- Sorting precomputes path segment and length metadata once per candidate, then uses constant-time numeric comparisons.
 - The filesystem scan remains the existing single `rg --files` process; no extra I/O, network requests, or candidate fanout are introduced.
 
 #### Rollback/Cleanup

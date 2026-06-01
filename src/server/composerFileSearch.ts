@@ -17,6 +17,12 @@ type ComposerSearchPathCandidate = {
   kind: ComposerSearchPathKind
 }
 
+type RankedComposerSearchPathCandidate = ComposerSearchPathCandidate & {
+  score: number
+  pathDepth: number
+  pathLength: number
+}
+
 function normalizeComposerSearchPath(rawPath: string): string {
   return normalizePathForUi(rawPath)
     .trim()
@@ -98,17 +104,13 @@ export function scoreComposerPathCandidate(path: string, query: string): number 
   return 10
 }
 
-function countComposerPathSegments(path: string): number {
-  return normalizeComposerSearchPath(path).split('/').filter(Boolean).length
-}
-
 function compareComposerPathCandidates(
-  a: ComposerSearchPathCandidate & { score: number },
-  b: ComposerSearchPathCandidate & { score: number },
+  a: RankedComposerSearchPathCandidate,
+  b: RankedComposerSearchPathCandidate,
 ): number {
   return (a.score - b.score)
-    || (countComposerPathSegments(a.path) - countComposerPathSegments(b.path))
-    || (a.path.length - b.path.length)
+    || (a.pathDepth - b.pathDepth)
+    || (a.pathLength - b.pathLength)
     || a.path.localeCompare(b.path)
 }
 
@@ -177,6 +179,8 @@ export async function searchComposerPaths(
     .map((candidate) => ({
       ...candidate,
       score: scoreComposerPathCandidate(candidate.path, trimmedQuery),
+      pathDepth: candidate.path.split('/').filter(Boolean).length,
+      pathLength: candidate.path.length,
     }))
     .filter((row) => trimmedQuery.length === 0 || row.score < 10)
     .sort(compareComposerPathCandidates)
