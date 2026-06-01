@@ -6326,3 +6326,32 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - No persistent cleanup is required.
+
+### Feature: Composer mention keyboard auto-scroll
+
+#### Prerequisites
+- A project whose `@` path search returns more rows than fit in the mention dropdown.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Run `pnpm exec vue-tsc --noEmit`.
+2. Open the project in light theme.
+3. Focus the composer and type an `@` query with enough path matches to overflow the dropdown.
+4. Press ArrowDown until the active row moves past the visible bottom of the dropdown.
+5. Confirm the dropdown scrolls to keep the active row visible.
+6. Press ArrowUp until the active row moves past the visible top of the dropdown.
+7. Confirm the dropdown scrolls back to keep the active row visible.
+8. Repeat steps 2-7 for `$` skill suggestions.
+9. Repeat steps 2-8 in dark theme.
+
+#### Expected Results
+- ArrowUp and ArrowDown keep the highlighted mention row visible without moving focus out of the composer.
+- New `@` and `$` suggestion result sets reset the dropdown scroll position to the top.
+- Light and dark theme suggestion rows remain readable while scrolling.
+
+#### Performance Audit
+- Keyboard navigation adds one `nextTick` and a single active-row query per ArrowUp or ArrowDown press.
+- New suggestion result sets only reset the dropdown `scrollTop`; no extra search request, filesystem scan, or network request is introduced.
+
+#### Rollback/Cleanup
+- No persistent cleanup is required.

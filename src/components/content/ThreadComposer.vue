@@ -121,7 +121,7 @@
         <div v-if="isDragActive" class="thread-composer-drop-overlay" aria-hidden="true">
           <span class="thread-composer-drop-overlay-copy">Drop images or files</span>
         </div>
-        <div v-if="isFileMentionOpen" class="thread-composer-file-mentions">
+        <div v-if="isFileMentionOpen" ref="mentionListRef" class="thread-composer-file-mentions">
           <template v-if="fileMentionSuggestions.length > 0">
             <button
               v-for="(item, index) in fileMentionSuggestions"
@@ -157,7 +157,7 @@
           </template>
           <div v-else class="thread-composer-file-mention-empty">{{ t('No matching paths') }}</div>
         </div>
-        <div v-if="isSkillMentionOpen" class="thread-composer-file-mentions thread-composer-skill-mentions">
+        <div v-if="isSkillMentionOpen" ref="mentionListRef" class="thread-composer-file-mentions thread-composer-skill-mentions">
           <template v-if="skillMentionSuggestions.length > 0">
             <button
               v-for="(item, index) in skillMentionSuggestions"
@@ -683,6 +683,7 @@ const photoLibraryInputRef = ref<HTMLInputElement | null>(null)
 const cameraCaptureInputRef = ref<HTMLInputElement | null>(null)
 const folderPickerInputRef = ref<HTMLInputElement | null>(null)
 const inputRef = ref<HTMLTextAreaElement | null>(null)
+const mentionListRef = ref<HTMLElement | null>(null)
 const { isMobile } = useMobile()
 const isAttachMenuOpen = ref(false)
 const activeMentionKind = ref<'file' | 'skill' | null>(null)
@@ -1758,7 +1759,7 @@ function onInputKeydown(event: KeyboardEvent): void {
     if (event.key === 'ArrowDown') {
       event.preventDefault()
       if (suggestions.length > 0) {
-        mentionHighlightedIndex.value = (mentionHighlightedIndex.value + 1) % suggestions.length
+        setMentionHighlightedIndex((mentionHighlightedIndex.value + 1) % suggestions.length)
       }
       return
     }
@@ -1766,7 +1767,7 @@ function onInputKeydown(event: KeyboardEvent): void {
       event.preventDefault()
       if (suggestions.length > 0) {
         const size = suggestions.length
-        mentionHighlightedIndex.value = (mentionHighlightedIndex.value + size - 1) % size
+        setMentionHighlightedIndex((mentionHighlightedIndex.value + size - 1) % size)
       }
       return
     }
@@ -1809,11 +1810,43 @@ function closeFileMention(): void {
   closeInlineMention()
 }
 
+function setMentionHighlightedIndex(index: number): void {
+  mentionHighlightedIndex.value = index
+  void nextTick(scrollHighlightedMentionIntoView)
+}
+
+function resetMentionListScroll(): void {
+  void nextTick(() => {
+    const list = mentionListRef.value
+    if (list) list.scrollTop = 0
+  })
+}
+
+function scrollHighlightedMentionIntoView(): void {
+  const list = mentionListRef.value
+  if (!list) return
+  const row = list.querySelector<HTMLElement>('.thread-composer-file-mention-row.is-active')
+  if (!row) return
+
+  const visibleTop = list.scrollTop
+  const visibleBottom = visibleTop + list.clientHeight
+  const rowTop = row.offsetTop
+  const rowBottom = rowTop + row.offsetHeight
+  if (rowTop < visibleTop) {
+    list.scrollTop = rowTop
+    return
+  }
+  if (rowBottom > visibleBottom) {
+    list.scrollTop = rowBottom - list.clientHeight
+  }
+}
+
 async function refreshSkillMentionSuggestions(): Promise<void> {
   const { filterComposerSkillMentionSuggestions } = await loadComposerSkillMentionsModule()
   if (!isSkillMentionOpen.value) return
   skillMentionSuggestions.value = filterComposerSkillMentionSuggestions(props.skills ?? [], mentionQuery.value, 20)
   mentionHighlightedIndex.value = 0
+  resetMentionListScroll()
 }
 
 function updateInlineMentionState(): void {
@@ -1868,6 +1901,7 @@ async function queueFileMentionSearch(): Promise<void> {
       if (!isFileMentionOpen.value || token !== fileMentionSearchToken) return
       fileMentionSuggestions.value = rows
       mentionHighlightedIndex.value = 0
+      resetMentionListScroll()
     } catch {
       if (!isFileMentionOpen.value || token !== fileMentionSearchToken) return
       fileMentionSuggestions.value = []
