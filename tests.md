@@ -6299,3 +6299,30 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - No persistent cleanup is required beyond deleting any temporary test thread if one was created.
+
+### Feature: Composer file mention simple-path ranking
+
+#### Prerequisites
+- A project with duplicate matching path names at different depths, such as `SeedKernelBench` plus `.worktrees/.../SeedKernelBench` or `_workspace.tmp/.../SeedKernelBench`.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Run `pnpm exec vitest run src/server/composerFileSearch.test.ts`.
+2. Open the project in light theme.
+3. Focus the composer and type `@SeedKernelBench`.
+4. Confirm the shallow `SeedKernelBench` directory appears before deeper duplicate matches.
+5. Select the shallow result and confirm the composer inserts `./SeedKernelBench`.
+6. Repeat steps 2-5 in dark theme.
+
+#### Expected Results
+- File mention search still ranks by match quality first.
+- When match quality ties, shorter and shallower paths appear before deeply nested paths.
+- `SeedKernelBench` appears before `.worktrees/.../SeedKernelBench` and `_workspace.tmp/.../SeedKernelBench`.
+- Light and dark theme suggestion rows remain readable.
+
+#### Performance Audit
+- Sorting adds only constant-time path segment and length comparisons per candidate.
+- The filesystem scan remains the existing single `rg --files` process; no extra I/O, network requests, or candidate fanout are introduced.
+
+#### Rollback/Cleanup
+- No persistent cleanup is required.

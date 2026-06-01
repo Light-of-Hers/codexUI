@@ -98,6 +98,20 @@ export function scoreComposerPathCandidate(path: string, query: string): number 
   return 10
 }
 
+function countComposerPathSegments(path: string): number {
+  return normalizeComposerSearchPath(path).split('/').filter(Boolean).length
+}
+
+function compareComposerPathCandidates(
+  a: ComposerSearchPathCandidate & { score: number },
+  b: ComposerSearchPathCandidate & { score: number },
+): number {
+  return (a.score - b.score)
+    || (countComposerPathSegments(a.path) - countComposerPathSegments(b.path))
+    || (a.path.length - b.path.length)
+    || a.path.localeCompare(b.path)
+}
+
 async function listPathsWithRipgrep(cwd: string): Promise<string[]> {
   return await new Promise<string[]>((resolvePromise, reject) => {
     const ripgrepCommand = resolveRipgrepCommand()
@@ -165,7 +179,7 @@ export async function searchComposerPaths(
       score: scoreComposerPathCandidate(candidate.path, trimmedQuery),
     }))
     .filter((row) => trimmedQuery.length === 0 || row.score < 10)
-    .sort((a, b) => (a.score - b.score) || a.path.localeCompare(b.path))
+    .sort(compareComposerPathCandidates)
     .slice(0, maxResults)
 
   return await Promise.all(candidates.map(async (candidate) => ({
