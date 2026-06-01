@@ -252,6 +252,7 @@ const THREAD_TURN_PAGE_READ_CACHE_TTL_MS = 30_000
 const THREAD_METHODS_WITH_TURNS = new Set(['thread/read', 'thread/resume', 'thread/fork', 'thread/rollback'])
 const THREAD_METHODS_WITH_THREAD_SNAPSHOT = new Set([...THREAD_METHODS_WITH_TURNS, 'thread/start'])
 const THREAD_SEARCH_FULL_TEXT_THREAD_LIMIT = 100
+const CURSOR_CONTEXT_AUTO_COMPACT_COOLDOWN_MS = 60_000
 const PROJECTLESS_THREAD_DIRECTORY_MAX_ATTEMPTS = 100
 const PROJECTLESS_THREAD_SLUG_MAX_LENGTH = 80
 const API_PERF_LOGGING_ENV_KEY = 'CODEXUI_API_PERF_LOGGING'
@@ -4932,6 +4933,48 @@ function isTurnCompletedNotification(notification: { method: string; params: unk
   return notification.method === 'turn/completed'
 }
 
+function isContextWindowExceededErrorInfo(value: unknown): boolean {
+  if (value === 'contextWindowExceeded' || value === 'context_window_exceeded') return true
+  const record = asRecord(value)
+  return Boolean(record?.contextWindowExceeded || record?.context_window_exceeded)
+}
+
+function isContextWindowExceededMessage(value: string): boolean {
+  const normalized = value.toLowerCase()
+  if (!normalized) return false
+  return (
+    /context\s+(window|length).*exceed/u.test(normalized) ||
+    /exceed.*context\s+(window|length)/u.test(normalized) ||
+    /maximum\s+context/u.test(normalized) ||
+    /too\s+many\s+tokens/u.test(normalized) ||
+    /token\s+limit/u.test(normalized)
+  )
+}
+
+function readContextWindowExceededTurn(notification: { method: string; params: unknown }): { threadId: string; turnId: string } | null {
+  if (!isTurnCompletedNotification(notification)) return null
+  const params = asRecord(notification.params)
+  if (!params) return null
+
+  const turn = asRecord(params.turn)
+  if (readProtocolToken(turn?.status) !== 'failed') return null
+
+  const errorPayload = asRecord(turn?.error)
+  const codexErrorInfo = errorPayload?.codexErrorInfo ?? errorPayload?.codex_error_info
+  const message = readNonEmptyString(errorPayload?.message)
+    || readNonEmptyString(errorPayload?.additionalDetails)
+    || readNonEmptyString(errorPayload?.additional_details)
+
+  if (!isContextWindowExceededErrorInfo(codexErrorInfo) && !isContextWindowExceededMessage(message)) {
+    return null
+  }
+
+  const threadId = extractThreadIdFromNotificationParams(params)
+  const turnId = readNonEmptyString(turn?.id) || readNonEmptyString(params.turnId) || readNonEmptyString(params.turn_id)
+  if (!threadId || !turnId) return null
+  return { threadId, turnId }
+}
+
 async function readFirstLaunchPluginsCardDismissed(): Promise<boolean> {
   const statePath = getCodexGlobalStatePath()
   try {
@@ -6176,12 +6219,16 @@ export class BackendQueueProcessor {
   private readonly autoContinueInFlightThreadIds = new Set<string>()
   private readonly autoContinuedInterruptedTurnIds = new Set<string>()
   private readonly queueDrainDueAtByThreadId = new Map<string, number>()
+  private readonly cursorContextAutoCompactInFlightThreadIds = new Set<string>()
+  private readonly cursorContextAutoCompactedTurnIds = new Set<string>()
+  private readonly cursorContextAutoCompactCooldownUntilByThreadId = new Map<string, number>()
   private readonly unsubscribe: () => void
   private intentionalInterruptTurnIdsReady: Promise<void> = Promise.resolve()
 
   constructor(
     private readonly appServer: AppServerProcess,
     private readonly resolveAppServerForRpc: (method: string, params: unknown) => AppServerProcess = () => appServer,
+    private readonly runtimeProvider = '',
   ) {
     this.unsubscribe = appServer.onNotification((notification) => {
       if (isTurnCompletedNotification(notification)) {
@@ -6215,6 +6262,9 @@ export class BackendQueueProcessor {
     this.intentionalInterruptTurnIds.clear()
     this.autoContinueInFlightThreadIds.clear()
     this.autoContinuedInterruptedTurnIds.clear()
+    this.cursorContextAutoCompactInFlightThreadIds.clear()
+    this.cursorContextAutoCompactedTurnIds.clear()
+    this.cursorContextAutoCompactCooldownUntilByThreadId.clear()
   }
 
   recordIntentionalInterrupt(threadId: string, turnId: string): void {
@@ -6313,6 +6363,17 @@ export class BackendQueueProcessor {
 
     if (readProtocolToken(turn.status) === 'interrupted') {
       this.scheduleInterruptedTurnCheck(turn.threadId, 250, 'turn/completed', turn.turnId)
+      return
+    }
+
+    const contextExceededTurn = this.runtimeProvider === CURSOR_PROVIDER_ID
+      ? readContextWindowExceededTurn(notification)
+      : null
+    if (contextExceededTurn) {
+      const started = await this.maybeAutoCompactCursorContextExceededTurn(contextExceededTurn)
+      if (!started) {
+        void this.processThreadQueue(turn.threadId)
+      }
       return
     }
 
@@ -6456,6 +6517,42 @@ export class BackendQueueProcessor {
       return false
     } finally {
       this.autoContinueInFlightThreadIds.delete(normalizedThreadId)
+    }
+  }
+
+  private async maybeAutoCompactCursorContextExceededTurn(turn: { threadId: string; turnId: string }): Promise<boolean> {
+    const threadId = turn.threadId.trim()
+    const turnId = turn.turnId.trim()
+    if (!threadId || !turnId) return false
+    if (this.cursorContextAutoCompactedTurnIds.has(turnId)) return false
+    if (this.cursorContextAutoCompactInFlightThreadIds.has(threadId)) return true
+
+    const now = Date.now()
+    const cooldownUntil = this.cursorContextAutoCompactCooldownUntilByThreadId.get(threadId) ?? 0
+    if (cooldownUntil > now) return true
+
+    this.cursorContextAutoCompactedTurnIds.add(turnId)
+    this.cursorContextAutoCompactInFlightThreadIds.add(threadId)
+    this.cursorContextAutoCompactCooldownUntilByThreadId.set(threadId, now + CURSOR_CONTEXT_AUTO_COMPACT_COOLDOWN_MS)
+    try {
+      console.warn('[DEBUG:BackendQueueProcessor] auto-starting Cursor context compact — threadId=%s turnId=%s', threadId, turnId)
+      writeDebugLog('cursor-context-auto-compact-start', 'Auto-starting Cursor context compact after context overflow', {
+        threadId,
+        turnId,
+      }).catch(() => {})
+      await this.appServer.rpc('thread/compact/start', { threadId })
+      return true
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.warn('[DEBUG:BackendQueueProcessor] Cursor context auto-compact failed — threadId=%s turnId=%s error=%s', threadId, turnId, message)
+      writeDebugLog('cursor-context-auto-compact-failed', 'Cursor context auto-compact failed', {
+        threadId,
+        turnId,
+        error: message,
+      }).catch(() => {})
+      return false
+    } finally {
+      this.cursorContextAutoCompactInFlightThreadIds.delete(threadId)
     }
   }
 
@@ -6695,7 +6792,7 @@ class AppServerRuntime {
     this.signature = getAppServerRuntimeSignature(state)
     this.appServer = new AppServerProcess()
     this.appServer.setFreeModeState(state)
-    this.backendQueueProcessor = new BackendQueueProcessor(this.appServer, resolveAppServerForRpc)
+    this.backendQueueProcessor = new BackendQueueProcessor(this.appServer, resolveAppServerForRpc, readNonEmptyString(state.provider))
     this.unsubscribeNotifications = this.appServer.onNotification((notification) => {
       this.forwardNotification({
         ...notification,

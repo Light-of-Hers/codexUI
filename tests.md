@@ -5525,6 +5525,38 @@ Markdown files opened through the local editor expose a preview button that rend
 - Stop only the temporary dev server started for this test.
 - Switch provider back to the preferred default after manual verification.
 
+### Feature: Cursor CLI context overflow triggers Codex compaction
+
+#### Prerequisites
+- App server is running from this repository.
+- `codex-cursor`, `cursor-local-server`, and Cursor CLI `agent` are available in `PATH`.
+- A Cursor CLI thread can be driven close to or beyond the selected model context window, or a test app-server fixture can emit a failed `turn/completed` notification with `codexErrorInfo: "contextWindowExceeded"`.
+- Light theme and dark theme are both available from Settings.
+
+#### Steps
+1. Run `./node_modules/.bin/vitest run src/server/codexAppServerBridge.inlinePayload.test.ts`.
+2. Open Settings in light theme and select `Cursor CLI` from the provider dropdown.
+3. Open a Cursor CLI thread and trigger a context-window failure, or use a local fixture that emits `turn/completed` for the Cursor runtime with `status: "failed"` and `codexErrorInfo: "contextWindowExceeded"`.
+4. Confirm the bridge sends `thread/compact/start` for the same `threadId` after the failed turn.
+5. Confirm the same failed turn does not trigger repeated compact requests within the short cooldown window.
+6. Switch to dark theme and confirm the provider/model controls and thread error state remain readable while the compaction item is shown.
+
+#### Expected Results
+- Cursor runtime context overflow failures trigger Codex-side `thread/compact/start`.
+- Non-Cursor runtimes do not auto-trigger this Cursor-specific compaction path.
+- Queued follow-up turns are not immediately drained ahead of the compaction request that was just started.
+- Existing thread rendering remains readable in both light and dark themes.
+
+#### Performance Audit
+- The trigger runs only on `turn/completed` notifications in Cursor runtimes and performs one bounded RPC, `thread/compact/start`, per overflow turn.
+- A per-thread cooldown prevents repeated compact request loops if the provider emits multiple overflow failures.
+- No browser profile was captured for this backend notification-handling change; use `PROFILE_BASE_URL=http://127.0.0.1:4173 PROFILE_WAIT_MS=7000 pnpm run profile:browser` if later UI changes are added to this flow.
+
+#### Rollback/Cleanup
+- Archive any manual Cursor CLI overflow test threads created during verification.
+- Stop only the temporary dev server or fixture process started for this test.
+- Switch provider back to the preferred default after manual verification.
+
 ### Feature: Composer @ search keeps folders and symlinks
 
 #### Prerequisites

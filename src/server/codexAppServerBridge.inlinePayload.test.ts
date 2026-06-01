@@ -1384,6 +1384,88 @@ describe('backend queue scheduling', () => {
     expect(snapshot).toBeNull()
   })
 
+  it('starts Cursor context compaction when a turn fails from context overflow', async () => {
+    const listeners: Array<(value: { method: string; params: unknown }) => void> = []
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = []
+    const processor = new BackendQueueProcessor({
+      onNotification(listener: (value: { method: string; params: unknown }) => void) {
+        listeners.push(listener)
+        return () => undefined
+      },
+      async rpc(method: string, params: Record<string, unknown>): Promise<unknown> {
+        calls.push({ method, params })
+        return {}
+      },
+    } as never, undefined, 'cursor')
+
+    try {
+      listeners[0]?.({
+        method: 'turn/completed',
+        params: {
+          threadId: 'thread-1',
+          turn: {
+            id: 'turn-1',
+            status: 'failed',
+            error: {
+              codexErrorInfo: 'contextWindowExceeded',
+              message: 'context window exceeded',
+            },
+          },
+        },
+      })
+
+      await vi.waitFor(() => {
+        expect(calls).toEqual([
+          { method: 'thread/compact/start', params: { threadId: 'thread-1' } },
+        ])
+      })
+    } finally {
+      processor.dispose()
+    }
+  })
+
+  it('does not auto-compact non-Cursor context overflow failures', async () => {
+    const listeners: Array<(value: { method: string; params: unknown }) => void> = []
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = []
+    const processor = new BackendQueueProcessor({
+      onNotification(listener: (value: { method: string; params: unknown }) => void) {
+        listeners.push(listener)
+        return () => undefined
+      },
+      async rpc(method: string, params: Record<string, unknown>): Promise<unknown> {
+        calls.push({ method, params })
+        return {}
+      },
+    } as never)
+    const processThreadQueue = vi
+      .spyOn(processor as unknown as { processThreadQueue: (threadId: string) => Promise<void> }, 'processThreadQueue')
+      .mockResolvedValue(undefined)
+
+    try {
+      listeners[0]?.({
+        method: 'turn/completed',
+        params: {
+          threadId: 'thread-1',
+          turn: {
+            id: 'turn-1',
+            status: 'failed',
+            error: {
+              codexErrorInfo: 'contextWindowExceeded',
+              message: 'context window exceeded',
+            },
+          },
+        },
+      })
+
+      await vi.waitFor(() => {
+        expect(processThreadQueue).toHaveBeenCalledWith('thread-1')
+      })
+      expect(calls).toEqual([])
+    } finally {
+      processor.dispose()
+    }
+  })
+
   it('routes queued turns through the explicit wrapper provider runtime', async () => {
     const moonCalls: Array<{ method: string; params: Record<string, unknown> }> = []
     const cursorCalls: Array<{ method: string; params: Record<string, unknown> }> = []
