@@ -661,6 +661,37 @@ describe('goal slash commands', () => {
     expect(gatewayMocks.steerThreadTurn).not.toHaveBeenCalled()
   })
 
+  it('routes selected-thread /goal objectives with file mentions to goal RPCs instead of turn/start', async () => {
+    installTestWindow()
+    gatewayMocks.setThreadGoal.mockResolvedValue(activeGoal)
+
+    const state = useDesktopState()
+    state.primeSelectedThread('thread-a')
+    const objective = '你在 ./.worktrees 里新建一个 worktree & branch 来实现 ./.superpowers/specs/2026-06-02-official-flydsl-swa-aiter-design.md 吧，可以用 $planning-with-files 来记录进展'
+
+    await state.sendMessageToSelectedThread(
+      `/goal ${objective}`,
+      [],
+      [{ name: 'planning-with-files', path: '/skills/planning-with-files/SKILL.md' }],
+      'steer',
+      [
+        { label: '.worktrees', path: '.worktrees', fsPath: '/tmp/project/.worktrees' },
+        {
+          label: '2026-06-02-official-flydsl-swa-aiter-design.md',
+          path: '.superpowers/specs/2026-06-02-official-flydsl-swa-aiter-design.md',
+          fsPath: '/tmp/project/.superpowers/specs/2026-06-02-official-flydsl-swa-aiter-design.md',
+        },
+      ],
+    )
+
+    expect(gatewayMocks.setThreadGoal).toHaveBeenCalledWith('thread-a', {
+      objective,
+      status: 'active',
+    })
+    expect(gatewayMocks.startThreadTurn).not.toHaveBeenCalled()
+    expect(gatewayMocks.steerThreadTurn).not.toHaveBeenCalled()
+  })
+
   it('supports selected-thread goal status, show, and clear commands', async () => {
     installTestWindow()
     gatewayMocks.getThreadGoal.mockResolvedValue(activeGoal)
@@ -737,6 +768,46 @@ describe('goal slash commands', () => {
     expect(gatewayMocks.startThread).toHaveBeenCalledWith('/tmp/project', undefined, undefined)
     expect(gatewayMocks.setThreadGoal).toHaveBeenCalledWith('thread-new', {
       objective: '$planning-with-files Ship goal support',
+      status: 'active',
+    })
+    expect(gatewayMocks.startThreadTurn).not.toHaveBeenCalled()
+    expect(state.selectedThreadId.value).toBe('thread-new')
+    expect(state.isSelectedThreadInterruptPending.value).toBe(false)
+  })
+
+  it('creates a new thread for new-thread /goal objectives with file mentions without sending a normal turn', async () => {
+    installTestWindow()
+    gatewayMocks.startThread.mockResolvedValue({
+      threadId: 'thread-new',
+      model: 'gpt-5.4',
+      modelProvider: 'openai',
+      reasoningEffort: 'medium',
+    })
+    gatewayMocks.setThreadGoal.mockResolvedValue({
+      ...activeGoal,
+      threadId: 'thread-new',
+    })
+
+    const state = useDesktopState()
+    const objective = '你在 ./.worktrees 里新建一个 worktree & branch 来实现 ./.superpowers/specs/2026-06-02-official-flydsl-swa-aiter-design.md 吧，可以用 $planning-with-files 来记录进展'
+    const threadId = await state.sendMessageToNewThread(
+      `/goal ${objective}`,
+      '/tmp/project',
+      [],
+      [{ name: 'planning-with-files', path: '/skills/planning-with-files/SKILL.md' }],
+      [
+        { label: '.worktrees', path: '.worktrees', fsPath: '/tmp/project/.worktrees' },
+        {
+          label: '2026-06-02-official-flydsl-swa-aiter-design.md',
+          path: '.superpowers/specs/2026-06-02-official-flydsl-swa-aiter-design.md',
+          fsPath: '/tmp/project/.superpowers/specs/2026-06-02-official-flydsl-swa-aiter-design.md',
+        },
+      ],
+    )
+
+    expect(threadId).toBe('thread-new')
+    expect(gatewayMocks.setThreadGoal).toHaveBeenCalledWith('thread-new', {
+      objective,
       status: 'active',
     })
     expect(gatewayMocks.startThreadTurn).not.toHaveBeenCalled()
