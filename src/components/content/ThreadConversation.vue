@@ -193,7 +193,7 @@
               v-if="getGroupedToolCallsForLatest(message).length > 0"
               type="button"
               class="cmd-row cmd-row-group cmd-compact"
-              :class="[toolCallStatusClass(message), { 'cmd-expanded': isToolCallGroupExpanded(message) }]"
+              :class="[toolCallGroupStatusClass(message), { 'cmd-expanded': isToolCallGroupExpanded(message) }]"
               @click="toggleToolCallGroup(message)"
             >
               <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isToolCallGroupExpanded(message) }">▶</span>
@@ -951,6 +951,7 @@ import { useFeedbackDiagnostics } from '../../composables/useFeedbackDiagnostics
 import { useMobile } from '../../composables/useMobile'
 import { useUiLanguage } from '../../composables/useUiLanguage'
 import { getHighlightLanguageForPath, normalizeHighlightLanguage } from '../../utils/codeLanguage.js'
+import { groupConsecutiveToolCallsByLatestId } from './threadConversationGrouping'
 
 import IconTablerArrowUp from '../icons/IconTablerArrowUp.vue'
 import IconTablerCopy from '../icons/IconTablerCopy.vue'
@@ -1343,25 +1344,7 @@ const hiddenGroupedCommandIds = computed(() => {
   return next
 })
 
-const groupedToolCallsByLatestId = computed<Record<string, UiMessage[]>>(() => {
-  const next: Record<string, UiMessage[]> = {}
-  for (let index = 0; index < props.messages.length;) {
-    const message = props.messages[index]
-    if (!(isToolCallMessage(message) && message.toolCall?.kind === 'cursor')) {
-      index += 1
-      continue
-    }
-    const block: UiMessage[] = []
-    while (index < props.messages.length && isToolCallMessage(props.messages[index]) && props.messages[index].toolCall?.kind === 'cursor') {
-      block.push(props.messages[index])
-      index += 1
-    }
-    if (block.length <= 1) continue
-    const latest = block[block.length - 1]
-    next[latest.id] = block.slice(0, -1)
-  }
-  return next
-})
+const groupedToolCallsByLatestId = computed<Record<string, UiMessage[]>>(() => groupConsecutiveToolCallsByLatestId(props.messages))
 
 const hiddenGroupedToolCallIds = computed(() => {
   const next = new Set<string>()
@@ -1498,6 +1481,13 @@ function toolCallGroupSummaryLabel(message: UiMessage): string {
 
 function toolCallGroupSummaryStatus(message: UiMessage): string {
   return toolCallStatusLabel(message)
+}
+
+function toolCallGroupStatusClass(message: UiMessage): string {
+  const status = message.toolCall?.status
+  if (status === 'inProgress') return 'cmd-status-running'
+  if (status === 'failed') return 'cmd-status-error'
+  return 'cmd-status-ok'
 }
 
 function toggleWorkedExpand(message: UiMessage): void {

@@ -6355,3 +6355,32 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - No persistent cleanup is required.
+
+### Feature: Consecutive tool-call rows group like command rows
+
+#### Prerequisites
+- App server is running from this repository.
+- A thread is available with two or more consecutive `mcpToolCall`, `collabAgentToolCall`, `webSearch`, or Cursor non-shell tool-call cards.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Run `pnpm exec vitest run src/components/content/threadConversationGrouping.test.ts src/api/normalizers/v2.test.ts`.
+2. Run `pnpm exec vue-tsc --noEmit`.
+3. Open the thread in light theme.
+4. Find a turn with consecutive tool-call rows and confirm they render as one compact grouped row.
+5. Expand the grouped row and confirm every original tool call appears in order and can still be expanded individually.
+6. Confirm a normal assistant/user message between tool calls starts a new group instead of merging across the text.
+7. Repeat steps 3-6 in dark theme.
+
+#### Expected Results
+- Consecutive tool calls of any supported kind group into one collapsible row, matching consecutive shell command behavior.
+- Expanding the group reveals each original tool call in chronological order.
+- Group status text uses the latest tool call status and remains readable in light and dark themes.
+
+#### Performance Audit
+- Tool-call grouping is computed with one linear pass over the already-normalized message list.
+- Hidden grouped tool-call IDs remain stored in a `Set`, keeping per-row visibility checks O(1).
+- The change adds no network calls, filesystem reads, or session-log scans.
+
+#### Rollback/Cleanup
+- No persistent cleanup is required.
