@@ -1,6 +1,8 @@
 const { execFileSync, spawnSync } = require('node:child_process')
-const { existsSync } = require('node:fs')
+const { existsSync, readFileSync } = require('node:fs')
 const { join } = require('node:path')
+
+const PNPM_VERSION = process.env.PNPM_VERSION || '9'
 
 function isAndroidRuntime() {
   if (process.platform === 'android') return true
@@ -11,6 +13,58 @@ function isAndroidRuntime() {
     return execFileSync('uname', ['-r'], { encoding: 'utf8' }).toLowerCase().includes('android')
   } catch {
     return false
+  }
+}
+
+function commandAvailable(command) {
+  const result = spawnSync(command, ['--version'], { stdio: 'ignore', env: process.env })
+  return !result.error && result.status === 0
+}
+
+function spawnPnpm(args, options = {}) {
+  const spawnOptions = {
+    stdio: 'inherit',
+    env: process.env,
+    ...options,
+  }
+  if (commandAvailable('pnpm')) {
+    return spawnSync('pnpm', args, spawnOptions)
+  }
+  if (commandAvailable('corepack')) {
+    return spawnSync('corepack', ['pnpm', ...args], spawnOptions)
+  }
+  if (commandAvailable('npm')) {
+    return spawnSync('npm', ['exec', '--yes', `pnpm@${PNPM_VERSION}`, '--', ...args], spawnOptions)
+  }
+  throw new Error('pnpm, corepack, or npm is required')
+}
+
+function runPnpm(args, options = {}) {
+  const result = spawnPnpm(args, options)
+  if (result.error) {
+    throw result.error
+  }
+  process.exit(result.status ?? 1)
+}
+
+function needsForcedInstall() {
+  const modulesPath = join(process.cwd(), 'node_modules')
+  if (!existsSync(modulesPath)) {
+    return false
+  }
+  const modulesYamlPath = join(modulesPath, '.modules.yaml')
+  if (!existsSync(modulesYamlPath)) {
+    return true
+  }
+  try {
+    const modulesYaml = readFileSync(modulesYamlPath, 'utf8')
+    const pnpmMajor = PNPM_VERSION.split('.')[0]
+    const packageManagerPattern = new RegExp(
+      `(^|\\n)\\s*(?:"packageManager": "|packageManager: )pnpm@${pnpmMajor}\\.`,
+    )
+    return !packageManagerPattern.test(modulesYaml)
+  } catch {
+    return true
   }
 }
 
@@ -37,7 +91,7 @@ const vueTscBinPath = join(process.cwd(), 'node_modules', '.bin', process.platfo
 if (isAndroidRuntime()) {
   const cliPath = join(process.cwd(), 'dist-cli', 'index.js')
   if (!existsSync(cliPath)) {
-    run('pnpm', ['run', 'build:cli'])
+    runPnpm(['run', 'build:cli'])
   }
   run('node', [
     cliPath,
@@ -50,7 +104,11 @@ if (isAndroidRuntime()) {
 }
 
 if (!existsSync(viteBinPath) || !existsSync(vueTscBinPath)) {
-  const install = spawnSync('pnpm', ['install'], { stdio: 'inherit', env: process.env })
+  const installArgs = ['install']
+  if (needsForcedInstall()) {
+    installArgs.push('--force')
+  }
+  const install = spawnPnpm(installArgs)
   if (install.error) {
     throw install.error
   }

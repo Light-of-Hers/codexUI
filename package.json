@@ -58,6 +58,7 @@
     "firebase": "^12.2.1",
     "highlight.js": "^11.11.1",
     "katex": "^0.16.45",
+    "lowlight": "3.3.0",
     "qrcode-terminal": "^0.12.0",
     "rehype-highlight": "^7.0.2",
     "rehype-katex": "^7.0.1",
