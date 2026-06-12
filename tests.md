@@ -5286,16 +5286,20 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Steps
 1. Run `pnpm exec vitest run src/server/localBrowseUi.test.ts src/components/content/markdownRenderer.test.ts`.
 2. Open the markdown file through `/codex-local-edit/<absolute-markdown-path>`.
-3. Click `Preview` and confirm the toolbar shows `Highlight`.
-4. In the preview pane, select a short phrase from a rendered paragraph, then click `Highlight`.
-5. Confirm the editor source wraps the matching text with `==` delimiters and the preview rerenders it with a highlighted background.
-6. Select text directly inside the editor, click `Highlight`, and confirm the same `==...==` source edit and preview highlight.
-7. Press `Ctrl+S` or click `Save`, reload the editor URL, and confirm the highlight persists.
-8. Repeat the preview and highlight visibility checks in dark theme.
+3. Click `Preview`.
+4. In the preview pane, select a short phrase from a rendered paragraph and confirm a floating `Highlight` button appears beside the selection.
+5. Click the floating `Highlight` button.
+6. Confirm the editor source wraps the matching text with `==` delimiters and the preview rerenders it with a highlighted background.
+7. Click the highlighted block in the preview and confirm a floating `Remove highlight` button appears beside it.
+8. Click `Remove highlight` and confirm the editor source removes only the surrounding `==` delimiters.
+9. Select text directly inside the editor and confirm the floating `Highlight` button can add `==...==` there too.
+10. Press `Ctrl+S` or click `Save`, reload the editor URL, and confirm the remaining highlight edits persist.
+11. Repeat the preview, floating action, removal, and highlight visibility checks in dark theme.
 
 #### Expected Results
 - Markdown preview renders `==highlighted text==` as a readable highlighted `<mark>` style.
-- `Highlight` works from either the editor selection or the most recent preview text selection.
+- `Highlight` appears near the current editor or preview selection instead of occupying the toolbar.
+- Clicking an existing preview highlight exposes `Remove highlight`, which removes the source delimiters.
 - Existing preview links, scroll sync, resize behavior, and double-click source jump continue to work.
 - Highlight colors are readable in both light and dark themes.
 
