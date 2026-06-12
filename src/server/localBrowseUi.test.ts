@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { createDirectoryListingHtml, createEditorReferenceText, createLocalBrowseEntry, createMarkdownPreviewHtml, createPdfViewerHtml, createTextEditorHtml, deleteLocalBrowseEntry, isMarkdownPath, isPdfPath } from './localBrowseUi'
+import { createDirectoryListingHtml, createEditorReferenceText, createLocalBrowseEntry, createMarkdownPreviewHtml, createTextEditorHtml, deleteLocalBrowseEntry, isMarkdownPath } from './localBrowseUi'
 import { KATEX_STYLESHEET_HREF } from './katexAssets'
 
 let tempDir = ''
@@ -26,47 +26,6 @@ describe('local browse markdown preview', () => {
     expect(isMarkdownPath('/tmp/note.md')).toBe(true)
     expect(isMarkdownPath('/tmp/note.markdown')).toBe(true)
     expect(isMarkdownPath('/tmp/note.txt')).toBe(false)
-  })
-
-  it('recognizes PDF files for PDF viewer support', () => {
-    expect(isPdfPath('/tmp/paper.pdf')).toBe(true)
-    expect(isPdfPath('/tmp/paper.PDF')).toBe(true)
-    expect(isPdfPath('/tmp/paper.txt')).toBe(false)
-  })
-
-  it('binds Ctrl+S to saving in the local PDF viewer page', () => {
-    const pdfPath = '/tmp/preview space/paper.pdf'
-    const html = createPdfViewerHtml(pdfPath)
-
-    expect(html).toContain('id="saveBtn"')
-    expect(html).toContain('id="viewerContainer"')
-    expect(html).toContain('id="viewer" class="pdfViewer"')
-    expect(html).toContain('data-mode="text"')
-    expect(html).toContain('data-mode="ink"')
-    expect(html).toContain(`/codex-local-browse${encodeURI(pdfPath)}?raw=1`)
-    expect(html).toContain(`/codex-local-pdf${encodeURI(pdfPath)}`)
-    expect(html).toContain('/codex-local-pdfjs/build/pdf.js')
-    expect(html).toContain('/codex-local-pdfjs/web/pdf_viewer.js')
-    expect(html).toContain('/codex-local-pdfjs/web/pdf_viewer.css')
-    expect(html).toContain('Use Text or Ink to annotate')
-    expect(html).toContain('AnnotationEditorType.FREETEXT')
-    expect(html).toContain('AnnotationEditorType.INK')
-    expect(html).toContain('AnnotationMode.ENABLE_STORAGE')
-    expect(html).toContain('const loadPdf = async () =>')
-    expect(html).toContain('const savePdfBytes = async () =>')
-    expect(html).toContain('const isPdfSaveShortcut = (event) =>')
-    expect(html).toContain('let annotationEditorReady = false')
-    expect(html).toContain('let pendingAnnotationMode = ')
-    expect(html).toContain("eventBus.on('pagesinit'")
-    expect(html).toContain("window.addEventListener('keydown'")
-    expect(html).toContain('event.preventDefault()')
-    expect(html).toContain('event.stopPropagation()')
-    expect(html).toContain('capture: true')
-    expect(html).toContain("method: 'PUT'")
-    expect(html).toContain("'Content-Type': 'application/pdf'")
-    expect(html).toContain('pdfDocument.saveDocument()')
-    const inlineScript = html.match(/<script>\s*([\s\S]*?)\s*<\/script>\s*<\/body>/u)?.[1] ?? ''
-    expect(() => new Function(inlineScript)).not.toThrow()
   })
 
   it('shows preview controls only for markdown editor pages', async () => {

@@ -6327,37 +6327,6 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Rollback/Cleanup
 - No persistent cleanup is required.
 
-### Feature: Local PDF annotation save shortcut
-
-#### Prerequisites
-- App server is running from this repository.
-- A writable local PDF file is available, preferably a disposable copy.
-- Light and dark themes are both available from the operating system or browser color-scheme setting.
-
-#### Steps
-1. Run `pnpm exec vitest run src/server/localBrowseUi.test.ts src/server/httpServer.test.ts src/server/pdfjsAssets.test.ts`.
-2. Open the PDF through `/codex-local-browse/<absolute-pdf-path>`.
-3. In light theme, confirm the PDF renders in the built-in viewer and the toolbar shows `Select`, `Text`, `Ink`, and `Save`.
-4. Select `Text`, add a text annotation, press `Ctrl+S` or `Cmd+S`, and confirm the status changes to `Saved PDF.`.
-5. Reload the PDF browse URL and confirm the text annotation persists.
-6. Select `Ink`, draw a small mark, click `Save`, and confirm the ink annotation persists after reload.
-7. Switch to dark theme and repeat the render, annotation, and save checks.
-
-#### Expected Results
-- PDF browse URLs render through the local PDF.js viewer instead of the browser-native PDF surface.
-- Text and ink annotations can be added in the viewer.
-- `Ctrl+S` / `Cmd+S` and the `Save` button write the PDF bytes back to the same local PDF path.
-- Raw PDF access remains available through `Open raw` and `?raw=1`.
-- Light and dark toolbar/viewer surfaces remain readable.
-
-#### Performance Audit
-- The PDF.js asset bundle is loaded only on local PDF browse pages, not during normal chat startup or directory browsing.
-- PDF saves perform one local `PUT` with the current PDF bytes; no directory scan or additional app-server request fanout is introduced.
-- The PDF writer endpoint validates path type and PDF header before writing, keeping non-PDF local browse writes out of this path.
-
-#### Rollback/Cleanup
-- Delete or restore the disposable PDF copy used for manual annotation testing.
-
 ### Feature: Cursor CLI first turn no-rollout recovery
 
 #### Prerequisites

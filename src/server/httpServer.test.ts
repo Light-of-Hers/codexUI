@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Server as HttpServer } from 'node:http'
@@ -94,62 +94,6 @@ describe('local browse redirect behavior', () => {
     expect(response.headers.get('location')).toBeNull()
     expect(await response.text()).toBe('hello raw\n')
   })
-
-  it('serves PDF browse URLs through the local PDF wrapper', async () => {
-    tempDir = await mkdtemp(join(tmpdir(), 'codexui-http-server-pdf-wrapper-'))
-    const filePath = join(tempDir, 'paper.pdf')
-    await writeFile(filePath, Buffer.from('%PDF-1.7\n% test\n', 'utf8'))
-
-    const baseUrl = await startServer()
-    const response = await fetch(`${baseUrl}/codex-local-browse${encodeURI(filePath)}`, {
-      redirect: 'manual',
-    })
-
-    expect(response.status).toBe(200)
-    expect(response.headers.get('content-type')).toContain('text/html')
-    const html = await response.text()
-    expect(html).toContain('id="viewerContainer"')
-    expect(html).toContain('id="viewer" class="pdfViewer"')
-    expect(html).toContain('Ctrl+S / Cmd+S')
-    expect(html).toContain('Use Text or Ink to annotate')
-    expect(html).toContain(`/codex-local-browse${encodeURI(filePath)}?raw=1`)
-    expect(html).toContain(`/codex-local-pdf${encodeURI(filePath)}`)
-    expect(html).toContain('/codex-local-pdfjs/build/pdf.js')
-  })
-
-  it('serves PDF files as raw content when requested', async () => {
-    tempDir = await mkdtemp(join(tmpdir(), 'codexui-http-server-pdf-raw-'))
-    const filePath = join(tempDir, 'paper.pdf')
-    const bytes = Buffer.from('%PDF-1.7\n% raw\n', 'utf8')
-    await writeFile(filePath, bytes)
-
-    const baseUrl = await startServer()
-    const response = await fetch(`${baseUrl}/codex-local-browse${encodeURI(filePath)}?raw=1`, {
-      redirect: 'manual',
-    })
-
-    expect(response.status).toBe(200)
-    expect(response.headers.get('location')).toBeNull()
-    expect(Buffer.from(await response.arrayBuffer()).equals(bytes)).toBe(true)
-  })
-})
-
-describe('local PDF.js assets', () => {
-  it('serves PDF.js viewer assets from the local package', async () => {
-    const baseUrl = await startServer()
-    const response = await fetch(`${baseUrl}/codex-local-pdfjs/web/pdf_viewer.css`)
-
-    expect(response.status).toBe(200)
-    expect(response.headers.get('content-type')).toContain('text/css')
-    expect(await response.text()).toContain('.pdfViewer')
-  })
-
-  it('rejects unsupported PDF.js asset paths', async () => {
-    const baseUrl = await startServer()
-    const response = await fetch(`${baseUrl}/codex-local-pdfjs/package.json`)
-
-    expect(response.status).toBe(404)
-  })
 })
 
 describe('local browse file mutations', () => {
@@ -214,59 +158,5 @@ describe('local browse file mutations', () => {
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual({ ok: true })
     expect(existsSync(dirPath)).toBe(false)
-  })
-})
-
-describe('local PDF saves', () => {
-  it('writes PDF bytes back to the target local file', async () => {
-    tempDir = await mkdtemp(join(tmpdir(), 'codexui-http-server-pdf-save-'))
-    const filePath = join(tempDir, 'paper.pdf')
-    await writeFile(filePath, Buffer.from('%PDF-1.7\n% old\n', 'utf8'))
-    const nextBytes = Buffer.from('%PDF-1.7\n% saved\n', 'utf8')
-
-    const baseUrl = await startServer()
-    const response = await fetch(`${baseUrl}/codex-local-pdf${encodeURI(filePath)}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/pdf' },
-      body: nextBytes,
-    })
-
-    expect(response.status).toBe(200)
-    expect(await response.json()).toEqual({ ok: true })
-    expect((await readFile(filePath)).equals(nextBytes)).toBe(true)
-  })
-
-  it('rejects non-PDF local paths for PDF writes', async () => {
-    tempDir = await mkdtemp(join(tmpdir(), 'codexui-http-server-pdf-save-reject-'))
-    const filePath = join(tempDir, 'note.txt')
-    await writeFile(filePath, 'hello\n', 'utf8')
-
-    const baseUrl = await startServer()
-    const response = await fetch(`${baseUrl}/codex-local-pdf${encodeURI(filePath)}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/pdf' },
-      body: Buffer.from('%PDF-1.7\n% saved\n', 'utf8'),
-    })
-
-    expect(response.status).toBe(415)
-    expect(await response.json()).toEqual({ error: 'Only PDF files are writable through this endpoint.' })
-    expect(await readFile(filePath, 'utf8')).toBe('hello\n')
-  })
-
-  it('rejects non-PDF content for PDF writes', async () => {
-    tempDir = await mkdtemp(join(tmpdir(), 'codexui-http-server-pdf-save-content-reject-'))
-    const filePath = join(tempDir, 'paper.pdf')
-    await writeFile(filePath, Buffer.from('%PDF-1.7\n% old\n', 'utf8'))
-
-    const baseUrl = await startServer()
-    const response = await fetch(`${baseUrl}/codex-local-pdf${encodeURI(filePath)}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/pdf' },
-      body: Buffer.from('not a pdf\n', 'utf8'),
-    })
-
-    expect(response.status).toBe(415)
-    expect(await response.json()).toEqual({ error: 'Expected PDF content.' })
-    expect(await readFile(filePath, 'utf8')).toBe('%PDF-1.7\n% old\n')
   })
 })
