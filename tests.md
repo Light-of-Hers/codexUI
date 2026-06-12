@@ -5295,19 +5295,22 @@ Markdown files opened through the local editor expose a preview button that rend
 9. Click outside the highlighted block and confirm the floating `Remove highlight` button disappears.
 10. Click the highlighted block again, then click `Remove highlight` and confirm the editor source removes only the surrounding `==` delimiters.
 11. Select text directly inside the editor and confirm the floating `Highlight` button can add `==...==` there too.
-12. Press `Ctrl+S` or click `Save`, reload the editor URL, and confirm the remaining highlight edits persist.
-13. Repeat the preview, floating action, dismissal, removal, and highlight visibility checks in dark theme.
+12. Click inside the preview pane so it has focus, press `Ctrl+S`, reload the editor URL, and confirm the current editor content is saved instead of the browser saving/downloading the preview page.
+13. Edit the file again, then press `Ctrl+S` with focus in the editor or click `Save`, reload the editor URL, and confirm the remaining highlight edits persist.
+14. Repeat the preview, floating action, dismissal, preview-focused save, removal, and highlight visibility checks in dark theme.
 
 #### Expected Results
 - Markdown preview renders `==highlighted text==` as a readable highlighted `<mark>` style.
 - `Highlight` appears near the current editor or preview selection instead of occupying the toolbar.
 - `Highlight` and `Remove highlight` disappear when clicking anywhere other than the floating action itself.
 - Clicking an existing preview highlight exposes `Remove highlight`, which removes the source delimiters.
+- `Ctrl+S` saves the editor file whether focus is in the editor page or inside the preview iframe.
 - Existing preview links, scroll sync, resize behavior, and double-click source jump continue to work.
 - Highlight colors are readable in both light and dark themes.
 
 #### Performance Audit
 - Dismissal adds one constant-time pointer/mouse listener inside the preview iframe and one constant-time parent message branch.
+- Preview-focused save adds one constant-time keydown listener inside the preview iframe and reuses the existing editor save `PUT`.
 - No filesystem access, network requests, preview rerenders, or markdown reparsing are triggered merely by hiding the floating buttons.
 
 #### Rollback/Cleanup

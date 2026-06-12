@@ -1117,6 +1117,19 @@ function markdownPreviewScript(localPath: string): string {
           path: sourcePath,
         }, '*');
       };
+      const postSaveRequest = () => {
+        window.parent.postMessage({
+          type: 'codex-local-markdown-preview-save',
+          path: sourcePath,
+        }, '*');
+      };
+      const isPreviewSaveShortcut = (event) => {
+        if (event.defaultPrevented) return false;
+        if (!(event.ctrlKey || event.metaKey)) return false;
+        if (event.altKey || event.shiftKey) return false;
+        const key = String(event.key || '').toLowerCase();
+        return key === 's' || event.code === 'KeyS';
+      };
       const sourceElementForTarget = (target) => {
         const targetElement = target instanceof Element
           ? target
@@ -1199,6 +1212,14 @@ function markdownPreviewScript(localPath: string): string {
         }, '*');
       });
 
+      document.addEventListener('keydown', (event) => {
+        if (!isPreviewSaveShortcut(event)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) {
+          postSaveRequest();
+        }
+      }, { capture: true });
       document.addEventListener(
         typeof window.PointerEvent === 'function' ? 'pointerdown' : 'mousedown',
         postHighlightActionDismiss,
@@ -2305,6 +2326,11 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       if (data.type === 'codex-local-markdown-highlight-dismiss') {
         if (data.path !== editorReferencePath) return;
         dismissFloatingHighlightActions();
+        return;
+      }
+      if (data.type === 'codex-local-markdown-preview-save') {
+        if (data.path !== editorReferencePath) return;
+        saveEditorContent();
         return;
       }
       if (data.type !== 'codex-local-markdown-preview-jump') return;
