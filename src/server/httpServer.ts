@@ -6,8 +6,9 @@ import { writeFile, stat } from 'node:fs/promises'
 import express, { type Express } from 'express'
 import { createCodexBridgeMiddleware } from './codexAppServerBridge.js'
 import { createAuthSession } from './authMiddleware.js'
-import { LocalBrowseMutationError, createDirectoryListingHtml, createLocalBrowseEntry, createMarkdownPreviewHtml, createTextEditorHtml, decodeBrowsePath, deleteLocalBrowseEntry, getLocalDirectoryListing, isTextEditableFile, normalizeLocalPath, toEditHref } from './localBrowseUi.js'
+import { LocalBrowseMutationError, createDirectoryListingHtml, createLocalBrowseEntry, createMarkdownPreviewHtml, createPdfViewerHtml, createTextEditorHtml, decodeBrowsePath, deleteLocalBrowseEntry, getLocalDirectoryListing, isPdfPath, isTextEditableFile, normalizeLocalPath, toEditHref } from './localBrowseUi.js'
 import { getKatexAssetContentType, KATEX_ASSET_ROUTE, resolveKatexAssetPath } from './katexAssets.js'
+import { getPdfjsAssetContentType, PDFJS_ASSET_ROUTE, resolvePdfjsAssetPath } from './pdfjsAssets.js'
 import { WebSocketServer, type WebSocket } from 'ws'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -125,6 +126,22 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
     })
   })
 
+  app.get(`${PDFJS_ASSET_ROUTE}/*path`, (req, res) => {
+    const rawPath = readWildcardPathParam(req.params.path)
+    const assetPath = resolvePdfjsAssetPath(`/${rawPath}`)
+    if (!assetPath) {
+      res.status(404).json({ error: 'PDF.js asset not found.' })
+      return
+    }
+
+    res.type(getPdfjsAssetContentType(assetPath))
+    res.setHeader('Cache-Control', 'private, max-age=86400')
+    res.sendFile(assetPath, { dotfiles: 'allow' }, (error) => {
+      if (!error) return
+      if (!res.headersSent) res.status(404).json({ error: 'PDF.js asset not found.' })
+    })
+  })
+
   // 4. Serve local files inline for direct file open.
   app.get('/codex-local-file', (req, res) => {
     const rawPath = typeof req.query.path === 'string' ? req.query.path : ''
@@ -187,6 +204,12 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
         return
       }
 
+      if (!rawMode && isPdfPath(localPath)) {
+        const html = createPdfViewerHtml(localPath)
+        res.status(200).type('text/html; charset=utf-8').send(html)
+        return
+      }
+
       if (!rawMode && await isTextEditableFile(localPath)) {
         res.redirect(302, toEditHref(localPath, newProjectName, lineRange))
         return
@@ -236,6 +259,41 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
     } catch (error) {
       const mutationError = error instanceof LocalBrowseMutationError ? error : null
       res.status(mutationError?.statusCode ?? 500).json({ error: mutationError?.message ?? 'Delete failed.' })
+    }
+  })
+
+  app.put('/codex-local-pdf/*path', express.raw({ type: '*/*', limit: '200mb' }), async (req, res) => {
+    const rawPath = readWildcardPathParam(req.params.path)
+    const localPath = decodeBrowsePath(`/${rawPath}`)
+    if (!localPath || !isAbsolute(localPath)) {
+      res.status(400).json({ error: 'Expected absolute local file path.' })
+      return
+    }
+    if (!isPdfPath(localPath)) {
+      res.status(415).json({ error: 'Only PDF files are writable through this endpoint.' })
+      return
+    }
+    const body = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0)
+    if (body.length === 0) {
+      res.status(400).json({ error: 'Expected non-empty PDF content.' })
+      return
+    }
+    const looksLikePdf = body.subarray(0, 5).toString('ascii') === '%PDF-'
+    if (!looksLikePdf) {
+      res.status(415).json({ error: 'Expected PDF content.' })
+      return
+    }
+
+    try {
+      const fileStat = await stat(localPath)
+      if (!fileStat.isFile()) {
+        res.status(400).json({ error: 'Expected file path.' })
+        return
+      }
+      await writeFile(localPath, body)
+      res.status(200).json({ ok: true })
+    } catch {
+      res.status(404).json({ error: 'File not found.' })
     }
   })
 
