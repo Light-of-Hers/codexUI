@@ -1111,6 +1111,12 @@ function markdownPreviewScript(localPath: string): string {
         width: rect.width,
         height: rect.height,
       });
+      const postHighlightActionDismiss = () => {
+        window.parent.postMessage({
+          type: 'codex-local-markdown-highlight-dismiss',
+          path: sourcePath,
+        }, '*');
+      };
       const sourceElementForTarget = (target) => {
         const targetElement = target instanceof Element
           ? target
@@ -1193,6 +1199,11 @@ function markdownPreviewScript(localPath: string): string {
         }, '*');
       });
 
+      document.addEventListener(
+        typeof window.PointerEvent === 'function' ? 'pointerdown' : 'mousedown',
+        postHighlightActionDismiss,
+        { capture: true }
+      );
       document.addEventListener('selectionchange', postHighlightSelection);
       document.addEventListener('mouseup', postHighlightSelection);
       document.addEventListener('keyup', postHighlightSelection);
@@ -1858,6 +1869,13 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       if (floatingRemoveHighlightBtn) floatingRemoveHighlightBtn.hidden = true;
     };
 
+    const dismissFloatingHighlightActions = () => {
+      lastPreviewHighlightSelection = null;
+      lastPreviewClickedHighlight = null;
+      lastEditorHighlightSelection = null;
+      hideFloatingHighlightActions();
+    };
+
     const suppressFloatingHighlightActions = (durationMs = 220) => {
       suppressFloatingActionsUntil = window.performance.now() + durationMs;
       hideFloatingHighlightActions();
@@ -1935,6 +1953,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       const selectionRange = editor.getSelectionRange();
       if (!selectionRange || selectionRange.isEmpty()) {
         lastEditorHighlightSelection = null;
+        hideFloatingHighlightActions();
         return;
       }
       const editorValue = editor.getValue();
@@ -2281,6 +2300,11 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
         lastPreviewHighlightSelection = null;
         lastEditorHighlightSelection = null;
         showFloatingRemoveHighlightButton(rectFromPreviewMessage(data.rect));
+        return;
+      }
+      if (data.type === 'codex-local-markdown-highlight-dismiss') {
+        if (data.path !== editorReferencePath) return;
+        dismissFloatingHighlightActions();
         return;
       }
       if (data.type !== 'codex-local-markdown-preview-jump') return;
@@ -2749,8 +2773,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     document.addEventListener('mousedown', (event) => {
       const target = event.target;
       if (target instanceof Element && target.closest('.floating-highlight-action')) return;
-      if (target instanceof Element && (target.closest('#editor') || target.closest('#previewFrame'))) return;
-      hideFloatingHighlightActions();
+      dismissFloatingHighlightActions();
     });
 
     window.addEventListener('keydown', (event) => {

@@ -5288,20 +5288,27 @@ Markdown files opened through the local editor expose a preview button that rend
 2. Open the markdown file through `/codex-local-edit/<absolute-markdown-path>`.
 3. Click `Preview`.
 4. In the preview pane, select a short phrase from a rendered paragraph and confirm a floating `Highlight` button appears beside the selection.
-5. Click the floating `Highlight` button.
-6. Confirm the editor source wraps the matching text with `==` delimiters and the preview rerenders it with a highlighted background.
-7. Click the highlighted block in the preview and confirm a floating `Remove highlight` button appears beside it.
-8. Click `Remove highlight` and confirm the editor source removes only the surrounding `==` delimiters.
-9. Select text directly inside the editor and confirm the floating `Highlight` button can add `==...==` there too.
-10. Press `Ctrl+S` or click `Save`, reload the editor URL, and confirm the remaining highlight edits persist.
-11. Repeat the preview, floating action, removal, and highlight visibility checks in dark theme.
+5. Click an unrelated area in the editor, preview, or toolbar and confirm the floating `Highlight` button disappears.
+6. Select the preview phrase again, then click the floating `Highlight` button.
+7. Confirm the editor source wraps the matching text with `==` delimiters and the preview rerenders it with a highlighted background.
+8. Click the highlighted block in the preview and confirm a floating `Remove highlight` button appears beside it.
+9. Click outside the highlighted block and confirm the floating `Remove highlight` button disappears.
+10. Click the highlighted block again, then click `Remove highlight` and confirm the editor source removes only the surrounding `==` delimiters.
+11. Select text directly inside the editor and confirm the floating `Highlight` button can add `==...==` there too.
+12. Press `Ctrl+S` or click `Save`, reload the editor URL, and confirm the remaining highlight edits persist.
+13. Repeat the preview, floating action, dismissal, removal, and highlight visibility checks in dark theme.
 
 #### Expected Results
 - Markdown preview renders `==highlighted text==` as a readable highlighted `<mark>` style.
 - `Highlight` appears near the current editor or preview selection instead of occupying the toolbar.
+- `Highlight` and `Remove highlight` disappear when clicking anywhere other than the floating action itself.
 - Clicking an existing preview highlight exposes `Remove highlight`, which removes the source delimiters.
 - Existing preview links, scroll sync, resize behavior, and double-click source jump continue to work.
 - Highlight colors are readable in both light and dark themes.
+
+#### Performance Audit
+- Dismissal adds one constant-time pointer/mouse listener inside the preview iframe and one constant-time parent message branch.
+- No filesystem access, network requests, preview rerenders, or markdown reparsing are triggered merely by hiding the floating buttons.
 
 #### Rollback/Cleanup
 - Remove any `==...==` markers added to a non-disposable markdown file, or discard the disposable copy.
