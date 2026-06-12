@@ -1286,6 +1286,10 @@ export function isEmptyThreadReadError(error: unknown): boolean {
   return message.includes('failed to read thread') && message.includes('rollout') && message.includes('is empty')
 }
 
+function isNoRolloutFoundError(error: unknown): boolean {
+  return getErrorMessage(error, '').toLowerCase().includes('no rollout found')
+}
+
 const warnedCodexAuthReadFailures = new Set<string>()
 
 function getErrorCode(error: unknown): string | null {
@@ -7065,7 +7069,18 @@ async function ensureTurnStartRuntimeThreadState(
     resumeParams.model = model
   }
 
-  await appServer.rpc('thread/resume', resumeParams)
+  try {
+    await appServer.rpc('thread/resume', resumeParams)
+  } catch (error) {
+    if (!isNoRolloutFoundError(error)) {
+      throw error
+    }
+
+    writeDebugLog('turn-start-runtime-resume-no-rollout', 'Skipping wrapper runtime resume because the thread rollout is not materialized yet', {
+      threadId,
+      provider: requestedProvider,
+    }).catch(() => {})
+  }
 }
 
 export function persistTurnStartModelProviderInCollaborationMode(method: string, params: unknown): unknown {

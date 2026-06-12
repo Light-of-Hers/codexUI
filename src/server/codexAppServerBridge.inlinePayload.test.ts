@@ -76,6 +76,71 @@ process.stdin.on('data', (chunk) => {
   await chmod(path, 0o755)
 }
 
+async function writeCursorNoRolloutOnResumeCommand(path: string, logPath: string): Promise<void> {
+  await writeFile(path, `#!/usr/bin/env node
+const fs = require('node:fs')
+if (process.argv[2] === '--version') {
+  console.log('cursor mock')
+  process.exit(0)
+}
+const startedThreads = new Set()
+process.stdin.setEncoding('utf8')
+let buffer = ''
+function writeResponse(id, payload) {
+  process.stdout.write(JSON.stringify({ id, ...payload }) + '\\n')
+}
+process.stdin.on('data', (chunk) => {
+  buffer += chunk
+  let index = buffer.indexOf('\\n')
+  while (index >= 0) {
+    const line = buffer.slice(0, index).trim()
+    buffer = buffer.slice(index + 1)
+    if (line) {
+      const message = JSON.parse(line)
+      if (message.id !== undefined) {
+        fs.appendFileSync(${JSON.stringify(logPath)}, 'cursor:' + message.method + '\\n')
+      }
+      if (message.method === 'thread/start') {
+        const threadId = 'cursor-thread-new'
+        startedThreads.add(threadId)
+        writeResponse(message.id, {
+          result: {
+            thread: { id: threadId, turns: [] },
+            model: message.params && message.params.model || 'gpt-5.5-medium',
+            modelProvider: 'cursor',
+            cwd: message.params && message.params.cwd || '',
+            reasoningEffort: null
+          }
+        })
+      } else if (message.method === 'thread/resume') {
+        writeResponse(message.id, {
+          error: {
+            code: -32000,
+            message: 'no rollout found for thread id ' + (message.params && message.params.threadId || '')
+          }
+        })
+      } else if (message.method === 'turn/start') {
+        const threadId = message.params && message.params.threadId || ''
+        if (!startedThreads.has(threadId)) {
+          writeResponse(message.id, {
+            error: { code: -32000, message: 'no rollout found for thread id ' + threadId }
+          })
+        } else {
+          writeResponse(message.id, { result: { turn: { id: 'cursor-turn-first' } } })
+        }
+      } else if (message.method === 'config/read') {
+        writeResponse(message.id, { result: { config: { model_provider: 'cursor' } } })
+      } else {
+        writeResponse(message.id, { result: {} })
+      }
+    }
+    index = buffer.indexOf('\\n')
+  }
+})
+`, 'utf8')
+  await chmod(path, 0o755)
+}
+
 function localImagePathFromProxyUrl(value: string): string {
   const parsed = new URL(value, 'http://localhost')
   expect(parsed.pathname).toBe('/codex-local-image')
@@ -1939,6 +2004,102 @@ describe('app-server runtime configuration', () => {
         },
       })
       expect(await readFile(commandLogPath, 'utf8')).toContain('cursor:thread/resume\ncursor:turn/start\n')
+    } finally {
+      middleware.dispose()
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('starts the first Cursor turn when the new thread rollout is not materialized yet', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-cursor-first-turn-'))
+    const commandLogPath = join(tempDir, 'commands.log')
+    const codexCommand = join(tempDir, 'codex')
+    const cursorCommand = join(tempDir, 'codex-cursor')
+    await writeJsonRpcCommand(codexCommand, 'codex', commandLogPath, true)
+    await writeCursorNoRolloutOnResumeCommand(cursorCommand, commandLogPath)
+    vi.stubEnv('CODEX_HOME', tempDir)
+    vi.stubEnv('CODEXUI_CODEX_COMMAND', codexCommand)
+    vi.stubEnv('CODEXUI_CODEX_CURSOR_COMMAND', cursorCommand)
+
+    const middleware = createCodexBridgeMiddleware()
+    async function postRpc(body: unknown): Promise<{ statusCode: number; payload: unknown }> {
+      const responseChunks: string[] = []
+      const response = {
+        statusCode: 0,
+        setHeader: () => undefined,
+        write: (chunk?: unknown) => {
+          if (chunk) responseChunks.push(String(chunk))
+          return true
+        },
+        end: (chunk?: unknown) => {
+          if (chunk) responseChunks.push(String(chunk))
+        },
+        once: () => response,
+      }
+      const rawBody = JSON.stringify(body)
+      const request = Readable.from([rawBody]) as Readable & {
+        url: string
+        method: string
+        headers: Record<string, string>
+      }
+      request.url = '/codex-api/rpc'
+      request.method = 'POST'
+      request.headers = { 'content-type': 'application/json' }
+
+      await middleware(
+        request as never,
+        response as never,
+        () => { throw new Error('rpc route should handle the request') },
+      )
+
+      return {
+        statusCode: response.statusCode,
+        payload: JSON.parse(responseChunks.join('')) as unknown,
+      }
+    }
+
+    try {
+      const startResponse = await postRpc({
+        method: 'thread/start',
+        params: {
+          cwd: '/tmp/project',
+          model: 'gpt-5.5-medium',
+          modelProvider: 'cursor',
+          persistExtendedHistory: true,
+        },
+      })
+
+      expect(startResponse.statusCode).toBe(200)
+      expect(startResponse.payload).toMatchObject({
+        result: {
+          thread: {
+            id: 'cursor-thread-new',
+          },
+          modelProvider: 'cursor',
+        },
+      })
+
+      const turnResponse = await postRpc({
+        method: 'turn/start',
+        params: {
+          threadId: 'cursor-thread-new',
+          input: [{ type: 'text', text: 'first cursor message' }],
+          model: 'gpt-5.5-medium',
+          modelProvider: 'cursor',
+        },
+      })
+
+      expect(turnResponse.statusCode).toBe(200)
+      expect(turnResponse.payload).toEqual({
+        result: {
+          turn: {
+            id: 'cursor-turn-first',
+          },
+        },
+      })
+      expect(await readFile(commandLogPath, 'utf8')).toContain(
+        'cursor:thread/start\ncursor:thread/resume\ncursor:turn/start\n',
+      )
     } finally {
       middleware.dispose()
       await rm(tempDir, { recursive: true, force: true })

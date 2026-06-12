@@ -6327,6 +6327,35 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Rollback/Cleanup
 - No persistent cleanup is required.
 
+### Feature: Cursor CLI first turn no-rollout recovery
+
+#### Prerequisites
+- `codex-cursor` is installed or configured through `CODEXUI_CODEX_CURSOR_COMMAND`.
+- Cursor CLI provider is available in Settings.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Run `pnpm exec vitest run src/server/codexAppServerBridge.inlinePayload.test.ts`.
+2. Run `pnpm run build:cli`.
+3. Open the app in light theme.
+4. Switch Provider to `Cursor CLI`.
+5. Start a new session from the home composer and send a first message such as `hi`.
+6. Confirm the first turn starts instead of showing `RPC turn/start failed with HTTP 502: no rollout found for thread id ...`.
+7. Repeat steps 3-6 in dark theme.
+
+#### Expected Results
+- New Cursor CLI sessions can send their first message successfully.
+- The bridge may attempt a wrapper-runtime `thread/resume`, but a pre-turn `no rollout found` response does not block the immediate `turn/start`.
+- Existing non-Cursor providers and existing Cursor sessions continue to route through their selected provider runtimes.
+- Light and dark themes have no visual regression because the change is server-side.
+
+#### Performance Audit
+- The change adds only a constant-time error-string check on the existing wrapper-provider preflight resume path.
+- It does not add network calls, filesystem scans, model-list fetches, or additional app-server processes.
+
+#### Rollback/Cleanup
+- Switch Provider back to the preferred runtime after manual verification.
+
 ### Feature: Composer mention keyboard auto-scroll
 
 #### Prerequisites
