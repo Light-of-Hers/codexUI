@@ -5185,6 +5185,35 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Rollback/Cleanup
 - Revert any disposable file edits made during validation.
 
+### Feature: Local markdown preview restores open state on refresh
+
+#### Prerequisites
+- App server is running from this repository.
+- A writable `.md` or `.markdown` file is available, preferably a disposable copy.
+- Browser localStorage is available for the app origin.
+- Light and dark themes are both available from the operating system or browser color-scheme setting.
+
+#### Steps
+1. Open the markdown file through `/codex-local-edit/...`.
+2. Click `Preview` and confirm the rendered markdown appears in the preview pane.
+3. Refresh the browser page.
+4. Confirm the editor loads with preview already open and the button reads `Hide Preview`.
+5. Click `Hide Preview`, refresh the browser page again, and confirm the editor loads without the preview pane.
+6. Repeat steps 1-5 in dark theme.
+
+#### Expected Results
+- Preview open/closed state persists for the current markdown file across page refreshes.
+- Automatically restored preview triggers the normal preview render without requiring another click.
+- Closing preview persists the closed state, so the next refresh starts in editor-only mode.
+- Light and dark theme preview/editor surfaces remain readable after refresh.
+
+#### Performance Audit
+- Restoring the preview state adds one localStorage read during markdown editor startup and one localStorage write when the preview toggle changes.
+- No extra preview render is triggered while preview is closed; the restored open state uses the existing single preview render path.
+
+#### Rollback/Cleanup
+- Click `Hide Preview` before leaving the disposable file if you want future reloads to start editor-only, or clear localStorage key prefix `codex.localBrowse.previewVisible.v1:`.
+
 ### Feature: Local markdown preview preserves scroll on edit
 
 #### Prerequisites

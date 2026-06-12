@@ -1649,6 +1649,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     let previewScrollSyncSuppressedUntil = 0;
     const previewSplitStorageKeyHorizontal = 'codex.localBrowse.previewEditorRatio.horizontal.v1';
     const previewSplitStorageKeyVertical = 'codex.localBrowse.previewEditorRatio.vertical.v1';
+    const previewVisibleStorageKey = 'codex.localBrowse.previewVisible.v1:' + editorReferencePath;
     const defaultPreviewEditorRatio = 0.48;
     const previewEditorMinWidth = 320;
     const previewPaneMinWidth = 420;
@@ -1700,6 +1701,22 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     const savePreviewEditorRatio = (ratio) => {
       try {
         window.localStorage.setItem(getPreviewSplitStorageKey(), String(ratio));
+      } catch {
+        // Ignore storage failures.
+      }
+    };
+
+    const loadPreviewVisible = () => {
+      try {
+        return window.localStorage.getItem(previewVisibleStorageKey) === 'true';
+      } catch {
+        return false;
+      }
+    };
+
+    const savePreviewVisible = (visible) => {
+      try {
+        window.localStorage.setItem(previewVisibleStorageKey, visible ? 'true' : 'false');
       } catch {
         // Ignore storage failures.
       }
@@ -2696,9 +2713,12 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       }, delay);
     };
 
-    const setPreviewVisible = (visible) => {
+    const setPreviewVisible = (visible, persist = true) => {
       if (!supportsMarkdownPreview || !previewBtn || !editorShell || !previewFrame) return;
       previewVisible = visible;
+      if (persist) {
+        savePreviewVisible(visible);
+      }
       editorShell.dataset.preview = visible ? 'true' : 'false';
       previewFrame.hidden = !visible;
       if (previewSplitter) {
@@ -2744,6 +2764,9 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
         schedulePreviewScrollSyncFromEditor();
       });
       editor.selection.on('changeSelection', scheduleEditorHighlightSelectionCapture);
+      if (loadPreviewVisible()) {
+        setPreviewVisible(true, false);
+      }
     }
 
     if (previewSplitter) {
