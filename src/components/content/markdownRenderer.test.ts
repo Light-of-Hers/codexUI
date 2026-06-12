@@ -97,6 +97,14 @@ const answer = 42
     expect(html).toContain('katex-display')
   })
 
+  it('renders double-equals text as highlighted markdown', () => {
+    const html = render('Plain ==important note== text and `==code==`.')
+
+    expect(html).toContain('<mark class="message-highlight">important note</mark>')
+    expect(html).toContain('<code class="message-inline-code"')
+    expect(html).toContain('>==code==</code>')
+  })
+
   it('wraps tight list item inline content in a single text block', () => {
     const html = render('- `repos/codexUI`：`origin/crz/dev` → `18dd52c`')
 

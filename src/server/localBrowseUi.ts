@@ -799,6 +799,8 @@ function markdownPreviewStyles(): string {
       --syntax-addition-bg: #f0fff4;
       --syntax-deletion-fg: #b31d28;
       --syntax-deletion-bg: #ffeef0;
+      --highlight-bg: #fff3b0;
+      --highlight-fg: #3b2300;
     }
     @media (prefers-color-scheme: dark) {
       :root {
@@ -831,6 +833,8 @@ function markdownPreviewStyles(): string {
         --syntax-addition-bg: #033a16;
         --syntax-deletion-fg: #ffdcd7;
         --syntax-deletion-bg: #67060c;
+        --highlight-bg: rgba(187, 128, 9, 0.42);
+        --highlight-fg: #f2cc60;
       }
     }
     * { box-sizing: border-box; }
@@ -1061,6 +1065,14 @@ function markdownPreviewStyles(): string {
       text-decoration: line-through;
       color: var(--muted-fg);
     }
+    .message-highlight {
+      border-radius: 3px;
+      background: var(--highlight-bg);
+      color: var(--highlight-fg);
+      padding: 0 0.12em;
+      box-decoration-break: clone;
+      -webkit-box-decoration-break: clone;
+    }
     .message-divider {
       height: 1px;
       border: 0;
@@ -1117,6 +1129,32 @@ function markdownPreviewScript(localPath: string): string {
           endLine: Number.isFinite(sourceEndLine) && sourceEndLine >= sourceLine ? sourceEndLine : sourceLine,
         }, '*');
       });
+
+      const postHighlightSelection = () => {
+        const selection = window.getSelection();
+        if (!selection || selection.isCollapsed || selection.rangeCount === 0) return;
+        const text = selection.toString().replace(/\\u00a0/g, ' ').trim();
+        if (!text) return;
+        const range = selection.getRangeAt(0);
+        const sourceElement = sourceElementForTarget(range.commonAncestorContainer)
+          || sourceElementForTarget(range.startContainer)
+          || sourceElementForTarget(range.endContainer);
+        if (!sourceElement) return;
+        const sourceLine = Number.parseInt(sourceElement.getAttribute('data-source-line') || '', 10);
+        if (!Number.isFinite(sourceLine) || sourceLine < 1) return;
+        const sourceEndLine = Number.parseInt(sourceElement.getAttribute('data-source-end-line') || '', 10);
+        window.parent.postMessage({
+          type: 'codex-local-markdown-preview-selection',
+          path: sourcePath,
+          text,
+          line: sourceLine,
+          endLine: Number.isFinite(sourceEndLine) && sourceEndLine >= sourceLine ? sourceEndLine : sourceLine,
+        }, '*');
+      };
+
+      document.addEventListener('selectionchange', postHighlightSelection);
+      document.addEventListener('mouseup', postHighlightSelection);
+      document.addEventListener('keyup', postHighlightSelection);
     })();
   `
 }
@@ -1157,6 +1195,9 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
   const copyReferenceButton = `<button id="copyRefBtn" type="button">Copy ref</button>`
   const previewButton = supportsMarkdownPreview
     ? '<button id="previewBtn" type="button" aria-pressed="false">Preview</button>'
+    : ''
+  const highlightButton = supportsMarkdownPreview
+    ? '<button id="highlightBtn" type="button">Highlight</button>'
     : ''
   const previewPane = supportsMarkdownPreview
     ? '<div id="previewSplitter" class="preview-splitter" role="separator" aria-orientation="vertical" aria-label="Resize markdown preview" tabindex="0" hidden></div><iframe id="previewFrame" class="preview-pane" title="Markdown preview" hidden></iframe>'
@@ -1393,6 +1434,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       <button id="saveBtn" type="button">Save</button>
       ${copyReferenceButton}
       ${previewButton}
+      ${highlightButton}
       <span id="status"></span>
       <span id="previewStatus"></span>
     </div>
@@ -1407,6 +1449,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     const saveBtn = document.getElementById('saveBtn');
     const copyRefBtn = document.getElementById('copyRefBtn');
     const previewBtn = document.getElementById('previewBtn');
+    const highlightBtn = document.getElementById('highlightBtn');
     const status = document.getElementById('status');
     const previewStatus = document.getElementById('previewStatus');
     const editorShell = document.getElementById('editorShell');
@@ -1500,6 +1543,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     let isApplyingPreviewScrollFromEditor = false;
     let pendingPreviewEditorSync = false;
     let lastPreviewScrollState = null;
+    let lastPreviewHighlightSelection = null;
     let lastEditorSyncedLine = 0;
     let lastPreviewSyncedLine = 0;
     const previewScrollAnchorSelector = '.message-scroll-anchor[data-source-line]';
@@ -1742,10 +1786,212 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       }
     };
 
-    const handlePreviewJumpMessage = (event) => {
+    const normalizeHighlightSelectionText = (value) => (
+      String(value || '')
+        .replace(/\\u00a0/g, ' ')
+        .replace(/\\r\\n?/g, '\\n')
+        .trim()
+    );
+
+    const getLineStartOffsets = (value) => {
+      const offsets = [0];
+      for (let index = 0; index < value.length; index += 1) {
+        if (value[index] === '\\n') offsets.push(index + 1);
+      }
+      return offsets;
+    };
+
+    const indexToEditorPosition = (value, rawIndex) => {
+      const index = Math.min(Math.max(0, rawIndex), value.length);
+      const prefix = value.slice(0, index);
+      const lines = prefix.split('\\n');
+      return {
+        row: lines.length - 1,
+        column: lines[lines.length - 1].length,
+      };
+    };
+
+    const editorPositionToIndex = (value, position) => {
+      const offsets = getLineStartOffsets(value);
+      const row = Math.min(Math.max(0, Number(position?.row) || 0), Math.max(0, offsets.length - 1));
+      const lineStart = offsets[row] ?? 0;
+      const lineEnd = row + 1 < offsets.length ? offsets[row + 1] - 1 : value.length;
+      const column = Math.min(Math.max(0, Number(position?.column) || 0), Math.max(0, lineEnd - lineStart));
+      return lineStart + column;
+    };
+
+    const normalizeTextWithIndexMap = (value) => {
+      let text = '';
+      const indexMap = [];
+      let previousWasWhitespace = false;
+
+      for (let index = 0; index < value.length; index += 1) {
+        const character = value[index] === '\\u00a0' ? ' ' : value[index];
+        if (/\\s/u.test(character)) {
+          if (!previousWasWhitespace) {
+            text += ' ';
+            indexMap.push(index);
+            previousWasWhitespace = true;
+          }
+          continue;
+        }
+        text += character;
+        indexMap.push(index);
+        previousWasWhitespace = false;
+      }
+
+      let trimStart = 0;
+      let trimEnd = text.length;
+      while (trimStart < trimEnd && text[trimStart] === ' ') trimStart += 1;
+      while (trimEnd > trimStart && text[trimEnd - 1] === ' ') trimEnd -= 1;
+
+      return {
+        text: text.slice(trimStart, trimEnd),
+        indexMap: indexMap.slice(trimStart, trimEnd),
+      };
+    };
+
+    const findSelectionInSourceSlice = (sourceSlice, selectedText) => {
+      if (!sourceSlice || !selectedText) return null;
+
+      const exactIndex = sourceSlice.indexOf(selectedText);
+      if (exactIndex >= 0) {
+        return {
+          startOffset: exactIndex,
+          endOffset: exactIndex + selectedText.length,
+        };
+      }
+
+      const normalizedSource = normalizeTextWithIndexMap(sourceSlice);
+      const normalizedSelection = normalizeTextWithIndexMap(selectedText);
+      if (!normalizedSource.text || !normalizedSelection.text) return null;
+
+      const normalizedIndex = normalizedSource.text.indexOf(normalizedSelection.text);
+      if (normalizedIndex < 0) return null;
+
+      const mappedStart = normalizedSource.indexMap[normalizedIndex];
+      const mappedEnd = normalizedSource.indexMap[normalizedIndex + normalizedSelection.text.length - 1];
+      if (!Number.isFinite(mappedStart) || !Number.isFinite(mappedEnd)) return null;
+
+      return {
+        startOffset: mappedStart,
+        endOffset: mappedEnd + 1,
+      };
+    };
+
+    const sourceWindowForLines = (editorValue, rawStartLine, rawEndLine = rawStartLine) => {
+      const offsets = getLineStartOffsets(editorValue);
+      if (offsets.length === 0) return null;
+      const lineCount = offsets.length;
+      const startLine = Math.min(Math.max(1, Number.parseInt(String(rawStartLine), 10) || 1), lineCount);
+      const endLine = Math.min(Math.max(startLine, Number.parseInt(String(rawEndLine), 10) || startLine), lineCount);
+      const startIndex = offsets[startLine - 1] ?? 0;
+      const endIndex = endLine < offsets.length ? Math.max(startIndex, offsets[endLine] - 1) : editorValue.length;
+      return {
+        startIndex,
+        endIndex,
+        value: editorValue.slice(startIndex, endIndex),
+      };
+    };
+
+    const findHighlightSelectionInEditor = (selectedText, sourceLine, sourceEndLine) => {
+      const editorValue = editor.getValue();
+      const lineWindow = sourceWindowForLines(editorValue, sourceLine, sourceEndLine);
+      if (lineWindow) {
+        const lineMatch = findSelectionInSourceSlice(lineWindow.value, selectedText);
+        if (lineMatch) {
+          return {
+            startIndex: lineWindow.startIndex + lineMatch.startOffset,
+            endIndex: lineWindow.startIndex + lineMatch.endOffset,
+          };
+        }
+      }
+
+      const fullMatch = findSelectionInSourceSlice(editorValue, selectedText);
+      if (!fullMatch) return null;
+      return {
+        startIndex: fullMatch.startOffset,
+        endIndex: fullMatch.endOffset,
+      };
+    };
+
+    const replaceEditorRangeWithHighlight = (startIndex, endIndex) => {
+      const editorValue = editor.getValue();
+      const safeStart = Math.min(Math.max(0, startIndex), editorValue.length);
+      const safeEnd = Math.min(Math.max(safeStart, endIndex), editorValue.length);
+      const selectedSource = editorValue.slice(safeStart, safeEnd);
+      if (!selectedSource.trim()) return false;
+
+      if (editorValue.slice(Math.max(0, safeStart - 2), safeStart) === '==' && editorValue.slice(safeEnd, safeEnd + 2) === '==') {
+        setStatus('Already highlighted', 1400);
+        return true;
+      }
+
+      const Range = ace.require('ace/range').Range;
+      const start = indexToEditorPosition(editorValue, safeStart);
+      const end = indexToEditorPosition(editorValue, safeEnd);
+      editor.session.replace(new Range(start.row, start.column, end.row, end.column), '==' + selectedSource + '==');
+
+      const nextValue = editor.getValue();
+      const nextStart = indexToEditorPosition(nextValue, safeStart);
+      const nextEnd = indexToEditorPosition(nextValue, safeEnd + 4);
+      editor.selection.setRange(new Range(nextStart.row, nextStart.column, nextEnd.row, nextEnd.column), false);
+      editor.focus();
+      schedulePreview(0);
+      setStatus('Highlighted; save to persist', 1800);
+      return true;
+    };
+
+    const highlightEditorSelection = () => {
+      const selectionRange = editor.getSelectionRange();
+      if (!selectionRange || selectionRange.isEmpty()) return false;
+      const editorValue = editor.getValue();
+      const startIndex = editorPositionToIndex(editorValue, selectionRange.start);
+      const endIndex = editorPositionToIndex(editorValue, selectionRange.end);
+      return replaceEditorRangeWithHighlight(Math.min(startIndex, endIndex), Math.max(startIndex, endIndex));
+    };
+
+    const highlightPreviewSelection = () => {
+      if (!lastPreviewHighlightSelection) return false;
+      const selectedText = normalizeHighlightSelectionText(lastPreviewHighlightSelection.text);
+      if (!selectedText) return false;
+      const match = findHighlightSelectionInEditor(
+        selectedText,
+        lastPreviewHighlightSelection.line,
+        lastPreviewHighlightSelection.endLine,
+      );
+      if (!match) {
+        setPreviewStatus('Could not find selected text in source');
+        return true;
+      }
+      return replaceEditorRangeWithHighlight(match.startIndex, match.endIndex);
+    };
+
+    const highlightCurrentSelection = () => {
+      if (!supportsMarkdownPreview) return;
+      if (highlightEditorSelection()) return;
+      if (highlightPreviewSelection()) return;
+      setPreviewStatus('Select text in preview or editor first');
+    };
+
+    const handlePreviewMessage = (event) => {
       if (!supportsMarkdownPreview || !previewFrame || event.source !== previewFrame.contentWindow) return;
       const data = event.data;
       if (!data || typeof data !== 'object') return;
+      if (data.type === 'codex-local-markdown-preview-selection') {
+        if (data.path !== editorReferencePath) return;
+        const selectedText = normalizeHighlightSelectionText(data.text);
+        if (!selectedText) return;
+        const sourceLine = Number.parseInt(String(data.line), 10);
+        if (!Number.isFinite(sourceLine) || sourceLine < 1) return;
+        const sourceEndLine = Number.parseInt(String(data.endLine ?? sourceLine), 10);
+        lastPreviewHighlightSelection = {
+          text: selectedText,
+          line: sourceLine,
+          endLine: Number.isFinite(sourceEndLine) && sourceEndLine >= sourceLine ? sourceEndLine : sourceLine,
+        };
+        return;
+      }
       if (data.type !== 'codex-local-markdown-preview-jump') return;
       if (data.path !== editorReferencePath) return;
       const sourceLine = Number.parseInt(String(data.line), 10);
@@ -1774,7 +2020,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       );
     };
 
-    window.addEventListener('message', handlePreviewJumpMessage);
+    window.addEventListener('message', handlePreviewMessage);
 
     const previewEndpoint = () => {
       if (!location.pathname.startsWith('/codex-local-edit')) return '';
@@ -2128,6 +2374,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
         detachPreviewScrollSync();
         cancelPreviewScrollSyncFrames();
         pendingPreviewEditorSync = false;
+        lastPreviewHighlightSelection = null;
       }
       window.requestAnimationFrame(() => editor.resize());
       if (visible) {
@@ -2142,6 +2389,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
         setPreviewVisible(!previewVisible);
       });
       editor.session.on('change', () => {
+        lastPreviewHighlightSelection = null;
         schedulePreview();
       });
       editor.session.on('changeScrollTop', () => {
@@ -2182,6 +2430,10 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       if (!supportsMarkdownPreview || !previewVisible) return;
       syncPreviewEditorRatio(false);
     });
+
+    if (highlightBtn) {
+      highlightBtn.addEventListener('click', highlightCurrentSelection);
+    }
 
     if (copyRefBtn) {
       copyRefBtn.addEventListener('click', async () => {

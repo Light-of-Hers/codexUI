@@ -5276,6 +5276,32 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Rollback/Cleanup
 - Close the editor or refresh the page to clear any temporary state.
 
+### Feature: Local markdown preview text highlighting
+
+#### Prerequisites
+- App server is running from this repository.
+- A writable `.md` or `.markdown` file is available, preferably a disposable copy.
+- Light and dark themes are both available from the operating system or browser color-scheme setting.
+
+#### Steps
+1. Run `pnpm exec vitest run src/server/localBrowseUi.test.ts src/components/content/markdownRenderer.test.ts`.
+2. Open the markdown file through `/codex-local-edit/<absolute-markdown-path>`.
+3. Click `Preview` and confirm the toolbar shows `Highlight`.
+4. In the preview pane, select a short phrase from a rendered paragraph, then click `Highlight`.
+5. Confirm the editor source wraps the matching text with `==` delimiters and the preview rerenders it with a highlighted background.
+6. Select text directly inside the editor, click `Highlight`, and confirm the same `==...==` source edit and preview highlight.
+7. Press `Ctrl+S` or click `Save`, reload the editor URL, and confirm the highlight persists.
+8. Repeat the preview and highlight visibility checks in dark theme.
+
+#### Expected Results
+- Markdown preview renders `==highlighted text==` as a readable highlighted `<mark>` style.
+- `Highlight` works from either the editor selection or the most recent preview text selection.
+- Existing preview links, scroll sync, resize behavior, and double-click source jump continue to work.
+- Highlight colors are readable in both light and dark themes.
+
+#### Rollback/Cleanup
+- Remove any `==...==` markers added to a non-disposable markdown file, or discard the disposable copy.
+
 ### Feature: Composer markdown preview
 
 #### Prerequisites

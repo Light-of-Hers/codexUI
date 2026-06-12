@@ -38,6 +38,7 @@ describe('local browse markdown preview', () => {
     const markdownEditorHtml = await createTextEditorHtml(markdownPath)
     expect(markdownEditorHtml).toContain('id="copyRefBtn"')
     expect(markdownEditorHtml).toContain('id="previewBtn"')
+    expect(markdownEditorHtml).toContain('id="highlightBtn"')
     expect(markdownEditorHtml).toContain('id="previewSplitter"')
     expect(markdownEditorHtml).toContain('role="separator"')
     expect(markdownEditorHtml).toContain('cursor: row-resize')
@@ -55,7 +56,11 @@ describe('local browse markdown preview', () => {
     expect(markdownEditorHtml).toContain("scrollIntoView({ block: 'start', inline: 'nearest' })")
     expect(markdownEditorHtml).toContain("previewFrame.addEventListener('load'")
     expect(markdownEditorHtml).toContain('codex-local-markdown-preview-jump')
-    expect(markdownEditorHtml).toContain('handlePreviewJumpMessage')
+    expect(markdownEditorHtml).toContain('codex-local-markdown-preview-selection')
+    expect(markdownEditorHtml).toContain('handlePreviewMessage')
+    expect(markdownEditorHtml).toContain('highlightCurrentSelection')
+    expect(markdownEditorHtml).toContain("editor.session.replace(new Range(start.row, start.column, end.row, end.column), '==' + selectedSource + '==')")
+    expect(markdownEditorHtml).toContain('lastPreviewHighlightSelection')
     expect(markdownEditorHtml).toContain('id="previewFrame"')
     expect(markdownEditorHtml).toContain('/codex-local-preview')
     const inlineScript = markdownEditorHtml.match(/<script>\s*([\s\S]*?)\s*<\/script>\s*<\/body>/u)?.[1] ?? ''
@@ -68,6 +73,7 @@ describe('local browse markdown preview', () => {
     const textEditorHtml = await createTextEditorHtml(textPath)
     expect(textEditorHtml).toContain('id="copyRefBtn"')
     expect(textEditorHtml).not.toContain('id="previewBtn"')
+    expect(textEditorHtml).not.toContain('id="highlightBtn"')
     expect(textEditorHtml).not.toContain('id="previewSplitter"')
     expect(textEditorHtml).not.toContain('id="previewFrame"')
   })
@@ -123,6 +129,8 @@ describe('local browse markdown preview', () => {
       'L_0',
       '$$',
       '',
+      'This is ==important==.',
+      '',
       '![Diagram](./assets/diagram.png)',
       '',
       '```ts',
@@ -136,6 +144,9 @@ describe('local browse markdown preview', () => {
     expect(html).toContain('class="message-image-preview message-markdown-image"')
     expect(html).toContain('src="/codex-local-image?path=%2Ftmp%2Fpreview%20space%2Fassets%2Fdiagram.png"')
     expect(html).toContain('message-code-block')
+    expect(html).toContain('<mark class="message-highlight">important</mark>')
+    expect(html).toContain('--highlight-bg: #fff3b0;')
+    expect(html).toContain('--highlight-bg: rgba(187, 128, 9, 0.42);')
     expect(html).toContain('message-scroll-anchor')
     expect(html).toContain('language-ts')
     expect(html).toContain('--syntax-keyword: #d73a49;')
@@ -144,6 +155,7 @@ describe('local browse markdown preview', () => {
     expect(html).toContain('message-math-source-display')
     expect(html).toContain('data-source-line="5"')
     expect(html).toContain('target.nodeType === Node.TEXT_NODE')
+    expect(html).toContain('postHighlightSelection')
     expect(html).toContain('data-source-line=')
     expect(html).toContain('data-source-end-line=')
     expect(html).toContain('codex-local-markdown-preview-jump')

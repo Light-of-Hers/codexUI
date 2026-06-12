@@ -361,8 +361,102 @@ function isWhitespaceText(node: MarkdownNode): boolean {
 
 function transformMarkdownTree(root: MarkdownNode, context: MarkdownRenderContext): void {
   if (!Array.isArray(root.children)) return
+  splitHighlightSyntax(root, [])
   transformChildren(root, [], context)
   annotateSourceLocations(root)
+}
+
+function splitHighlightSyntax(parent: MarkdownNode, ancestors: MarkdownElement[]): void {
+  if (!Array.isArray(parent.children)) return
+
+  for (let index = 0; index < parent.children.length; index += 1) {
+    const child = parent.children[index]
+
+    if (isText(child)) {
+      if (hasIgnoredTextAncestor(ancestors) || !child.value.includes('==')) {
+        continue
+      }
+      const replacement = splitHighlightTextNode(child.value)
+      if (replacement.length === 1 && replacement[0] === child) {
+        continue
+      }
+      parent.children.splice(index, 1, ...replacement)
+      index += replacement.length - 1
+      continue
+    }
+
+    if (!isElement(child)) {
+      continue
+    }
+
+    splitHighlightSyntax(child, [...ancestors, child])
+  }
+}
+
+function splitHighlightTextNode(text: string): MarkdownNode[] {
+  const nodes: MarkdownNode[] = []
+  let cursor = 0
+
+  while (cursor < text.length) {
+    const range = findNextHighlightRange(text, cursor)
+    if (!range) break
+
+    if (range.start > cursor) {
+      nodes.push({ type: 'text', value: text.slice(cursor, range.start) })
+    }
+
+    nodes.push({
+      type: 'element',
+      tagName: 'mark',
+      properties: {
+        className: ['message-highlight'],
+      },
+      children: [{ type: 'text', value: range.value }],
+    })
+    cursor = range.end
+  }
+
+  if (cursor < text.length) {
+    nodes.push({ type: 'text', value: text.slice(cursor) })
+  }
+
+  return nodes.length > 0 ? nodes : [{ type: 'text', value: text }]
+}
+
+function findNextHighlightRange(
+  text: string,
+  fromIndex: number,
+): { start: number; end: number; value: string } | null {
+  let openIndex = text.indexOf('==', fromIndex)
+  while (openIndex >= 0) {
+    if (text[openIndex - 1] === '=' || text[openIndex + 2] === '=') {
+      openIndex = text.indexOf('==', openIndex + 1)
+      continue
+    }
+
+    let closeIndex = text.indexOf('==', openIndex + 2)
+    while (closeIndex >= 0) {
+      if (text[closeIndex - 1] === '=' || text[closeIndex + 2] === '=') {
+        closeIndex = text.indexOf('==', closeIndex + 1)
+        continue
+      }
+
+      const value = text.slice(openIndex + 2, closeIndex)
+      if (value.trim().length === 0) {
+        break
+      }
+
+      return {
+        start: openIndex,
+        end: closeIndex + 2,
+        value,
+      }
+    }
+
+    openIndex = text.indexOf('==', openIndex + 1)
+  }
+
+  return null
 }
 
 function transformChildren(parent: MarkdownNode, ancestors: MarkdownElement[], context: MarkdownRenderContext): void {

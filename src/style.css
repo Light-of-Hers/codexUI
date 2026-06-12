@@ -928,6 +928,11 @@
   @apply text-zinc-400;
 }
 
+:root.dark .message-highlight {
+  background: rgba(187, 128, 9, 0.42);
+  color: #f2cc60;
+}
+
 .message-heading {
   @apply m-0 text-slate-900 tracking-tight;
 }
@@ -1044,6 +1049,15 @@
 
 .message-strikethrough-text {
   @apply line-through text-slate-500;
+}
+
+.message-highlight {
+  border-radius: 0.2em;
+  background: #fff3b0;
+  color: #3b2300;
+  padding: 0 0.12em;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
 }
 
 .message-markdown-image {
