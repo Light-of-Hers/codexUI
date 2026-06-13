@@ -1241,6 +1241,34 @@ function markdownPreviewScript(localPath: string): string {
           : event.target && event.target.nodeType === Node.TEXT_NODE
             ? event.target.parentElement
             : null;
+        const annotationMarkElement = targetElement?.closest('mark.message-annotation-mark');
+        if (annotationMarkElement) {
+          const sourceElement = sourceElementForTarget(annotationMarkElement);
+          if (!sourceElement) return;
+          const sourceLine = Number.parseInt(sourceElement.getAttribute('data-source-line') || '', 10);
+          if (!Number.isFinite(sourceLine) || sourceLine < 1) return;
+          const sourceEndLine = Number.parseInt(sourceElement.getAttribute('data-source-end-line') || '', 10);
+          const markText = annotationMarkElement.textContent || '';
+          const siblingMarks = Array.from(sourceElement.querySelectorAll('mark.message-annotation-mark'));
+          const occurrence = Math.max(0, siblingMarks
+            .filter((element) => (element.textContent || '') === markText)
+            .indexOf(annotationMarkElement));
+          const annotationElement = annotationMarkElement.closest('.message-annotation');
+          const commentText = annotationElement?.querySelector('.message-annotation-body')?.textContent || '';
+          event.preventDefault();
+          event.stopPropagation();
+          window.parent.postMessage({
+            type: 'codex-local-markdown-mark-click',
+            path: sourcePath,
+            text: markText,
+            comment: commentText,
+            line: sourceLine,
+            endLine: Number.isFinite(sourceEndLine) && sourceEndLine >= sourceLine ? sourceEndLine : sourceLine,
+            occurrence,
+            rect: serializeRect(annotationMarkElement.getBoundingClientRect()),
+          }, '*');
+          return;
+        }
         const highlightElement = targetElement?.closest('mark.message-highlight');
         if (!highlightElement) return;
         const sourceElement = sourceElementForTarget(highlightElement);
@@ -1324,7 +1352,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     ? '<button id="previewBtn" type="button" aria-pressed="false">Preview</button>'
     : ''
   const floatingHighlightControls = supportsMarkdownPreview
-    ? '<button id="floatingHighlightBtn" class="floating-highlight-action" type="button" hidden>Highlight</button><button id="floatingRemoveHighlightBtn" class="floating-highlight-action danger" type="button" hidden>Remove highlight</button>'
+    ? '<button id="floatingHighlightBtn" class="floating-highlight-action" type="button" hidden>Highlight</button><button id="floatingMarkBtn" class="floating-highlight-action" type="button" hidden>Mark</button><button id="floatingRemoveHighlightBtn" class="floating-highlight-action danger" type="button" hidden>Remove highlight</button><div id="floatingMarkActions" class="floating-highlight-action floating-action-group" hidden><button id="floatingUnmarkBtn" type="button">Unmark</button><button id="floatingCommentBtn" type="button">Add comment</button><button id="floatingRemoveCommentBtn" class="danger" type="button">Remove comment</button></div>'
     : ''
   const previewPane = supportsMarkdownPreview
     ? '<div id="previewSplitter" class="preview-splitter" role="separator" aria-orientation="vertical" aria-label="Resize markdown preview" tabindex="0" hidden></div><iframe id="previewFrame" class="preview-pane" title="Markdown preview" hidden></iframe>'
@@ -1447,8 +1475,29 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       border-color: #d1242f;
       color: #d1242f;
     }
+    .floating-action-group {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: 0;
+      background: transparent;
+      box-shadow: none;
+      padding: 0;
+    }
+    .floating-action-group button {
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+      white-space: nowrap;
+    }
+    .floating-action-group button.danger {
+      border-color: #d1242f;
+      color: #d1242f;
+    }
     @media (prefers-color-scheme: dark) {
       .floating-highlight-action.danger {
+        border-color: #ff7b72;
+        color: #ff7b72;
+      }
+      .floating-action-group button.danger {
         border-color: #ff7b72;
         color: #ff7b72;
       }
@@ -1598,7 +1647,12 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     const copyRefBtn = document.getElementById('copyRefBtn');
     const previewBtn = document.getElementById('previewBtn');
     const floatingHighlightBtn = document.getElementById('floatingHighlightBtn');
+    const floatingMarkBtn = document.getElementById('floatingMarkBtn');
     const floatingRemoveHighlightBtn = document.getElementById('floatingRemoveHighlightBtn');
+    const floatingMarkActions = document.getElementById('floatingMarkActions');
+    const floatingUnmarkBtn = document.getElementById('floatingUnmarkBtn');
+    const floatingCommentBtn = document.getElementById('floatingCommentBtn');
+    const floatingRemoveCommentBtn = document.getElementById('floatingRemoveCommentBtn');
     const status = document.getElementById('status');
     const previewStatus = document.getElementById('previewStatus');
     const editorShell = document.getElementById('editorShell');
@@ -1694,6 +1748,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     let lastPreviewScrollState = null;
     let lastPreviewHighlightSelection = null;
     let lastPreviewClickedHighlight = null;
+    let lastPreviewClickedMark = null;
     let lastEditorHighlightSelection = null;
     let lastEditorSyncedLine = 0;
     let lastPreviewSyncedLine = 0;
@@ -1958,12 +2013,15 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
 
     const hideFloatingHighlightActions = () => {
       if (floatingHighlightBtn) floatingHighlightBtn.hidden = true;
+      if (floatingMarkBtn) floatingMarkBtn.hidden = true;
       if (floatingRemoveHighlightBtn) floatingRemoveHighlightBtn.hidden = true;
+      if (floatingMarkActions) floatingMarkActions.hidden = true;
     };
 
     const dismissFloatingHighlightActions = () => {
       lastPreviewHighlightSelection = null;
       lastPreviewClickedHighlight = null;
+      lastPreviewClickedMark = null;
       lastEditorHighlightSelection = null;
       hideFloatingHighlightActions();
     };
@@ -1993,14 +2051,14 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       };
     };
 
-    const positionFloatingHighlightAction = (button, rect) => {
+    const positionFloatingHighlightAction = (button, rect, offsetX = 0) => {
       if (!button || !rect || shouldSuppressFloatingHighlightActions()) return;
       const centerX = (Number(rect.left) + Number(rect.right)) / 2;
       const top = Number(rect.top);
       const bottom = Number(rect.bottom);
       if (![centerX, top, bottom].every(Number.isFinite)) return;
       const padding = 12;
-      const x = Math.min(Math.max(centerX, padding), Math.max(padding, window.innerWidth - padding));
+      const x = Math.min(Math.max(centerX + offsetX, padding), Math.max(padding, window.innerWidth - padding));
       const placeBelow = top < 48;
       const y = placeBelow ? Math.min(Math.max(bottom, padding), Math.max(padding, window.innerHeight - padding)) : Math.min(Math.max(top, padding), Math.max(padding, window.innerHeight - padding));
       button.dataset.placement = placeBelow ? 'below' : 'above';
@@ -2012,13 +2070,27 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     const showFloatingHighlightButton = (rect) => {
       if (!supportsMarkdownPreview || !floatingHighlightBtn) return;
       if (floatingRemoveHighlightBtn) floatingRemoveHighlightBtn.hidden = true;
-      positionFloatingHighlightAction(floatingHighlightBtn, rect);
+      if (floatingMarkActions) floatingMarkActions.hidden = true;
+      positionFloatingHighlightAction(floatingHighlightBtn, rect, floatingMarkBtn ? -42 : 0);
+      if (floatingMarkBtn) positionFloatingHighlightAction(floatingMarkBtn, rect, 42);
     };
 
     const showFloatingRemoveHighlightButton = (rect) => {
       if (!supportsMarkdownPreview || !floatingRemoveHighlightBtn) return;
       if (floatingHighlightBtn) floatingHighlightBtn.hidden = true;
+      if (floatingMarkBtn) floatingMarkBtn.hidden = true;
+      if (floatingMarkActions) floatingMarkActions.hidden = true;
       positionFloatingHighlightAction(floatingRemoveHighlightBtn, rect);
+    };
+
+    const showFloatingMarkActions = (rect, hasComment) => {
+      if (!supportsMarkdownPreview || !floatingMarkActions) return;
+      if (floatingHighlightBtn) floatingHighlightBtn.hidden = true;
+      if (floatingMarkBtn) floatingMarkBtn.hidden = true;
+      if (floatingRemoveHighlightBtn) floatingRemoveHighlightBtn.hidden = true;
+      if (floatingCommentBtn) floatingCommentBtn.textContent = hasComment ? 'Edit comment' : 'Add comment';
+      if (floatingRemoveCommentBtn) floatingRemoveCommentBtn.hidden = !hasComment;
+      positionFloatingHighlightAction(floatingMarkActions, rect);
     };
 
     const editorSelectionRect = (selectionRange) => {
@@ -2045,6 +2117,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       const selectionRange = editor.getSelectionRange();
       if (!selectionRange || selectionRange.isEmpty()) {
         lastEditorHighlightSelection = null;
+        lastPreviewClickedMark = null;
         hideFloatingHighlightActions();
         return;
       }
@@ -2249,6 +2322,177 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       };
     };
 
+    const annotationSlash = String.fromCharCode(92);
+
+    const encodeAnnotationSource = (value) => (
+      String(value || '')
+        .split(annotationSlash).join(annotationSlash + annotationSlash)
+        .split('{').join(annotationSlash + '{')
+        .split('}').join(annotationSlash + '}')
+    );
+
+    const decodeAnnotationSource = (value) => {
+      let decoded = '';
+      const raw = String(value || '');
+      for (let index = 0; index < raw.length; index += 1) {
+        if (raw[index] === annotationSlash && index + 1 < raw.length && (raw[index + 1] === annotationSlash || raw[index + 1] === '{' || raw[index + 1] === '}')) {
+          decoded += raw[index + 1];
+          index += 1;
+          continue;
+        }
+        decoded += raw[index];
+      }
+      return decoded;
+    };
+
+    const readAnnotationCommandBody = (sourceSlice, openBraceIndex) => {
+      if (sourceSlice[openBraceIndex] !== '{') return null;
+      let depth = 1;
+      let cursor = openBraceIndex + 1;
+      while (cursor < sourceSlice.length) {
+        const character = sourceSlice[cursor];
+        if (character === annotationSlash) {
+          cursor += 2;
+          continue;
+        }
+        if (character === '{') {
+          depth += 1;
+        } else if (character === '}') {
+          depth -= 1;
+          if (depth === 0) {
+            return {
+              value: sourceSlice.slice(openBraceIndex + 1, cursor),
+              endOffset: cursor + 1,
+            };
+          }
+        }
+        cursor += 1;
+      }
+      return null;
+    };
+
+    const parseAnnotationCommandAt = (sourceSlice, startOffset) => {
+      if (sourceSlice[startOffset] !== annotationSlash) return null;
+      const commands = [
+        { raw: annotationSlash + 'comment{', kind: 'comment' },
+        { raw: annotationSlash + 'mark{', kind: 'mark' },
+        { raw: annotationSlash + 'cmt{', kind: 'comment' },
+      ];
+      const command = commands.find((candidate) => sourceSlice.startsWith(candidate.raw, startOffset));
+      if (!command) return null;
+      const openBraceIndex = startOffset + command.raw.length - 1;
+      const body = readAnnotationCommandBody(sourceSlice, openBraceIndex);
+      if (!body) return null;
+      return {
+        kind: command.kind,
+        startOffset,
+        endOffset: body.endOffset,
+        bodyStartOffset: openBraceIndex + 1,
+        bodyEndOffset: body.endOffset - 1,
+        rawBody: body.value,
+        value: decodeAnnotationSource(body.value),
+      };
+    };
+
+    const parseAdjacentCommentCommand = (sourceSlice, fromOffset) => {
+      let cursor = fromOffset;
+      while (cursor < sourceSlice.length && (sourceSlice[cursor] === ' ' || sourceSlice[cursor] === '\\t')) {
+        cursor += 1;
+      }
+      const command = parseAnnotationCommandAt(sourceSlice, cursor);
+      if (!command || command.kind !== 'comment') return null;
+      return {
+        ...command,
+        gapStartOffset: fromOffset,
+      };
+    };
+
+    const findMarkMarkupInSourceSlice = (sourceSlice, selectedText, occurrence = 0) => {
+      if (!sourceSlice || !selectedText) return null;
+      const normalizedSelection = normalizeTextWithIndexMap(selectedText).text;
+      if (!normalizedSelection) return null;
+
+      let searchFrom = 0;
+      let matchedOccurrence = 0;
+      while (searchFrom < sourceSlice.length) {
+        const commandIndex = sourceSlice.indexOf(annotationSlash, searchFrom);
+        if (commandIndex < 0) return null;
+        const markCommand = parseAnnotationCommandAt(sourceSlice, commandIndex);
+        if (!markCommand) {
+          searchFrom = commandIndex + 1;
+          continue;
+        }
+        if (markCommand.kind !== 'mark') {
+          searchFrom = markCommand.endOffset;
+          continue;
+        }
+        const decodedMark = markCommand.value;
+        if (normalizeTextWithIndexMap(decodedMark).text === normalizedSelection) {
+          if (matchedOccurrence < occurrence) {
+            matchedOccurrence += 1;
+            searchFrom = markCommand.endOffset;
+            continue;
+          }
+          const commentCommand = parseAdjacentCommentCommand(sourceSlice, markCommand.endOffset);
+          return {
+            startOffset: markCommand.startOffset,
+            markEndOffset: markCommand.endOffset,
+            endOffset: commentCommand ? commentCommand.endOffset : markCommand.endOffset,
+            innerSource: decodedMark,
+            rawInnerSource: markCommand.rawBody,
+            comment: commentCommand ? commentCommand.value : '',
+            commentStartOffset: commentCommand ? commentCommand.startOffset : null,
+            commentEndOffset: commentCommand ? commentCommand.endOffset : null,
+            commentBodyStartOffset: commentCommand ? commentCommand.bodyStartOffset : null,
+            commentBodyEndOffset: commentCommand ? commentCommand.bodyEndOffset : null,
+            commentGapStartOffset: commentCommand ? commentCommand.gapStartOffset : null,
+          };
+        }
+        searchFrom = markCommand.endOffset;
+      }
+
+      return null;
+    };
+
+    const findMarkMarkupInEditor = (selectedText, sourceLine, sourceEndLine, occurrence = 0) => {
+      const editorValue = editor.getValue();
+      const lineWindow = sourceWindowForLines(editorValue, sourceLine, sourceEndLine);
+      if (lineWindow) {
+        const lineMatch = findMarkMarkupInSourceSlice(lineWindow.value, selectedText, occurrence);
+        if (lineMatch) {
+          return {
+            startIndex: lineWindow.startIndex + lineMatch.startOffset,
+            markEndIndex: lineWindow.startIndex + lineMatch.markEndOffset,
+            endIndex: lineWindow.startIndex + lineMatch.endOffset,
+            innerSource: lineMatch.innerSource,
+            rawInnerSource: lineMatch.rawInnerSource,
+            comment: lineMatch.comment,
+            commentStartIndex: lineMatch.commentStartOffset === null ? null : lineWindow.startIndex + lineMatch.commentStartOffset,
+            commentEndIndex: lineMatch.commentEndOffset === null ? null : lineWindow.startIndex + lineMatch.commentEndOffset,
+            commentBodyStartIndex: lineMatch.commentBodyStartOffset === null ? null : lineWindow.startIndex + lineMatch.commentBodyStartOffset,
+            commentBodyEndIndex: lineMatch.commentBodyEndOffset === null ? null : lineWindow.startIndex + lineMatch.commentBodyEndOffset,
+            commentGapStartIndex: lineMatch.commentGapStartOffset === null ? null : lineWindow.startIndex + lineMatch.commentGapStartOffset,
+          };
+        }
+      }
+
+      const fullMatch = findMarkMarkupInSourceSlice(editorValue, selectedText, occurrence);
+      if (!fullMatch) return null;
+      return {
+        startIndex: fullMatch.startOffset,
+        markEndIndex: fullMatch.markEndOffset,
+        endIndex: fullMatch.endOffset,
+        innerSource: fullMatch.innerSource,
+        rawInnerSource: fullMatch.rawInnerSource,
+        comment: fullMatch.comment,
+        commentStartIndex: fullMatch.commentStartOffset,
+        commentEndIndex: fullMatch.commentEndOffset,
+        commentBodyStartIndex: fullMatch.commentBodyStartOffset,
+        commentBodyEndIndex: fullMatch.commentBodyEndOffset,
+        commentGapStartIndex: fullMatch.commentGapStartOffset,
+      };
+    };
+
     const replaceEditorRangeWithHighlight = (startIndex, endIndex) => {
       const editorValue = editor.getValue();
       const safeStart = Math.min(Math.max(0, startIndex), editorValue.length);
@@ -2298,6 +2542,104 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       return true;
     };
 
+    const replaceEditorRangeWithMark = (startIndex, endIndex) => {
+      const editorValue = editor.getValue();
+      const safeStart = Math.min(Math.max(0, startIndex), editorValue.length);
+      const safeEnd = Math.min(Math.max(safeStart, endIndex), editorValue.length);
+      const selectedSource = editorValue.slice(safeStart, safeEnd);
+      if (!selectedSource.trim()) return false;
+
+      if (editorValue.slice(Math.max(0, safeStart - 6), safeStart) === annotationSlash + 'mark{' && editorValue[safeEnd] === '}') {
+        setStatus('Already marked', 1400);
+        return true;
+      }
+
+      const replacement = annotationSlash + 'mark{' + encodeAnnotationSource(selectedSource) + '}';
+      const Range = ace.require('ace/range').Range;
+      const start = indexToEditorPosition(editorValue, safeStart);
+      const end = indexToEditorPosition(editorValue, safeEnd);
+      editor.session.replace(new Range(start.row, start.column, end.row, end.column), replacement);
+
+      const nextValue = editor.getValue();
+      const nextStart = indexToEditorPosition(nextValue, safeStart);
+      const nextEnd = indexToEditorPosition(nextValue, safeStart + replacement.length);
+      editor.selection.setRange(new Range(nextStart.row, nextStart.column, nextEnd.row, nextEnd.column), false);
+      editor.focus();
+      suppressFloatingHighlightActions();
+      schedulePreview(0);
+      setStatus('Marked; save to persist', 1800);
+      return true;
+    };
+
+    const unmarkMarkup = (match) => {
+      if (!match || typeof match.innerSource !== 'string') return false;
+      const editorValue = editor.getValue();
+      const safeStart = Math.min(Math.max(0, match.startIndex), editorValue.length);
+      const safeEnd = Math.min(Math.max(safeStart, match.endIndex), editorValue.length);
+      const Range = ace.require('ace/range').Range;
+      const start = indexToEditorPosition(editorValue, safeStart);
+      const end = indexToEditorPosition(editorValue, safeEnd);
+      editor.session.replace(new Range(start.row, start.column, end.row, end.column), match.innerSource);
+
+      const nextValue = editor.getValue();
+      const nextStart = indexToEditorPosition(nextValue, safeStart);
+      const nextEnd = indexToEditorPosition(nextValue, safeStart + match.innerSource.length);
+      editor.selection.setRange(new Range(nextStart.row, nextStart.column, nextEnd.row, nextEnd.column), false);
+      editor.focus();
+      suppressFloatingHighlightActions();
+      schedulePreview(0);
+      setStatus('Mark removed; save to persist', 1800);
+      return true;
+    };
+
+    const promptForAnnotationComment = (initialValue = '') => {
+      const nextValue = window.prompt(initialValue ? 'Edit comment' : 'Add comment', initialValue);
+      if (nextValue === null) return null;
+      const normalized = String(nextValue).trim();
+      if (!normalized) {
+        setPreviewStatus('Comment cannot be empty');
+        return null;
+      }
+      return normalized;
+    };
+
+    const upsertMarkComment = (match, commentText) => {
+      if (!match || typeof commentText !== 'string') return false;
+      const editorValue = editor.getValue();
+      const encodedComment = encodeAnnotationSource(commentText);
+      const Range = ace.require('ace/range').Range;
+      if (Number.isFinite(match.commentStartIndex) && Number.isFinite(match.commentEndIndex)) {
+        const start = indexToEditorPosition(editorValue, match.commentStartIndex);
+        const end = indexToEditorPosition(editorValue, match.commentEndIndex);
+        editor.session.replace(new Range(start.row, start.column, end.row, end.column), annotationSlash + 'comment{' + encodedComment + '}');
+      } else {
+        const insert = annotationSlash + 'comment{' + encodedComment + '}';
+        const point = indexToEditorPosition(editorValue, match.markEndIndex);
+        editor.session.insert(point, insert);
+      }
+      editor.focus();
+      suppressFloatingHighlightActions();
+      schedulePreview(0);
+      setStatus('Comment updated; save to persist', 1800);
+      return true;
+    };
+
+    const removeMarkComment = (match) => {
+      if (!match || !Number.isFinite(match.commentStartIndex) || !Number.isFinite(match.commentEndIndex)) return false;
+      const editorValue = editor.getValue();
+      const safeStart = Math.min(Math.max(0, Number.isFinite(match.commentGapStartIndex) ? match.commentGapStartIndex : match.commentStartIndex), editorValue.length);
+      const safeEnd = Math.min(Math.max(safeStart, match.commentEndIndex), editorValue.length);
+      const Range = ace.require('ace/range').Range;
+      const start = indexToEditorPosition(editorValue, safeStart);
+      const end = indexToEditorPosition(editorValue, safeEnd);
+      editor.session.replace(new Range(start.row, start.column, end.row, end.column), '');
+      editor.focus();
+      suppressFloatingHighlightActions();
+      schedulePreview(0);
+      setStatus('Comment removed; save to persist', 1800);
+      return true;
+    };
+
     const highlightEditorSelection = () => {
       const selectionRange = editor.getSelectionRange();
       if (selectionRange && !selectionRange.isEmpty()) {
@@ -2331,6 +2673,88 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       if (highlightEditorSelection()) return;
       if (highlightPreviewSelection()) return;
       setPreviewStatus('Select text in preview or editor first');
+    };
+
+    const markEditorSelection = () => {
+      const selectionRange = editor.getSelectionRange();
+      if (selectionRange && !selectionRange.isEmpty()) {
+        const editorValue = editor.getValue();
+        const startIndex = editorPositionToIndex(editorValue, selectionRange.start);
+        const endIndex = editorPositionToIndex(editorValue, selectionRange.end);
+        return replaceEditorRangeWithMark(Math.min(startIndex, endIndex), Math.max(startIndex, endIndex));
+      }
+      if (!lastEditorHighlightSelection) return false;
+      return replaceEditorRangeWithMark(lastEditorHighlightSelection.startIndex, lastEditorHighlightSelection.endIndex);
+    };
+
+    const markPreviewSelection = () => {
+      if (!lastPreviewHighlightSelection) return false;
+      const selectedText = normalizeHighlightSelectionText(lastPreviewHighlightSelection.text);
+      if (!selectedText) return false;
+      const match = findHighlightSelectionInEditor(
+        selectedText,
+        lastPreviewHighlightSelection.line,
+        lastPreviewHighlightSelection.endLine,
+      );
+      if (!match) {
+        setPreviewStatus('Could not find selected text in source');
+        return true;
+      }
+      return replaceEditorRangeWithMark(match.startIndex, match.endIndex);
+    };
+
+    const markCurrentSelection = () => {
+      if (!supportsMarkdownPreview) return;
+      if (markEditorSelection()) return;
+      if (markPreviewSelection()) return;
+      setPreviewStatus('Select text in preview or editor first');
+    };
+
+    const findCurrentMarkMarkup = () => {
+      if (!supportsMarkdownPreview || !lastPreviewClickedMark) {
+        setPreviewStatus('Click marked text first');
+        return null;
+      }
+      const selectedText = normalizeHighlightSelectionText(lastPreviewClickedMark.text);
+      if (!selectedText) {
+        setPreviewStatus('Click marked text first');
+        return null;
+      }
+      const match = findMarkMarkupInEditor(
+        selectedText,
+        lastPreviewClickedMark.line,
+        lastPreviewClickedMark.endLine,
+        Number.isFinite(lastPreviewClickedMark.occurrence) ? lastPreviewClickedMark.occurrence : 0,
+      );
+      if (!match) {
+        setPreviewStatus('Could not find mark in source');
+        return null;
+      }
+      return match;
+    };
+
+    const unmarkCurrentMark = () => {
+      const match = findCurrentMarkMarkup();
+      if (!match) return;
+      unmarkMarkup(match);
+    };
+
+    const editCurrentMarkComment = () => {
+      const match = findCurrentMarkMarkup();
+      if (!match) return;
+      const commentText = promptForAnnotationComment(match.comment || '');
+      if (commentText === null) return;
+      upsertMarkComment(match, commentText);
+    };
+
+    const removeCurrentMarkComment = () => {
+      const match = findCurrentMarkMarkup();
+      if (!match) return;
+      if (!match.comment) {
+        setPreviewStatus('Marked text has no comment');
+        return;
+      }
+      removeMarkComment(match);
     };
 
     const removeCurrentHighlight = () => {
@@ -2373,6 +2797,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
           endLine: Number.isFinite(sourceEndLine) && sourceEndLine >= sourceLine ? sourceEndLine : sourceLine,
         };
         lastEditorHighlightSelection = null;
+        lastPreviewClickedMark = null;
         showFloatingHighlightButton(rectFromPreviewMessage(data.rect));
         return;
       }
@@ -2391,7 +2816,29 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
         };
         lastPreviewHighlightSelection = null;
         lastEditorHighlightSelection = null;
+        lastPreviewClickedMark = null;
         showFloatingRemoveHighlightButton(rectFromPreviewMessage(data.rect));
+        return;
+      }
+      if (data.type === 'codex-local-markdown-mark-click') {
+        if (data.path !== editorReferencePath) return;
+        const selectedText = normalizeHighlightSelectionText(data.text);
+        if (!selectedText) return;
+        const sourceLine = Number.parseInt(String(data.line), 10);
+        if (!Number.isFinite(sourceLine) || sourceLine < 1) return;
+        const sourceEndLine = Number.parseInt(String(data.endLine ?? sourceLine), 10);
+        const commentText = normalizeHighlightSelectionText(data.comment);
+        lastPreviewClickedMark = {
+          text: selectedText,
+          comment: commentText,
+          line: sourceLine,
+          endLine: Number.isFinite(sourceEndLine) && sourceEndLine >= sourceLine ? sourceEndLine : sourceLine,
+          occurrence: Number.isFinite(Number(data.occurrence)) ? Math.max(0, Math.floor(Number(data.occurrence))) : 0,
+        };
+        lastPreviewHighlightSelection = null;
+        lastPreviewClickedHighlight = null;
+        lastEditorHighlightSelection = null;
+        showFloatingMarkActions(rectFromPreviewMessage(data.rect), Boolean(commentText));
         return;
       }
       if (data.type === 'codex-local-markdown-highlight-dismiss') {
@@ -2791,6 +3238,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
         pendingPreviewEditorSync = false;
         lastPreviewHighlightSelection = null;
         lastPreviewClickedHighlight = null;
+        lastPreviewClickedMark = null;
         lastEditorHighlightSelection = null;
         hideFloatingHighlightActions();
       }
@@ -2809,6 +3257,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       editor.session.on('change', () => {
         lastPreviewHighlightSelection = null;
         lastPreviewClickedHighlight = null;
+        lastPreviewClickedMark = null;
         lastEditorHighlightSelection = null;
         hideFloatingHighlightActions();
         schedulePreview();
@@ -2865,11 +3314,43 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       });
     }
 
+    if (floatingMarkBtn) {
+      floatingMarkBtn.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        markCurrentSelection();
+      });
+    }
+
     if (floatingRemoveHighlightBtn) {
       floatingRemoveHighlightBtn.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
         removeCurrentHighlight();
+      });
+    }
+
+    if (floatingUnmarkBtn) {
+      floatingUnmarkBtn.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        unmarkCurrentMark();
+      });
+    }
+
+    if (floatingCommentBtn) {
+      floatingCommentBtn.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        editCurrentMarkComment();
+      });
+    }
+
+    if (floatingRemoveCommentBtn) {
+      floatingRemoveCommentBtn.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        removeCurrentMarkComment();
       });
     }
 

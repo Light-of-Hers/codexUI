@@ -5378,6 +5378,42 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Rollback/Cleanup
 - Remove the disposable `\mark{...}`, `\comment{...}`, or `\cmt{...}` examples from non-test markdown files.
 
+### Feature: Markdown preview mark/comment editing actions
+
+#### Prerequisites
+- App server is running from this repository.
+- A writable `.md` or `.markdown` file is available, preferably a disposable copy.
+- Light and dark themes are both available from the operating system or browser color-scheme setting.
+
+#### Steps
+1. Run `pnpm exec vitest run src/server/localBrowseUi.test.ts src/components/content/markdownRenderer.test.ts`.
+2. Open the markdown file through `/codex-local-edit/<absolute-markdown-path>`.
+3. Click `Preview`.
+4. Select text in the editor or preview and confirm floating `Highlight` and `Mark` buttons appear near the selection.
+5. Click `Mark` and confirm the source wraps the selected text as `\mark{...}` and the preview renders marked text.
+6. Click the marked text in preview and confirm floating `Unmark` and `Add comment` actions appear.
+7. Click `Add comment`, enter comment text, and confirm the source becomes `\mark{...}\comment{...}` and preview renders the comment pill.
+8. Click the marked text again, use `Edit comment`, and confirm the existing comment changes in source and preview.
+9. Click the marked text again, use `Remove comment`, and confirm only the `\comment{...}` portion is removed.
+10. Click the marked text again, use `Unmark`, and confirm the mark command is removed while the original text remains.
+11. Repeat the selection, mark action, comment action, and unmark checks in dark theme.
+
+#### Expected Results
+- Mark actions reuse the floating-selection workflow without replacing highlight behavior.
+- Marking selected text writes escaped `\mark{...}` source syntax and refreshes preview.
+- Clicking marked preview text exposes unmark and comment controls.
+- Add/edit/remove comment updates only the adjacent comment command.
+- Unmark removes the mark command and its adjacent comment, preserving marked text.
+- Light and dark theme action buttons and annotation styles remain readable.
+
+#### Performance Audit
+- Mark/comment actions reuse the existing preview selection message and editor replacement flow.
+- Source matching scans the current source line window first, then falls back to the full editor buffer only when needed.
+- No additional filesystem reads, background network requests, or continuous observers are introduced.
+
+#### Rollback/Cleanup
+- Remove any disposable `\mark{...}` / `\comment{...}` examples from non-test markdown files, or discard the disposable copy.
+
 ### Feature: Composer markdown preview
 
 #### Prerequisites
