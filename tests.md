@@ -5358,13 +5358,15 @@ Markdown files opened through the local editor expose a preview button that rend
 3. Add `\mark{annotated text}\comment{review this}` to a paragraph.
 4. Add `\cmt{standalone note}` to another paragraph.
 5. Click `Preview` and confirm the marked text renders with annotation styling and the comments render as inline comment pills.
-6. Add `` `\mark{code}\comment{raw}` `` and confirm code spans keep the literal text.
-7. Repeat the preview check in dark theme.
+6. Add `prefix \mark{A}\cmt{a longer note that may wrap}` near the end of a line and confirm `A` does not get forced onto a new line before the comment.
+7. Add `` `\mark{code}\comment{raw}` `` and confirm code spans keep the literal text.
+8. Repeat the preview check in dark theme.
 
 #### Expected Results
 - `\mark{...}` renders as an annotation mark without exposing the raw command syntax.
 - `\comment{...}` and `\cmt{...}` render as readable inline comment notes.
 - Adjacent `\mark{...}\comment{...}` renders as a paired annotation.
+- Short marked text in `\mark{A}\cmt{...}` remains in the normal text flow instead of moving to the next line with the comment.
 - Code spans are not parsed as annotations.
 - Annotation marks and comment notes remain readable in light and dark themes.
 

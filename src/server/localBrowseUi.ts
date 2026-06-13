@@ -1086,12 +1086,11 @@ function markdownPreviewStyles(): string {
       -webkit-box-decoration-break: clone;
     }
     .message-annotation {
-      display: inline-flex;
-      max-width: 100%;
-      flex-wrap: wrap;
-      align-items: baseline;
-      gap: 0.25rem;
+      display: inline;
       vertical-align: baseline;
+    }
+    .message-annotation > .message-annotation-comment {
+      margin-left: 0.25rem;
     }
     .message-annotation-mark {
       border-radius: 3px;

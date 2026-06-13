@@ -178,6 +178,8 @@ describe('local browse markdown preview', () => {
     expect(html).toContain('--highlight-bg: rgba(187, 128, 9, 0.42);')
     expect(html).toContain('--annotation-mark-bg: rgba(9, 105, 218, 0.12);')
     expect(html).toContain('--annotation-mark-bg: rgba(56, 139, 253, 0.18);')
+    expect(html).toContain('.message-annotation {\n      display: inline;')
+    expect(html).not.toContain('.message-annotation {\n      display: inline-flex;')
     expect(html).toContain('message-scroll-anchor')
     expect(html).toContain('language-ts')
     expect(html).toContain('--syntax-keyword: #d73a49;')

@@ -1061,7 +1061,12 @@
 }
 
 .message-annotation {
-  @apply inline-flex max-w-full flex-wrap items-baseline gap-1 align-baseline;
+  display: inline;
+  vertical-align: baseline;
+}
+
+.message-annotation > .message-annotation-comment {
+  margin-left: 0.25rem;
 }
 
 .message-annotation-mark {
