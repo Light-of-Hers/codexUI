@@ -5369,19 +5369,22 @@ Markdown files opened through the local editor expose a preview button that rend
 4. Add `\cmt{standalone note}` to another paragraph.
 5. Click `Preview` and confirm the marked text renders with annotation styling and the comments render as inline `cmt` comment pills.
 6. Add `prefix \mark{A}\cmt{a longer note that may wrap}` near the end of a line and confirm `A` does not get forced onto a new line before the comment.
-7. Add `` `\mark{code}\comment{raw}` `` and confirm code spans keep the literal text.
-8. Repeat the preview check in dark theme.
+7. Add ``\cmt{check $E = mc^2$ and `code`}`` and confirm the comment still renders as a `cmt` pill with KaTeX math and inline code inside it.
+8. Add ``\mark{A}\cmt{math $x^2$ and `code`}`` and confirm the mark and rich comment both stay inline.
+9. Add `` `\mark{code}\comment{raw}` `` and confirm code spans keep the literal text.
+10. Repeat the preview check in dark theme.
 
 #### Expected Results
 - `\mark{...}` renders as an annotation mark without exposing the raw command syntax.
 - `\comment{...}` and `\cmt{...}` render as readable inline comment notes labeled `cmt`.
 - Adjacent `\mark{...}\comment{...}` renders as a paired annotation.
 - Short marked text in `\mark{A}\cmt{...}` remains in the normal text flow instead of moving to the next line with the comment.
+- Comment bodies can contain inline math and inline code without exposing raw `\cmt{...}` syntax.
 - Code spans are not parsed as annotations.
 - Annotation marks and comment notes remain readable in light and dark themes.
 
 #### Performance Audit
-- Annotation parsing runs during the existing markdown tree transform and scans only text nodes that contain annotation command prefixes or `==`.
+- Annotation parsing runs during the existing markdown tree transform and scans only text nodes that contain annotation command prefixes or `==`, plus adjacent inline siblings when a comment body spans math or code nodes.
 - Code, links, math, and existing ignored text ancestors are skipped as before.
 - No extra filesystem access, network requests, preview iframe messages, or preview rerenders are introduced.
 

@@ -118,6 +118,30 @@ const answer = 42
     expect(html).toContain(String.raw`>\mark{code}\comment{nope}</code>`)
   })
 
+  it('renders annotation comments that contain inline math and code', () => {
+    const html = render('Review \\cmt{check $E = mc^2$ and `dtype`} now.')
+
+    expect(html).toContain('class="message-annotation-comment" role="note"')
+    expect(html).toContain('class="message-annotation-label" aria-hidden="true">cmt</span>')
+    expect(html).toContain('<span class="message-annotation-body">check ')
+    expect(html).toContain('class="katex"')
+    expect(html).toContain('data-annotation-comment="check $E = mc^2$ and &#x60;dtype&#x60;"')
+    expect(html).toContain('<code class="message-inline-code"')
+    expect(html).toContain('>dtype</code>')
+    expect(html).not.toContain(String.raw`\cmt{check`)
+  })
+
+  it('renders marked annotations with rich adjacent comments', () => {
+    const html = render('Review \\mark{A}\\cmt{math $x^2$ and `code`} inline.')
+
+    expect(html).toContain('<mark class="message-annotation-mark">A</mark>')
+    expect(html).toContain('class="message-annotation-comment" role="note"')
+    expect(html).toContain('data-annotation-comment="math $x^2$ and &#x60;code&#x60;"')
+    expect(html).toContain('class="katex"')
+    expect(html).toContain('>code</code>')
+    expect(html).not.toContain(String.raw`\cmt{math`)
+  })
+
   it('renders sanitized HTML collapse blocks', () => {
     const html = render([
       '<details open onclick="alert(1)">',

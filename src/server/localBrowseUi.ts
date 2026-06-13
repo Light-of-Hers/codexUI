@@ -1289,11 +1289,11 @@ function markdownPreviewScript(localPath: string): string {
         if (!Number.isFinite(sourceLine) || sourceLine < 1) return false;
         const sourceEndLine = Number.parseInt(sourceElement.getAttribute('data-source-end-line') || '', 10);
         const commentBodyElement = commentElement.querySelector('.message-annotation-body');
-        const commentText = commentBodyElement?.textContent || '';
-        const siblingCommentBodies = Array.from(sourceElement.querySelectorAll('.message-annotation-comment .message-annotation-body'));
-        const occurrence = Math.max(0, siblingCommentBodies
-          .filter((element) => (element.textContent || '') === commentText)
-          .indexOf(commentBodyElement));
+        const commentText = commentElement.getAttribute('data-annotation-comment') || commentBodyElement?.textContent || '';
+        const siblingComments = Array.from(sourceElement.querySelectorAll('.message-annotation-comment'));
+        const occurrence = Math.max(0, siblingComments
+          .filter((element) => (element.getAttribute('data-annotation-comment') || element.querySelector('.message-annotation-body')?.textContent || '') === commentText)
+          .indexOf(commentElement));
         window.parent.postMessage({
           type: 'codex-local-markdown-comment-click',
           path: sourcePath,

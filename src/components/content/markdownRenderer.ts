@@ -70,6 +70,18 @@ type DecorationRange =
   | { kind: 'comment'; start: number; end: number; value: string }
   | { kind: 'markComment'; start: number; end: number; mark: string; comment: string }
 
+type CommentCommandOpener = {
+  start: number
+  bodyStart: number
+}
+
+type AnnotationBodyTextScan = {
+  body: string
+  closed: boolean
+  depth: number
+  afterClose: string
+}
+
 type ParsedFileReference = {
   path: string
   line: number | null
@@ -367,6 +379,13 @@ function hasIgnoredTextAncestor(ancestors: MarkdownElement[]): boolean {
   })
 }
 
+function hasAnnotationTextAncestor(ancestors: MarkdownElement[]): boolean {
+  return ancestors.some((ancestor) => {
+    const classNames = getClassList(ancestor)
+    return classNames.includes('message-annotation-comment') || classNames.includes('message-annotation-body')
+  })
+}
+
 function isTaskListItem(node: MarkdownElement): boolean {
   const classNames = getClassList(node)
   return classNames.includes('task-list-item')
@@ -390,11 +409,17 @@ function transformMarkdownTree(root: MarkdownNode, context: MarkdownRenderContex
 function splitDecorationSyntax(parent: MarkdownNode, ancestors: MarkdownElement[]): void {
   if (!Array.isArray(parent.children)) return
 
+  if (!hasIgnoredTextAncestor(ancestors) && !hasAnnotationTextAncestor(ancestors)) {
+    while (splitCrossNodeCommentSyntax(parent)) {
+      // Keep scanning until all comment commands split across inline nodes are folded.
+    }
+  }
+
   for (let index = 0; index < parent.children.length; index += 1) {
     const child = parent.children[index]
 
     if (isText(child)) {
-      if (hasIgnoredTextAncestor(ancestors) || !hasDecorationSyntax(child.value)) {
+      if (hasIgnoredTextAncestor(ancestors) || hasAnnotationTextAncestor(ancestors) || !hasDecorationSyntax(child.value)) {
         continue
       }
       const replacement = splitDecoratedTextNode(child.value)
@@ -416,6 +441,171 @@ function splitDecorationSyntax(parent: MarkdownNode, ancestors: MarkdownElement[
 
 function hasDecorationSyntax(text: string): boolean {
   return text.includes('==') || text.includes('\\mark{') || text.includes('\\comment{') || text.includes('\\cmt{')
+}
+
+function splitCrossNodeCommentSyntax(parent: MarkdownNode): boolean {
+  const children = parent.children
+  if (!Array.isArray(children)) return false
+
+  for (let index = 0; index < children.length; index += 1) {
+    const child = children[index]
+    if (!isText(child)) continue
+
+    let searchFrom = 0
+    let opener = findCommentCommandOpener(child.value, searchFrom)
+    while (opener) {
+      const scan = scanAnnotationBodyText(child.value.slice(opener.bodyStart), 1)
+      if (!scan.closed) break
+      searchFrom = opener.bodyStart
+      opener = findCommentCommandOpener(child.value, searchFrom)
+    }
+    if (!opener) continue
+
+    const firstScan = scanAnnotationBodyText(child.value.slice(opener.bodyStart), 1)
+
+    const before = child.value.slice(0, opener.start)
+    const bodyChildren = textToAnnotationBodyNodes(decodeAnnotationValue(firstScan.body))
+    const sourceParts = [firstScan.body]
+    let depth = firstScan.depth
+
+    for (let endIndex = index + 1; endIndex < children.length; endIndex += 1) {
+      const bodyChild = children[endIndex]
+
+      if (isText(bodyChild)) {
+        const scan = scanAnnotationBodyText(bodyChild.value, depth)
+        bodyChildren.push(...textToAnnotationBodyNodes(decodeAnnotationValue(scan.body)))
+        sourceParts.push(scan.body)
+        depth = scan.depth
+
+        if (!scan.closed) continue
+
+        if (!hasMeaningfulAnnotationBody(bodyChildren)) {
+          return false
+        }
+
+        const replacement: MarkdownNode[] = [
+          ...textToAnnotationBodyNodes(before),
+          createAnnotationCommentNode(bodyChildren, decodeAnnotationValue(sourceParts.join(''))),
+          ...textToAnnotationBodyNodes(scan.afterClose),
+        ]
+        children.splice(index, endIndex - index + 1, ...replacement)
+        return true
+      }
+
+      bodyChildren.push(bodyChild)
+      sourceParts.push(nodeAnnotationSourceText(bodyChild))
+    }
+  }
+
+  return false
+}
+
+function findCommentCommandOpener(text: string, fromIndex = 0): CommentCommandOpener | null {
+  const commands = ['\\comment{', '\\cmt{']
+  let match: CommentCommandOpener | null = null
+
+  for (const command of commands) {
+    const start = text.indexOf(command, fromIndex)
+    if (start < 0) continue
+    if (match && start >= match.start) continue
+    match = {
+      start,
+      bodyStart: start + command.length,
+    }
+  }
+
+  return match
+}
+
+function scanAnnotationBodyText(text: string, initialDepth: number): AnnotationBodyTextScan {
+  let body = ''
+  let depth = initialDepth
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index]
+    if (char === '\\') {
+      body += text.slice(index, Math.min(index + 2, text.length))
+      index += 1
+      continue
+    }
+
+    if (char === '{') {
+      depth += 1
+      body += char
+      continue
+    }
+
+    if (char === '}') {
+      depth -= 1
+      if (depth === 0) {
+        return {
+          body,
+          closed: true,
+          depth,
+          afterClose: text.slice(index + 1),
+        }
+      }
+      body += char
+      continue
+    }
+
+    body += char
+  }
+
+  return {
+    body,
+    closed: false,
+    depth,
+    afterClose: '',
+  }
+}
+
+function textToAnnotationBodyNodes(value: string): MarkdownNode[] {
+  return value.length > 0 ? [{ type: 'text', value }] : []
+}
+
+function hasMeaningfulAnnotationBody(children: MarkdownNode[]): boolean {
+  return children.some((child) => {
+    if (isText(child)) return child.value.trim().length > 0
+    return true
+  })
+}
+
+function nodePlainText(node: MarkdownNode): string {
+  if (isText(node)) return node.value
+  if (!Array.isArray(node.children)) return ''
+  return node.children.map((child) => nodePlainText(child)).join('')
+}
+
+function nodeAnnotationSourceText(node: MarkdownNode): string {
+  if (isText(node)) return node.value
+  if (!isElement(node)) return nodePlainText(node)
+
+  if (node.tagName === 'code') {
+    return `\`${nodePlainText(node)}\``
+  }
+
+  const tex = findMathAnnotationText(node)
+  if (tex) {
+    return `\$${tex}\$`
+  }
+
+  return nodePlainText(node)
+}
+
+function findMathAnnotationText(node: MarkdownNode): string {
+  if (!isElement(node)) return ''
+  if (node.tagName === 'annotation' && getPropertyString(node, 'encoding') === 'application/x-tex') {
+    return nodePlainText(node)
+  }
+  if (!Array.isArray(node.children)) return ''
+
+  for (const child of node.children) {
+    const value = findMathAnnotationText(child)
+    if (value) return value
+  }
+
+  return ''
 }
 
 function splitDecoratedTextNode(text: string): MarkdownNode[] {
@@ -485,13 +675,19 @@ function createAnnotationMarkNode(value: string): MarkdownElement {
   }
 }
 
-function createAnnotationCommentNode(value: string): MarkdownElement {
+function createAnnotationCommentNode(value: string | MarkdownNode[], sourceValue?: string): MarkdownElement {
+  const bodyChildren = Array.isArray(value)
+    ? value
+    : [{ type: 'text', value }]
+  const annotationText = sourceValue ?? (typeof value === 'string' ? value : nodePlainText({ type: 'root', children: value }))
+
   return {
     type: 'element',
     tagName: 'span',
     properties: {
       className: ['message-annotation-comment'],
       role: 'note',
+      dataAnnotationComment: annotationText,
     },
     children: [
       {
@@ -509,7 +705,7 @@ function createAnnotationCommentNode(value: string): MarkdownElement {
         properties: {
           className: ['message-annotation-body'],
         },
-        children: [{ type: 'text', value }],
+        children: bodyChildren,
       },
     ],
   }
