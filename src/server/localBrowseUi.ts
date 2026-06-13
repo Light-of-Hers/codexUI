@@ -1270,17 +1270,38 @@ function markdownPreviewScript(localPath: string): string {
         const occurrence = Math.max(0, siblingMarks
           .filter((element) => (element.textContent || '') === markText)
           .indexOf(annotationMarkElement));
-        const annotationElement = annotationMarkElement.closest('.message-annotation');
-        const commentText = annotationElement?.querySelector('.message-annotation-body')?.textContent || '';
         window.parent.postMessage({
           type: 'codex-local-markdown-mark-click',
           path: sourcePath,
           text: markText,
-          comment: commentText,
           line: sourceLine,
           endLine: Number.isFinite(sourceEndLine) && sourceEndLine >= sourceLine ? sourceEndLine : sourceLine,
           occurrence,
           rect: serializeRect(annotationMarkElement.getBoundingClientRect()),
+        }, '*');
+        return true;
+      };
+
+      const postCommentClick = (commentElement) => {
+        const sourceElement = sourceElementForTarget(commentElement);
+        if (!sourceElement) return false;
+        const sourceLine = Number.parseInt(sourceElement.getAttribute('data-source-line') || '', 10);
+        if (!Number.isFinite(sourceLine) || sourceLine < 1) return false;
+        const sourceEndLine = Number.parseInt(sourceElement.getAttribute('data-source-end-line') || '', 10);
+        const commentBodyElement = commentElement.querySelector('.message-annotation-body');
+        const commentText = commentBodyElement?.textContent || '';
+        const siblingCommentBodies = Array.from(sourceElement.querySelectorAll('.message-annotation-comment .message-annotation-body'));
+        const occurrence = Math.max(0, siblingCommentBodies
+          .filter((element) => (element.textContent || '') === commentText)
+          .indexOf(commentBodyElement));
+        window.parent.postMessage({
+          type: 'codex-local-markdown-comment-click',
+          path: sourcePath,
+          text: commentText,
+          line: sourceLine,
+          endLine: Number.isFinite(sourceEndLine) && sourceEndLine >= sourceLine ? sourceEndLine : sourceLine,
+          occurrence,
+          rect: serializeRect(commentElement.getBoundingClientRect()),
         }, '*');
         return true;
       };
@@ -1317,6 +1338,10 @@ function markdownPreviewScript(localPath: string): string {
         }
         if (activePreviewActionTarget.kind === 'highlight') {
           postHighlightClick(activePreviewActionTarget.element);
+          return;
+        }
+        if (activePreviewActionTarget.kind === 'comment') {
+          postCommentClick(activePreviewActionTarget.element);
         }
       };
 
@@ -1340,6 +1365,14 @@ function markdownPreviewScript(localPath: string): string {
           event.preventDefault();
           event.stopPropagation();
           window.open(imageBrowseHref, '_blank', 'noopener,noreferrer');
+          return;
+        }
+        const commentElement = targetElement?.closest('.message-annotation-comment');
+        if (commentElement) {
+          event.preventDefault();
+          event.stopPropagation();
+          activePreviewActionTarget = { kind: 'comment', element: commentElement };
+          postCommentClick(commentElement);
           return;
         }
         const annotationMarkElement = targetElement?.closest('mark.message-annotation-mark');
@@ -1418,7 +1451,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     ? '<button id="previewBtn" type="button" aria-pressed="false">Preview</button>'
     : ''
   const floatingHighlightControls = supportsMarkdownPreview
-    ? '<button id="floatingHighlightBtn" class="floating-highlight-action" type="button" hidden>Highlight</button><button id="floatingMarkBtn" class="floating-highlight-action" type="button" hidden>Mark</button><div id="floatingHighlightActions" class="floating-highlight-action floating-action-group" hidden><button id="floatingRemoveHighlightBtn" class="danger" type="button">Remove highlight</button><button id="floatingHighlightCommentBtn" type="button">Add comment</button><button id="floatingRemoveHighlightCommentBtn" class="danger" type="button">Remove comment</button></div><div id="floatingMarkActions" class="floating-highlight-action floating-action-group" hidden><button id="floatingUnmarkBtn" type="button">Unmark</button><button id="floatingCommentBtn" type="button">Add comment</button><button id="floatingRemoveCommentBtn" class="danger" type="button">Remove comment</button></div>'
+    ? '<div id="floatingSelectionActions" class="floating-highlight-action floating-action-group" hidden><button id="floatingHighlightBtn" type="button">Highlight</button><button id="floatingMarkBtn" type="button">Mark</button><button id="floatingSelectionCommentBtn" type="button">Add comment</button></div><div id="floatingHighlightActions" class="floating-highlight-action floating-action-group" hidden><button id="floatingRemoveHighlightBtn" class="danger" type="button">Remove highlight</button></div><div id="floatingMarkActions" class="floating-highlight-action floating-action-group" hidden><button id="floatingUnmarkBtn" type="button">Unmark</button></div><div id="floatingCommentActions" class="floating-highlight-action floating-action-group" hidden><button id="floatingEditCommentBtn" type="button">Edit comment</button><button id="floatingRemoveCommentBtn" class="danger" type="button">Remove comment</button></div>'
     : ''
   const previewPane = supportsMarkdownPreview
     ? '<div id="previewSplitter" class="preview-splitter" role="separator" aria-orientation="vertical" aria-label="Resize markdown preview" tabindex="0" hidden></div><iframe id="previewFrame" class="preview-pane" title="Markdown preview" hidden></iframe>'
@@ -1712,15 +1745,16 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     const saveBtn = document.getElementById('saveBtn');
     const copyRefBtn = document.getElementById('copyRefBtn');
     const previewBtn = document.getElementById('previewBtn');
+    const floatingSelectionActions = document.getElementById('floatingSelectionActions');
     const floatingHighlightBtn = document.getElementById('floatingHighlightBtn');
     const floatingMarkBtn = document.getElementById('floatingMarkBtn');
+    const floatingSelectionCommentBtn = document.getElementById('floatingSelectionCommentBtn');
     const floatingHighlightActions = document.getElementById('floatingHighlightActions');
     const floatingRemoveHighlightBtn = document.getElementById('floatingRemoveHighlightBtn');
-    const floatingHighlightCommentBtn = document.getElementById('floatingHighlightCommentBtn');
-    const floatingRemoveHighlightCommentBtn = document.getElementById('floatingRemoveHighlightCommentBtn');
     const floatingMarkActions = document.getElementById('floatingMarkActions');
     const floatingUnmarkBtn = document.getElementById('floatingUnmarkBtn');
-    const floatingCommentBtn = document.getElementById('floatingCommentBtn');
+    const floatingCommentActions = document.getElementById('floatingCommentActions');
+    const floatingEditCommentBtn = document.getElementById('floatingEditCommentBtn');
     const floatingRemoveCommentBtn = document.getElementById('floatingRemoveCommentBtn');
     const status = document.getElementById('status');
     const previewStatus = document.getElementById('previewStatus');
@@ -1818,6 +1852,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     let lastPreviewHighlightSelection = null;
     let lastPreviewClickedHighlight = null;
     let lastPreviewClickedMark = null;
+    let lastPreviewClickedComment = null;
     let lastEditorHighlightSelection = null;
     let lastEditorSyncedLine = 0;
     let lastPreviewSyncedLine = 0;
@@ -2081,17 +2116,21 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     };
 
     const hideFloatingHighlightActions = () => {
+      if (floatingSelectionActions) floatingSelectionActions.hidden = true;
       if (floatingHighlightBtn) floatingHighlightBtn.hidden = true;
       if (floatingMarkBtn) floatingMarkBtn.hidden = true;
+      if (floatingSelectionCommentBtn) floatingSelectionCommentBtn.hidden = true;
       if (floatingHighlightActions) floatingHighlightActions.hidden = true;
       if (floatingRemoveHighlightBtn) floatingRemoveHighlightBtn.hidden = true;
       if (floatingMarkActions) floatingMarkActions.hidden = true;
+      if (floatingCommentActions) floatingCommentActions.hidden = true;
     };
 
     const dismissFloatingHighlightActions = () => {
       lastPreviewHighlightSelection = null;
       lastPreviewClickedHighlight = null;
       lastPreviewClickedMark = null;
+      lastPreviewClickedComment = null;
       lastEditorHighlightSelection = null;
       hideFloatingHighlightActions();
     };
@@ -2158,7 +2197,19 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     };
 
     const showFloatingHighlightButton = (rect) => {
-      if (!supportsMarkdownPreview || !floatingHighlightBtn) return;
+      if (!supportsMarkdownPreview) return;
+      if (floatingSelectionActions) {
+        if (floatingHighlightBtn) floatingHighlightBtn.hidden = false;
+        if (floatingMarkBtn) floatingMarkBtn.hidden = false;
+        if (floatingSelectionCommentBtn) floatingSelectionCommentBtn.hidden = false;
+        if (floatingHighlightActions) floatingHighlightActions.hidden = true;
+        if (floatingMarkActions) floatingMarkActions.hidden = true;
+        if (floatingCommentActions) floatingCommentActions.hidden = true;
+        if (floatingRemoveHighlightBtn) floatingRemoveHighlightBtn.hidden = true;
+        positionFloatingHighlightAction(floatingSelectionActions, rect);
+        return;
+      }
+      if (!floatingHighlightBtn) return;
       if (floatingHighlightActions) floatingHighlightActions.hidden = true;
       if (floatingRemoveHighlightBtn) floatingRemoveHighlightBtn.hidden = true;
       if (floatingMarkActions) floatingMarkActions.hidden = true;
@@ -2166,15 +2217,15 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       if (floatingMarkBtn) positionFloatingHighlightAction(floatingMarkBtn, rect, 42);
     };
 
-    const showFloatingRemoveHighlightButton = (rect, hasComment = false) => {
+    const showFloatingRemoveHighlightButton = (rect) => {
       if (!supportsMarkdownPreview) return;
+      if (floatingSelectionActions) floatingSelectionActions.hidden = true;
       if (floatingHighlightBtn) floatingHighlightBtn.hidden = true;
       if (floatingMarkBtn) floatingMarkBtn.hidden = true;
       if (floatingMarkActions) floatingMarkActions.hidden = true;
+      if (floatingCommentActions) floatingCommentActions.hidden = true;
       if (floatingHighlightActions) {
         if (floatingRemoveHighlightBtn) floatingRemoveHighlightBtn.hidden = false;
-        if (floatingHighlightCommentBtn) floatingHighlightCommentBtn.textContent = hasComment ? 'Edit comment' : 'Add comment';
-        if (floatingRemoveHighlightCommentBtn) floatingRemoveHighlightCommentBtn.hidden = !hasComment;
         positionFloatingHighlightAction(floatingHighlightActions, rect);
         return;
       }
@@ -2182,15 +2233,26 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       positionFloatingHighlightAction(floatingRemoveHighlightBtn, rect);
     };
 
-    const showFloatingMarkActions = (rect, hasComment) => {
+    const showFloatingMarkActions = (rect) => {
       if (!supportsMarkdownPreview || !floatingMarkActions) return;
+      if (floatingSelectionActions) floatingSelectionActions.hidden = true;
       if (floatingHighlightBtn) floatingHighlightBtn.hidden = true;
       if (floatingMarkBtn) floatingMarkBtn.hidden = true;
       if (floatingHighlightActions) floatingHighlightActions.hidden = true;
+      if (floatingCommentActions) floatingCommentActions.hidden = true;
       if (floatingRemoveHighlightBtn) floatingRemoveHighlightBtn.hidden = true;
-      if (floatingCommentBtn) floatingCommentBtn.textContent = hasComment ? 'Edit comment' : 'Add comment';
-      if (floatingRemoveCommentBtn) floatingRemoveCommentBtn.hidden = !hasComment;
       positionFloatingHighlightAction(floatingMarkActions, rect);
+    };
+
+    const showFloatingCommentActions = (rect) => {
+      if (!supportsMarkdownPreview || !floatingCommentActions) return;
+      if (floatingSelectionActions) floatingSelectionActions.hidden = true;
+      if (floatingHighlightBtn) floatingHighlightBtn.hidden = true;
+      if (floatingMarkBtn) floatingMarkBtn.hidden = true;
+      if (floatingHighlightActions) floatingHighlightActions.hidden = true;
+      if (floatingMarkActions) floatingMarkActions.hidden = true;
+      if (floatingRemoveHighlightBtn) floatingRemoveHighlightBtn.hidden = true;
+      positionFloatingHighlightAction(floatingCommentActions, rect);
     };
 
     const editorSelectionRect = (selectionRange) => {
@@ -2217,7 +2279,9 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       const selectionRange = editor.getSelectionRange();
       if (!selectionRange || selectionRange.isEmpty()) {
         lastEditorHighlightSelection = null;
+        lastPreviewClickedHighlight = null;
         lastPreviewClickedMark = null;
+        lastPreviewClickedComment = null;
         hideFloatingHighlightActions();
         return;
       }
@@ -2530,6 +2594,72 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       };
     };
 
+    const findCommentMarkupInSourceSlice = (sourceSlice, selectedText, occurrence = 0) => {
+      if (!sourceSlice || !selectedText) return null;
+      const normalizedSelection = normalizeTextWithIndexMap(selectedText).text;
+      if (!normalizedSelection) return null;
+
+      let searchFrom = 0;
+      let matchedOccurrence = 0;
+      while (searchFrom < sourceSlice.length) {
+        const commandIndex = sourceSlice.indexOf(annotationSlash, searchFrom);
+        if (commandIndex < 0) return null;
+        const command = parseAnnotationCommandAt(sourceSlice, commandIndex);
+        if (!command) {
+          searchFrom = commandIndex + 1;
+          continue;
+        }
+        if (command.kind !== 'comment') {
+          searchFrom = command.endOffset;
+          continue;
+        }
+        if (normalizeTextWithIndexMap(command.value).text === normalizedSelection) {
+          if (matchedOccurrence < occurrence) {
+            matchedOccurrence += 1;
+            searchFrom = command.endOffset;
+            continue;
+          }
+          return {
+            comment: command.value,
+            commentStartOffset: command.startOffset,
+            commentEndOffset: command.endOffset,
+            commentBodyStartOffset: command.bodyStartOffset,
+            commentBodyEndOffset: command.bodyEndOffset,
+          };
+        }
+        searchFrom = command.endOffset;
+      }
+
+      return null;
+    };
+
+    const findCommentMarkupInEditor = (selectedText, sourceLine, sourceEndLine, occurrence = 0) => {
+      const editorValue = editor.getValue();
+      const lineWindow = sourceWindowForLines(editorValue, sourceLine, sourceEndLine);
+      if (lineWindow) {
+        const lineMatch = findCommentMarkupInSourceSlice(lineWindow.value, selectedText, occurrence);
+        if (lineMatch) {
+          return {
+            comment: lineMatch.comment,
+            commentStartIndex: lineWindow.startIndex + lineMatch.commentStartOffset,
+            commentEndIndex: lineWindow.startIndex + lineMatch.commentEndOffset,
+            commentBodyStartIndex: lineWindow.startIndex + lineMatch.commentBodyStartOffset,
+            commentBodyEndIndex: lineWindow.startIndex + lineMatch.commentBodyEndOffset,
+          };
+        }
+      }
+
+      const fullMatch = findCommentMarkupInSourceSlice(editorValue, selectedText, occurrence);
+      if (!fullMatch) return null;
+      return {
+        comment: fullMatch.comment,
+        commentStartIndex: fullMatch.commentStartOffset,
+        commentEndIndex: fullMatch.commentEndOffset,
+        commentBodyStartIndex: fullMatch.commentBodyStartOffset,
+        commentBodyEndIndex: fullMatch.commentBodyEndOffset,
+      };
+    };
+
     const findMarkMarkupInSourceSlice = (sourceSlice, selectedText, occurrence = 0) => {
       if (!sourceSlice || !selectedText) return null;
       const normalizedSelection = normalizeTextWithIndexMap(selectedText).text;
@@ -2560,7 +2690,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
           return {
             startOffset: markCommand.startOffset,
             markEndOffset: markCommand.endOffset,
-            endOffset: commentCommand ? commentCommand.endOffset : markCommand.endOffset,
+            endOffset: markCommand.endOffset,
             innerSource: decodedMark,
             rawInnerSource: markCommand.rawBody,
             comment: commentCommand ? commentCommand.value : '',
@@ -2726,20 +2856,28 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       return normalized;
     };
 
-    const upsertMarkComment = (match, commentText) => {
-      if (!match || typeof commentText !== 'string') return false;
+    const insertEditorCommentAt = (insertIndex, commentText) => {
+      if (typeof commentText !== 'string') return false;
+      const editorValue = editor.getValue();
+      const safeIndex = Math.min(Math.max(0, insertIndex), editorValue.length);
+      const encodedComment = encodeAnnotationSource(commentText);
+      const point = indexToEditorPosition(editorValue, safeIndex);
+      editor.session.insert(point, annotationSlash + 'comment{' + encodedComment + '}');
+      editor.focus();
+      suppressFloatingHighlightActions();
+      schedulePreview(0);
+      setStatus('Comment added; save to persist', 1800);
+      return true;
+    };
+
+    const upsertCommentMarkup = (match, commentText) => {
+      if (!match || typeof commentText !== 'string' || !Number.isFinite(match.commentStartIndex) || !Number.isFinite(match.commentEndIndex)) return false;
       const editorValue = editor.getValue();
       const encodedComment = encodeAnnotationSource(commentText);
       const Range = ace.require('ace/range').Range;
-      if (Number.isFinite(match.commentStartIndex) && Number.isFinite(match.commentEndIndex)) {
-        const start = indexToEditorPosition(editorValue, match.commentStartIndex);
-        const end = indexToEditorPosition(editorValue, match.commentEndIndex);
-        editor.session.replace(new Range(start.row, start.column, end.row, end.column), annotationSlash + 'comment{' + encodedComment + '}');
-      } else {
-        const insert = annotationSlash + 'comment{' + encodedComment + '}';
-        const point = indexToEditorPosition(editorValue, match.markEndIndex);
-        editor.session.insert(point, insert);
-      }
+      const start = indexToEditorPosition(editorValue, match.commentStartIndex);
+      const end = indexToEditorPosition(editorValue, match.commentEndIndex);
+      editor.session.replace(new Range(start.row, start.column, end.row, end.column), annotationSlash + 'comment{' + encodedComment + '}');
       editor.focus();
       suppressFloatingHighlightActions();
       schedulePreview(0);
@@ -2747,31 +2885,10 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       return true;
     };
 
-    const upsertHighlightComment = (match, commentText) => {
-      if (!match || typeof commentText !== 'string') return false;
-      const editorValue = editor.getValue();
-      const encodedComment = encodeAnnotationSource(commentText);
-      const Range = ace.require('ace/range').Range;
-      if (Number.isFinite(match.commentStartIndex) && Number.isFinite(match.commentEndIndex)) {
-        const start = indexToEditorPosition(editorValue, match.commentStartIndex);
-        const end = indexToEditorPosition(editorValue, match.commentEndIndex);
-        editor.session.replace(new Range(start.row, start.column, end.row, end.column), annotationSlash + 'comment{' + encodedComment + '}');
-      } else {
-        const insertIndex = Number.isFinite(match.highlightEndIndex) ? match.highlightEndIndex : match.endIndex;
-        const point = indexToEditorPosition(editorValue, insertIndex);
-        editor.session.insert(point, annotationSlash + 'comment{' + encodedComment + '}');
-      }
-      editor.focus();
-      suppressFloatingHighlightActions();
-      schedulePreview(0);
-      setStatus('Comment updated; save to persist', 1800);
-      return true;
-    };
-
-    const removeMarkComment = (match) => {
+    const removeCommentMarkup = (match) => {
       if (!match || !Number.isFinite(match.commentStartIndex) || !Number.isFinite(match.commentEndIndex)) return false;
       const editorValue = editor.getValue();
-      const safeStart = Math.min(Math.max(0, Number.isFinite(match.commentGapStartIndex) ? match.commentGapStartIndex : match.commentStartIndex), editorValue.length);
+      const safeStart = Math.min(Math.max(0, match.commentStartIndex), editorValue.length);
       const safeEnd = Math.min(Math.max(safeStart, match.commentEndIndex), editorValue.length);
       const Range = ace.require('ace/range').Range;
       const start = indexToEditorPosition(editorValue, safeStart);
@@ -2854,6 +2971,47 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       setPreviewStatus('Select text in preview or editor first');
     };
 
+    const findCommentInsertIndexForEditorSelection = () => {
+      const selectionRange = editor.getSelectionRange();
+      if (selectionRange && !selectionRange.isEmpty()) {
+        const editorValue = editor.getValue();
+        const startIndex = editorPositionToIndex(editorValue, selectionRange.start);
+        const endIndex = editorPositionToIndex(editorValue, selectionRange.end);
+        return Math.max(startIndex, endIndex);
+      }
+      if (!lastEditorHighlightSelection) return null;
+      return lastEditorHighlightSelection.endIndex;
+    };
+
+    const findCommentInsertIndexForPreviewSelection = () => {
+      if (!lastPreviewHighlightSelection) return null;
+      const selectedText = normalizeHighlightSelectionText(lastPreviewHighlightSelection.text);
+      if (!selectedText) return null;
+      const match = findHighlightSelectionInEditor(
+        selectedText,
+        lastPreviewHighlightSelection.line,
+        lastPreviewHighlightSelection.endLine,
+      );
+      if (!match) {
+        setPreviewStatus('Could not find selected text in source');
+        return null;
+      }
+      return match.endIndex;
+    };
+
+    const addCommentToCurrentSelection = () => {
+      if (!supportsMarkdownPreview) return;
+      const editorInsertIndex = findCommentInsertIndexForEditorSelection();
+      const insertIndex = editorInsertIndex === null ? findCommentInsertIndexForPreviewSelection() : editorInsertIndex;
+      if (insertIndex === null) {
+        setPreviewStatus('Select text in preview or editor first');
+        return;
+      }
+      const commentText = promptForAnnotationComment('');
+      if (commentText === null) return;
+      insertEditorCommentAt(insertIndex, commentText);
+    };
+
     const findCurrentMarkMarkup = () => {
       if (!supportsMarkdownPreview || !lastPreviewClickedMark) {
         setPreviewStatus('Click marked text first');
@@ -2883,22 +3041,41 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       unmarkMarkup(match);
     };
 
-    const editCurrentMarkComment = () => {
-      const match = findCurrentMarkMarkup();
+    const findCurrentCommentMarkup = () => {
+      if (!supportsMarkdownPreview || !lastPreviewClickedComment) {
+        setPreviewStatus('Click a comment first');
+        return null;
+      }
+      const selectedText = normalizeHighlightSelectionText(lastPreviewClickedComment.text);
+      if (!selectedText) {
+        setPreviewStatus('Click a comment first');
+        return null;
+      }
+      const match = findCommentMarkupInEditor(
+        selectedText,
+        lastPreviewClickedComment.line,
+        lastPreviewClickedComment.endLine,
+        Number.isFinite(lastPreviewClickedComment.occurrence) ? lastPreviewClickedComment.occurrence : 0,
+      );
+      if (!match) {
+        setPreviewStatus('Could not find comment in source');
+        return null;
+      }
+      return match;
+    };
+
+    const editCurrentComment = () => {
+      const match = findCurrentCommentMarkup();
       if (!match) return;
       const commentText = promptForAnnotationComment(match.comment || '');
       if (commentText === null) return;
-      upsertMarkComment(match, commentText);
+      upsertCommentMarkup(match, commentText);
     };
 
-    const removeCurrentMarkComment = () => {
-      const match = findCurrentMarkMarkup();
+    const removeCurrentComment = () => {
+      const match = findCurrentCommentMarkup();
       if (!match) return;
-      if (!match.comment) {
-        setPreviewStatus('Marked text has no comment');
-        return;
-      }
-      removeMarkComment(match);
+      removeCommentMarkup(match);
     };
 
     const findCurrentHighlightMarkup = () => {
@@ -2930,24 +3107,6 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       removeHighlightMarkup(match);
     };
 
-    const editCurrentHighlightComment = () => {
-      const match = findCurrentHighlightMarkup();
-      if (!match) return;
-      const commentText = promptForAnnotationComment(match.comment || '');
-      if (commentText === null) return;
-      upsertHighlightComment(match, commentText);
-    };
-
-    const removeCurrentHighlightComment = () => {
-      const match = findCurrentHighlightMarkup();
-      if (!match) return;
-      if (!match.comment) {
-        setPreviewStatus('Highlighted text has no comment');
-        return;
-      }
-      removeMarkComment(match);
-    };
-
     const handlePreviewMessage = (event) => {
       if (!supportsMarkdownPreview || !previewFrame || event.source !== previewFrame.contentWindow) return;
       const data = event.data;
@@ -2965,7 +3124,9 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
           endLine: Number.isFinite(sourceEndLine) && sourceEndLine >= sourceLine ? sourceEndLine : sourceLine,
         };
         lastEditorHighlightSelection = null;
+        lastPreviewClickedHighlight = null;
         lastPreviewClickedMark = null;
+        lastPreviewClickedComment = null;
         showFloatingHighlightButton(rectFromPreviewMessage(data.rect));
         return;
       }
@@ -2982,18 +3143,11 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
           endLine: Number.isFinite(sourceEndLine) && sourceEndLine >= sourceLine ? sourceEndLine : sourceLine,
           occurrence: Number.isFinite(Number(data.occurrence)) ? Math.max(0, Math.floor(Number(data.occurrence))) : 0,
         };
-        const highlightMatch = findHighlightMarkupInEditor(
-          selectedText,
-          sourceLine,
-          Number.isFinite(sourceEndLine) && sourceEndLine >= sourceLine ? sourceEndLine : sourceLine,
-          lastPreviewClickedHighlight.occurrence,
-        );
-        const commentText = highlightMatch?.comment || '';
-        lastPreviewClickedHighlight.comment = commentText;
         lastPreviewHighlightSelection = null;
         lastEditorHighlightSelection = null;
         lastPreviewClickedMark = null;
-        showFloatingRemoveHighlightButton(rectFromPreviewMessage(data.rect), Boolean(commentText));
+        lastPreviewClickedComment = null;
+        showFloatingRemoveHighlightButton(rectFromPreviewMessage(data.rect));
         return;
       }
       if (data.type === 'codex-local-markdown-mark-click') {
@@ -3003,10 +3157,8 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
         const sourceLine = Number.parseInt(String(data.line), 10);
         if (!Number.isFinite(sourceLine) || sourceLine < 1) return;
         const sourceEndLine = Number.parseInt(String(data.endLine ?? sourceLine), 10);
-        const commentText = normalizeHighlightSelectionText(data.comment);
         lastPreviewClickedMark = {
           text: selectedText,
-          comment: commentText,
           line: sourceLine,
           endLine: Number.isFinite(sourceEndLine) && sourceEndLine >= sourceLine ? sourceEndLine : sourceLine,
           occurrence: Number.isFinite(Number(data.occurrence)) ? Math.max(0, Math.floor(Number(data.occurrence))) : 0,
@@ -3014,7 +3166,28 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
         lastPreviewHighlightSelection = null;
         lastPreviewClickedHighlight = null;
         lastEditorHighlightSelection = null;
-        showFloatingMarkActions(rectFromPreviewMessage(data.rect), Boolean(commentText));
+        lastPreviewClickedComment = null;
+        showFloatingMarkActions(rectFromPreviewMessage(data.rect));
+        return;
+      }
+      if (data.type === 'codex-local-markdown-comment-click') {
+        if (data.path !== editorReferencePath) return;
+        const selectedText = normalizeHighlightSelectionText(data.text);
+        if (!selectedText) return;
+        const sourceLine = Number.parseInt(String(data.line), 10);
+        if (!Number.isFinite(sourceLine) || sourceLine < 1) return;
+        const sourceEndLine = Number.parseInt(String(data.endLine ?? sourceLine), 10);
+        lastPreviewClickedComment = {
+          text: selectedText,
+          line: sourceLine,
+          endLine: Number.isFinite(sourceEndLine) && sourceEndLine >= sourceLine ? sourceEndLine : sourceLine,
+          occurrence: Number.isFinite(Number(data.occurrence)) ? Math.max(0, Math.floor(Number(data.occurrence))) : 0,
+        };
+        lastPreviewHighlightSelection = null;
+        lastPreviewClickedHighlight = null;
+        lastPreviewClickedMark = null;
+        lastEditorHighlightSelection = null;
+        showFloatingCommentActions(rectFromPreviewMessage(data.rect));
         return;
       }
       if (data.type === 'codex-local-markdown-highlight-dismiss') {
@@ -3415,6 +3588,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
         lastPreviewHighlightSelection = null;
         lastPreviewClickedHighlight = null;
         lastPreviewClickedMark = null;
+        lastPreviewClickedComment = null;
         lastEditorHighlightSelection = null;
         hideFloatingHighlightActions();
       }
@@ -3434,6 +3608,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
         lastPreviewHighlightSelection = null;
         lastPreviewClickedHighlight = null;
         lastPreviewClickedMark = null;
+        lastPreviewClickedComment = null;
         lastEditorHighlightSelection = null;
         hideFloatingHighlightActions();
         schedulePreview();
@@ -3506,19 +3681,11 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       });
     }
 
-    if (floatingHighlightCommentBtn) {
-      floatingHighlightCommentBtn.addEventListener('click', (event) => {
+    if (floatingSelectionCommentBtn) {
+      floatingSelectionCommentBtn.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
-        editCurrentHighlightComment();
-      });
-    }
-
-    if (floatingRemoveHighlightCommentBtn) {
-      floatingRemoveHighlightCommentBtn.addEventListener('click', (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        removeCurrentHighlightComment();
+        addCommentToCurrentSelection();
       });
     }
 
@@ -3530,11 +3697,11 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       });
     }
 
-    if (floatingCommentBtn) {
-      floatingCommentBtn.addEventListener('click', (event) => {
+    if (floatingEditCommentBtn) {
+      floatingEditCommentBtn.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
-        editCurrentMarkComment();
+        editCurrentComment();
       });
     }
 
@@ -3542,7 +3709,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       floatingRemoveCommentBtn.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
-        removeCurrentMarkComment();
+        removeCurrentComment();
       });
     }
 

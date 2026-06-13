@@ -501,7 +501,7 @@ function createAnnotationCommentNode(value: string): MarkdownElement {
           className: ['message-annotation-label'],
           ariaHidden: 'true',
         },
-        children: [{ type: 'text', value: 'Comment' }],
+        children: [{ type: 'text', value: 'cmt' }],
       },
       {
         type: 'element',

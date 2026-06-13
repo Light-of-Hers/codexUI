@@ -5318,16 +5318,16 @@ Markdown files opened through the local editor expose a preview button that rend
 1. Run `pnpm exec vitest run src/server/localBrowseUi.test.ts src/components/content/markdownRenderer.test.ts`.
 2. Open the markdown file through `/codex-local-edit/<absolute-markdown-path>`.
 3. Click `Preview`.
-4. In the preview pane, select a short phrase from a rendered paragraph and confirm a floating `Highlight` button appears beside the selection.
-5. Click an unrelated area in the editor, preview, or toolbar and confirm the floating `Highlight` button disappears.
+4. In the preview pane, select a short phrase from a rendered paragraph and confirm floating `Highlight`, `Mark`, and `Add comment` actions appear beside the selection.
+5. Click an unrelated area in the editor, preview, or toolbar and confirm the floating selection actions disappear.
 6. Select the preview phrase again, then click the floating `Highlight` button.
 7. Confirm the editor source wraps the matching text with `==` delimiters and the preview rerenders it with a highlighted background.
-8. Click the highlighted block in the preview and confirm floating `Remove highlight` and `Add comment` actions appear beside it.
+8. Click the highlighted block in the preview and confirm only the floating `Remove highlight` action appears beside it.
 9. Scroll the preview pane and confirm the floating highlight actions stay attached to the highlighted block while visible, then hide once the block leaves the preview viewport.
-10. Click `Add comment`, enter comment text, and confirm the source becomes `==...==\comment{...}` and preview renders the comment pill after the highlight.
-11. Click the highlighted block again, use `Edit comment`, and confirm the existing comment changes in source and preview.
-12. Click the highlighted block again, use `Remove comment`, and confirm only the adjacent `\comment{...}` portion is removed.
-13. Click outside the highlighted block and confirm the floating highlight actions disappear.
+10. Select any rendered text, click `Add comment`, enter comment text, and confirm the source inserts `\comment{...}` after the selection and preview renders a `cmt` comment pill.
+11. Click the rendered comment pill, use `Edit comment`, and confirm the existing comment changes in source and preview.
+12. Click the rendered comment pill again, use `Remove comment`, and confirm only the selected `\comment{...}` or `\cmt{...}` command is removed.
+13. Click outside the highlighted block or comment pill and confirm the floating actions disappear.
 14. Click the highlighted block again, then click `Remove highlight` and confirm the editor source removes only the surrounding `==` delimiters.
 15. Select text directly inside the editor and confirm the floating `Highlight` button can add `==...==` there too.
 16. Click inside the preview pane so it has focus, press `Ctrl+S`, reload the editor URL, and confirm the current editor content is saved instead of the browser saving/downloading the preview page.
@@ -5336,11 +5336,11 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Expected Results
 - Markdown preview renders `==highlighted text==` as a readable highlighted `<mark>` style.
-- `Highlight` appears near the current editor or preview selection instead of occupying the toolbar.
-- `Highlight`, `Remove highlight`, and highlight comment actions disappear when clicking anywhere other than the floating action itself.
-- Clicking an existing preview highlight exposes `Remove highlight` and comment controls.
+- `Highlight`, `Mark`, and `Add comment` appear near the current editor or preview selection instead of occupying the toolbar.
+- Selection, highlight, and comment actions disappear when clicking anywhere other than the floating action itself.
+- Clicking an existing preview highlight exposes only `Remove highlight`; comment editing is entered from the rendered comment pill.
 - Floating preview actions track the selected/highlighted preview text during preview scrolling instead of staying at stale viewport coordinates.
-- Add/edit/remove comment updates only the adjacent `\comment{...}` command after the highlight.
+- Add/edit/remove comment updates only the rendered comment command selected through the comment pill.
 - `Remove highlight` removes the source delimiters without deleting an adjacent comment.
 - `Ctrl+S` saves the editor file whether focus is in the editor page or inside the preview iframe.
 - Existing preview links, scroll sync, resize behavior, and double-click source jump continue to work.
@@ -5366,14 +5366,14 @@ Markdown files opened through the local editor expose a preview button that rend
 2. Open the markdown file through `/codex-local-edit/<absolute-markdown-path>`.
 3. Add `\mark{annotated text}\comment{review this}` to a paragraph.
 4. Add `\cmt{standalone note}` to another paragraph.
-5. Click `Preview` and confirm the marked text renders with annotation styling and the comments render as inline comment pills.
+5. Click `Preview` and confirm the marked text renders with annotation styling and the comments render as inline `cmt` comment pills.
 6. Add `prefix \mark{A}\cmt{a longer note that may wrap}` near the end of a line and confirm `A` does not get forced onto a new line before the comment.
 7. Add `` `\mark{code}\comment{raw}` `` and confirm code spans keep the literal text.
 8. Repeat the preview check in dark theme.
 
 #### Expected Results
 - `\mark{...}` renders as an annotation mark without exposing the raw command syntax.
-- `\comment{...}` and `\cmt{...}` render as readable inline comment notes.
+- `\comment{...}` and `\cmt{...}` render as readable inline comment notes labeled `cmt`.
 - Adjacent `\mark{...}\comment{...}` renders as a paired annotation.
 - Short marked text in `\mark{A}\cmt{...}` remains in the normal text flow instead of moving to the next line with the comment.
 - Code spans are not parsed as annotations.
@@ -5398,21 +5398,21 @@ Markdown files opened through the local editor expose a preview button that rend
 1. Run `pnpm exec vitest run src/server/localBrowseUi.test.ts src/components/content/markdownRenderer.test.ts`.
 2. Open the markdown file through `/codex-local-edit/<absolute-markdown-path>`.
 3. Click `Preview`.
-4. Select text in the editor or preview and confirm floating `Highlight` and `Mark` buttons appear near the selection.
+4. Select text in the editor or preview and confirm floating `Highlight`, `Mark`, and `Add comment` buttons appear near the selection.
 5. Click `Mark` and confirm the source wraps the selected text as `\mark{...}` and the preview renders marked text.
-6. Click the marked text in preview and confirm floating `Unmark` and `Add comment` actions appear.
-7. Click `Add comment`, enter comment text, and confirm the source becomes `\mark{...}\comment{...}` and preview renders the comment pill.
-8. Click the marked text again, use `Edit comment`, and confirm the existing comment changes in source and preview.
-9. Click the marked text again, use `Remove comment`, and confirm only the `\comment{...}` portion is removed.
-10. Click the marked text again, use `Unmark`, and confirm the mark command is removed while the original text remains.
+6. Click the marked text in preview and confirm only the floating `Unmark` action appears.
+7. Select rendered text near or inside the mark, click `Add comment`, enter comment text, and confirm the source inserts `\comment{...}` after the selection and preview renders the comment pill.
+8. Click the rendered comment pill, use `Edit comment`, and confirm the existing comment changes in source and preview.
+9. Click the rendered comment pill again, use `Remove comment`, and confirm only the selected `\comment{...}` portion is removed.
+10. Click the marked text again, use `Unmark`, and confirm only the mark command is removed while the original text remains.
 11. Repeat the selection, mark action, comment action, and unmark checks in dark theme.
 
 #### Expected Results
 - Mark actions reuse the floating-selection workflow without replacing highlight behavior.
 - Marking selected text writes escaped `\mark{...}` source syntax and refreshes preview.
-- Clicking marked preview text exposes unmark and comment controls.
-- Add/edit/remove comment updates only the adjacent comment command.
-- Unmark removes the mark command and its adjacent comment, preserving marked text.
+- Clicking marked preview text exposes only `Unmark`; comment editing is entered from the rendered comment pill.
+- Add/edit/remove comment updates only the selected comment command.
+- Unmark removes only the mark command, preserving marked text and any adjacent comment command.
 - Light and dark theme action buttons and annotation styles remain readable.
 
 #### Performance Audit

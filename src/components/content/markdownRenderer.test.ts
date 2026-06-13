@@ -111,7 +111,7 @@ const answer = 42
     expect(html).toContain('class="message-annotation"')
     expect(html).toContain('<mark class="message-annotation-mark">this part</mark>')
     expect(html).toContain('class="message-annotation-comment" role="note"')
-    expect(html).toContain('class="message-annotation-label" aria-hidden="true">Comment</span>')
+    expect(html).toContain('class="message-annotation-label" aria-hidden="true">cmt</span>')
     expect(html).toContain('<span class="message-annotation-body">check terms</span>')
     expect(html).toContain('<span class="message-annotation-body">loose note</span>')
     expect(html).toContain('<code class="message-inline-code"')
