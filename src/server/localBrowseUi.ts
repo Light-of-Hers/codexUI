@@ -880,6 +880,7 @@ function markdownPreviewStyles(): string {
     .message-text,
     .message-heading,
     .message-blockquote,
+    .message-collapse,
     .message-list,
     .message-table-wrap,
     .message-code-block,
@@ -908,6 +909,24 @@ function markdownPreviewStyles(): string {
       padding: 0.45rem 0.9rem;
       white-space: pre-wrap;
     }
+    .message-collapse {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--blockquote-bg);
+      color: var(--preview-fg);
+      padding: 0.55rem 0.75rem;
+      overflow-wrap: anywhere;
+    }
+    .message-collapse-summary {
+      margin: -0.25rem -0.45rem;
+      border-radius: 6px;
+      padding: 0.25rem 0.45rem;
+      color: var(--preview-fg);
+      cursor: pointer;
+      font-weight: 650;
+    }
+    .message-collapse-summary:hover { background: var(--code-bg); }
+    .message-collapse > :not(.message-collapse-summary) { margin-top: 0.6rem; }
     .message-list {
       padding-left: 1.35rem;
       display: flex;
@@ -1241,6 +1260,14 @@ function markdownPreviewScript(localPath: string): string {
           : event.target && event.target.nodeType === Node.TEXT_NODE
             ? event.target.parentElement
             : null;
+        const imageElement = targetElement?.closest('img.message-markdown-image[data-browse-href]');
+        const imageBrowseHref = imageElement?.getAttribute('data-browse-href') || '';
+        if (imageBrowseHref && imageBrowseHref !== '#') {
+          event.preventDefault();
+          event.stopPropagation();
+          window.open(imageBrowseHref, '_blank', 'noopener,noreferrer');
+          return;
+        }
         const annotationMarkElement = targetElement?.closest('mark.message-annotation-mark');
         if (annotationMarkElement) {
           const sourceElement = sourceElementForTarget(annotationMarkElement);

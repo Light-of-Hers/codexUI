@@ -118,6 +118,24 @@ const answer = 42
     expect(html).toContain(String.raw`>\mark{code}\comment{nope}</code>`)
   })
 
+  it('renders sanitized HTML collapse blocks', () => {
+    const html = render([
+      '<details open onclick="alert(1)">',
+      '<summary>More</summary>',
+      '',
+      'Hidden **markdown**',
+      '<script>alert(1)</script>',
+      '</details>',
+    ].join('\n'))
+
+    expect(html).toContain('<details open class="message-collapse message-scroll-anchor"')
+    expect(html).toContain('<summary class="message-collapse-summary"')
+    expect(html).toContain('<strong class="message-bold-text"')
+    expect(html).toContain('>markdown</strong>')
+    expect(html).not.toContain('onclick')
+    expect(html).not.toContain('<script')
+  })
+
   it('wraps tight list item inline content in a single text block', () => {
     const html = render('- `repos/codexUI`：`origin/crz/dev` → `18dd52c`')
 
@@ -220,6 +238,7 @@ const answer = 42
     expect(html).toContain('message-markdown-image')
     expect(html).toContain('message-image-preview')
     expect(html).toContain('src="/codex-local-image?path=%2Fhome%2Fubuntu%2FDocuments%2FNew%20Project%20(2)%2Fdiagram.png"')
+    expect(html).toContain('data-browse-href="/codex-local-browse/home/ubuntu/Documents/New%20Project%20(2)/diagram.png"')
     expect(html).toContain('alt="diagram"')
   })
 

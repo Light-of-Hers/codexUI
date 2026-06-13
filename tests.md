@@ -81,11 +81,13 @@ This file tracks manual regression and feature verification steps.
 3. Switch to dark theme and reload or wait for the editor to react to the color-scheme change.
 4. Confirm the editor switches to GitHub dark highlighting and the gutter, active line, cursor, and selection remain readable.
 5. For a Markdown file, open `Preview` and confirm fenced code blocks use the same GitHub-style light and dark syntax colors.
+6. Add a `<details><summary>More</summary>Hidden content</details>` block to the Markdown file and confirm preview renders it as a clickable collapse block.
 
 #### Expected Results
 - Local editor pages use `ace/theme/github` in light mode and `ace/theme/github_dark` in dark mode.
 - Syntax highlighting is visibly richer than plain text in both themes.
 - Markdown editor previews keep code fences readable and aligned with the selected color scheme.
+- Markdown editor previews preserve safe collapse blocks while still removing unsafe HTML attributes and scripts.
 
 #### Rollback/Cleanup
 - No cleanup is required.

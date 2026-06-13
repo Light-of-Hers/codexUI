@@ -971,6 +971,23 @@
   overflow-wrap: anywhere;
 }
 
+.message-collapse {
+  @apply m-0 rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2 text-sm leading-relaxed text-slate-800;
+  overflow-wrap: anywhere;
+}
+
+.message-collapse-summary {
+  @apply -mx-2 cursor-pointer rounded-md px-2 py-1 font-medium text-slate-900;
+}
+
+.message-collapse-summary:hover {
+  @apply bg-slate-100;
+}
+
+.message-collapse > :not(.message-collapse-summary) {
+  @apply mt-2;
+}
+
 .message-list {
   @apply m-0 pl-5 text-sm leading-relaxed text-slate-800 flex flex-col gap-1.5;
 }
@@ -1405,6 +1422,14 @@
 
 :root.dark .message-inline-code {
   @apply border-zinc-600 bg-zinc-700/60 text-zinc-200;
+}
+
+:root.dark .message-collapse {
+  @apply border-zinc-700 bg-zinc-900/70 text-zinc-200;
+}
+
+:root.dark .message-collapse-summary {
+  @apply text-zinc-100 hover:bg-zinc-800;
 }
 
 :root.dark .message-annotation-mark {

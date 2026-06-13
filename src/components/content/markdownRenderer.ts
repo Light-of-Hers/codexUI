@@ -1,5 +1,6 @@
 import rehypeHighlight from 'rehype-highlight'
 import rehypeKatex from 'rehype-katex'
+import rehypeRaw from 'rehype-raw'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import rehypeStringify from 'rehype-stringify'
 import remarkGfm from 'remark-gfm'
@@ -154,11 +155,16 @@ export function createMarkdownProcessor(context: MarkdownRenderContext) {
     .use(remarkParse)
     .use(remarkGfm)
     .use(remarkMath)
-    .use(remarkRehype)
+    .use(remarkRehype, { allowDangerousHtml: true })
+    .use(rehypeRaw)
     .use(rehypeSanitize, {
       ...defaultSchema,
       attributes: {
         ...defaultAttributes,
+        details: [
+          ...(defaultAttributes.details ?? []),
+          'open',
+        ],
         code: [
           ...(defaultAttributes.code ?? []),
           ['className', /^language-./],
@@ -727,6 +733,11 @@ function transformElement(node: MarkdownElement, parent: MarkdownNode, index: nu
   } else if (tagName === 'blockquote') {
     addClass(node, 'message-blockquote')
     addClass(node, 'message-scroll-anchor')
+  } else if (tagName === 'details') {
+    addClass(node, 'message-collapse')
+    addClass(node, 'message-scroll-anchor')
+  } else if (tagName === 'summary') {
+    addClass(node, 'message-collapse-summary')
   } else if (tagName === 'ul') {
     addClass(node, 'message-list')
     addClass(node, getClassList(node).includes('contains-task-list') ? 'message-task-list' : 'message-list-unordered')
@@ -1007,8 +1018,12 @@ function enhanceImage(node: MarkdownElement, cwd: string): void {
 
   const renderedSrc = toRenderableImageUrl(src, cwd)
   if (!renderedSrc) return
+  const browseHref = toImageBrowseUrl(src, cwd)
 
   setProperty(node, 'src', renderedSrc)
+  if (browseHref) {
+    setProperty(node, 'dataBrowseHref', browseHref)
+  }
   setProperty(node, 'loading', 'lazy')
   addClass(node, 'message-image-preview')
   addClass(node, 'message-markdown-image')
@@ -1087,6 +1102,7 @@ function splitTextNode(text: string, context: MarkdownRenderContext): MarkdownNo
         nodes.push({ type: 'text', value: segment.markdown })
         continue
       }
+      const browseHref = toImageBrowseUrl(segment.url, context.cwd)
 
       nodes.push({
         type: 'element',
@@ -1096,6 +1112,7 @@ function splitTextNode(text: string, context: MarkdownRenderContext): MarkdownNo
           src: imageSrc,
           alt: segment.alt || 'Embedded message image',
           loading: 'lazy',
+          ...(browseHref ? { dataBrowseHref: browseHref } : {}),
         },
         children: [],
       })
@@ -1540,6 +1557,23 @@ function toRenderableImageUrl(value: string, cwd = ''): string {
       const normalizedResolved = resolved.startsWith('/') ? resolved : `/${resolved}`
       return `/codex-local-image?path=${encodeURIComponent(normalizedResolved)}`
     }
+  }
+
+  return ''
+}
+
+function toImageBrowseUrl(value: string, cwd = ''): string {
+  const normalized = value.trim()
+  if (!normalized) return ''
+  if (/^(?:data:|blob:|https?:\/\/)/u.test(normalized)) return ''
+
+  const ref = parseFileReference(normalized)
+  if (ref) {
+    return toBrowseUrl(ref.path, cwd)
+  }
+
+  if (normalized.startsWith('file://')) {
+    return toBrowseUrl(normalized, cwd)
   }
 
   return ''
