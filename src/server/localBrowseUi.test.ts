@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { createDirectoryListingHtml, createEditorReferenceText, createLocalBrowseEntry, createMarkdownPreviewHtml, createTextEditorHtml, deleteLocalBrowseEntry, isMarkdownPath } from './localBrowseUi'
+import { createDirectoryListingHtml, createEditorReferenceText, createLocalBrowseEntry, createMarkdownPreviewHtml, createTextEditorHtml, deleteLocalBrowseEntry, encodeAnnotationSourceForLocalBrowse, isMarkdownPath } from './localBrowseUi'
 import { KATEX_STYLESHEET_HREF } from './katexAssets'
 
 let tempDir = ''
@@ -20,6 +20,13 @@ describe('local browse markdown preview', () => {
     expect(createEditorReferenceText('/tmp/note.md', 7, 3)).toBe('/tmp/note.md:3-7')
     expect(createEditorReferenceText('/tmp/note.md', 0)).toBe('')
     expect(createEditorReferenceText('   ', 1)).toBe('')
+  })
+
+  it('encodes annotation source without over-escaping LaTeX comments', () => {
+    expect(encodeAnnotationSourceForLocalBrowse(String.raw`$\sum_{i=1}^n i^2$`)).toBe(String.raw`$\sum_{i=1}^n i^2$`)
+    expect(encodeAnnotationSourceForLocalBrowse('literal } brace')).toBe(String.raw`literal \} brace`)
+    expect(encodeAnnotationSourceForLocalBrowse('literal { brace')).toBe(String.raw`literal \{ brace`)
+    expect(encodeAnnotationSourceForLocalBrowse(String.raw`$\{$`)).toBe(String.raw`$\\\{$`)
   })
 
   it('recognizes markdown files for preview support', () => {

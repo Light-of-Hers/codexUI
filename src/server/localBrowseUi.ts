@@ -82,6 +82,63 @@ export function createEditorReferenceText(
     : `${normalizedPath}:${firstLine}-${lastLine}`
 }
 
+export function encodeAnnotationSourceForLocalBrowse(value: string): string {
+  const annotationSlash = String.fromCharCode(92)
+  const raw = String(value || '')
+  const escapedBraceIndexes = new Set<number>()
+  const openBraceStack: number[] = []
+
+  const isEscapedAt = (index: number): boolean => {
+    let slashCount = 0
+    for (let cursor = index - 1; cursor >= 0 && raw[cursor] === annotationSlash; cursor -= 1) {
+      slashCount += 1
+    }
+    return slashCount % 2 === 1
+  }
+
+  for (let index = 0; index < raw.length; index += 1) {
+    const character = raw[index]
+    if (character !== '{' && character !== '}') continue
+    if (isEscapedAt(index)) continue
+
+    if (character === '{') {
+      openBraceStack.push(index)
+      continue
+    }
+
+    const openIndex = openBraceStack.pop()
+    if (openIndex === undefined) {
+      escapedBraceIndexes.add(index)
+    }
+  }
+
+  for (const openIndex of openBraceStack) {
+    escapedBraceIndexes.add(openIndex)
+  }
+
+  let encoded = ''
+  for (let index = 0; index < raw.length; index += 1) {
+    const character = raw[index]
+    if (character === annotationSlash) {
+      const previousCharacter = index > 0 ? raw[index - 1] : ''
+      const nextCharacter = index + 1 < raw.length ? raw[index + 1] : ''
+      encoded += nextCharacter === annotationSlash || nextCharacter === '{' || nextCharacter === '}' || previousCharacter === annotationSlash
+        ? annotationSlash + annotationSlash
+        : character
+      continue
+    }
+
+    if ((character === '{' || character === '}') && (escapedBraceIndexes.has(index) || isEscapedAt(index))) {
+      encoded += annotationSlash + character
+      continue
+    }
+
+    encoded += character
+  }
+
+  return encoded
+}
+
 function isHiddenName(value: string): boolean {
   return value.startsWith('.')
 }
@@ -2630,12 +2687,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
 
     const annotationSlash = String.fromCharCode(92);
 
-    const encodeAnnotationSource = (value) => (
-      String(value || '')
-        .split(annotationSlash).join(annotationSlash + annotationSlash)
-        .split('{').join(annotationSlash + '{')
-        .split('}').join(annotationSlash + '}')
-    );
+    const encodeAnnotationSource = ${encodeAnnotationSourceForLocalBrowse.toString()};
 
     const decodeAnnotationSource = (value) => {
       let decoded = '';
