@@ -5320,24 +5320,26 @@ Markdown files opened through the local editor expose a preview button that rend
 3. Click `Preview`.
 4. In the preview pane, select a short phrase from a rendered paragraph and confirm floating `Highlight`, `Mark`, and `Add comment` actions appear beside the selection.
 5. Click an unrelated area in the editor, preview, or toolbar and confirm the floating selection actions disappear.
-6. Select the preview phrase again, then click the floating `Highlight` button.
-7. Confirm the editor source wraps the matching text with `==` delimiters and the preview rerenders it with a highlighted background.
-8. Click the highlighted block in the preview and confirm floating `Remove highlight` and `Add comment` actions appear beside it.
-9. Scroll the preview pane and confirm the floating highlight actions stay attached to the highlighted block while visible, then hide once the block leaves the preview viewport.
-10. Click `Add comment`, enter comment text in the inline floating editor, save it, and confirm the source inserts `\comment{...}` after the highlighted source span or its adjacent comment, then preview renders a `cmt` comment pill.
-11. Click the rendered comment pill, use `Edit comment`, edit the inline floating editor, save it, and confirm the existing comment changes in source and preview.
-12. Click the rendered comment pill again, use `Remove comment`, and confirm only the selected `\comment{...}` or `\cmt{...}` command is removed.
-13. Click outside the highlighted block or comment pill and confirm the floating actions disappear.
-14. Click the highlighted block again, then click `Remove highlight` and confirm the editor source removes only the surrounding `==` delimiters.
-15. Select text directly inside the editor and confirm the floating `Highlight` button can add `==...==` there too.
-16. Click inside the preview pane so it has focus, press `Ctrl+S`, reload the editor URL, and confirm the current editor content is saved instead of the browser saving/downloading the preview page.
-17. Edit the file again, then press `Ctrl+S` with focus in the editor or click `Save`, reload the editor URL, and confirm the remaining highlight edits persist.
-18. Repeat the preview, floating action, dismissal, preview-focused save, removal, and highlight visibility checks in dark theme.
+6. Select the same phrase again, click inside the selected phrase so the browser clears the selection, and confirm the floating selection actions disappear.
+7. Select the preview phrase again, then click the floating `Highlight` button.
+8. Confirm the editor source wraps the matching text with `==` delimiters and the preview rerenders it with a highlighted background.
+9. Click the highlighted block in the preview and confirm floating `Remove highlight` and `Add comment` actions appear beside it.
+10. Scroll the preview pane and confirm the floating highlight actions stay attached to the highlighted block while visible, then hide once the block leaves the preview viewport.
+11. Click `Add comment`, enter comment text in the inline floating editor, save it, and confirm the source inserts `\comment{...}` after the highlighted source span or its adjacent comment, then preview renders a `cmt` comment pill.
+12. Click the rendered comment pill, use `Edit comment`, edit the inline floating editor, save it, and confirm the existing comment changes in source and preview.
+13. Click the rendered comment pill again, use `Remove comment`, and confirm only the selected `\comment{...}` or `\cmt{...}` command is removed.
+14. Click outside the highlighted block or comment pill and confirm the floating actions disappear.
+15. Click the highlighted block again, then click `Remove highlight` and confirm the editor source removes only the surrounding `==` delimiters.
+16. Select text directly inside the editor and confirm the floating `Highlight` button can add `==...==` there too.
+17. Click inside the preview pane so it has focus, press `Ctrl+S`, reload the editor URL, and confirm the current editor content is saved instead of the browser saving/downloading the preview page.
+18. Edit the file again, then press `Ctrl+S` with focus in the editor or click `Save`, reload the editor URL, and confirm the remaining highlight edits persist.
+19. Repeat the preview, floating action, dismissal, preview-focused save, removal, and highlight visibility checks in dark theme.
 
 #### Expected Results
 - Markdown preview renders `==highlighted text==` as a readable highlighted `<mark>` style.
 - `Highlight`, `Mark`, and `Add comment` appear near the current editor or preview selection instead of occupying the toolbar.
 - Selection, highlight, and comment actions disappear when clicking anywhere other than the floating action itself.
+- Selection actions also disappear when clicking inside the selected text clears that selection.
 - Clicking an existing preview highlight exposes `Remove highlight` and `Add comment`; comment editing is entered from the rendered comment pill.
 - Add/edit comment uses an inline floating editor near the current preview action, not a browser prompt dialog.
 - Floating preview actions track the selected/highlighted preview text during preview scrolling instead of staying at stale viewport coordinates.

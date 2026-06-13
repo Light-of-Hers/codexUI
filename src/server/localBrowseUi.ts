@@ -1243,6 +1243,8 @@ function markdownPreviewScript(localPath: string): string {
       });
       let activePreviewActionTarget = null;
       let floatingActionPositionFrame = 0;
+      let highlightSelectionFrame = 0;
+      let isPreviewPointerSelectionActive = false;
       const postHighlightActionDismiss = () => {
         activePreviewActionTarget = null;
         window.parent.postMessage({
@@ -1273,6 +1275,10 @@ function markdownPreviewScript(localPath: string): string {
         if (targetElement.closest(interactiveSelector)) return null;
         return targetElement.closest('[data-source-line]');
       };
+      const dismissInactiveHighlightSelection = () => {
+        if (activePreviewActionTarget) return;
+        postHighlightActionDismiss();
+      };
 
       document.addEventListener('dblclick', (event) => {
         const sourceElement = sourceElementForTarget(event.target);
@@ -1290,18 +1296,31 @@ function markdownPreviewScript(localPath: string): string {
         }, '*');
       });
 
-      const postHighlightSelection = () => {
+      const postHighlightSelection = (options = {}) => {
+        const dismissWhenEmpty = options.dismissWhenEmpty === true;
         const selection = window.getSelection();
-        if (!selection || selection.isCollapsed || selection.rangeCount === 0) return false;
+        if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+          if (dismissWhenEmpty) dismissInactiveHighlightSelection();
+          return false;
+        }
         const text = selection.toString().replace(/\\u00a0/g, ' ').trim();
-        if (!text) return false;
+        if (!text) {
+          if (dismissWhenEmpty) dismissInactiveHighlightSelection();
+          return false;
+        }
         const range = selection.getRangeAt(0);
         const sourceElement = sourceElementForTarget(range.commonAncestorContainer)
           || sourceElementForTarget(range.startContainer)
           || sourceElementForTarget(range.endContainer);
-        if (!sourceElement) return false;
+        if (!sourceElement) {
+          if (dismissWhenEmpty) dismissInactiveHighlightSelection();
+          return false;
+        }
         const sourceLine = Number.parseInt(sourceElement.getAttribute('data-source-line') || '', 10);
-        if (!Number.isFinite(sourceLine) || sourceLine < 1) return false;
+        if (!Number.isFinite(sourceLine) || sourceLine < 1) {
+          if (dismissWhenEmpty) dismissInactiveHighlightSelection();
+          return false;
+        }
         const sourceEndLine = Number.parseInt(sourceElement.getAttribute('data-source-end-line') || '', 10);
         const rect = range.getBoundingClientRect();
         activePreviewActionTarget = null;
@@ -1314,6 +1333,15 @@ function markdownPreviewScript(localPath: string): string {
           rect: serializeRect(rect),
         }, '*');
         return true;
+      };
+
+      const scheduleHighlightSelectionPost = (dismissWhenEmpty = true) => {
+        if (highlightSelectionFrame) return;
+        highlightSelectionFrame = window.requestAnimationFrame(() => {
+          highlightSelectionFrame = 0;
+          if (isPreviewPointerSelectionActive) return;
+          postHighlightSelection({ dismissWhenEmpty });
+        });
       };
 
       const postAnnotationMarkClick = (annotationMarkElement) => {
@@ -1456,14 +1484,24 @@ function markdownPreviewScript(localPath: string): string {
           postSaveRequest();
         }
       }, { capture: true });
-      document.addEventListener(
-        typeof window.PointerEvent === 'function' ? 'pointerdown' : 'mousedown',
-        postHighlightActionDismiss,
-        { capture: true }
-      );
-      document.addEventListener('selectionchange', postHighlightSelection);
-      document.addEventListener('mouseup', postHighlightSelection);
-      document.addEventListener('keyup', postHighlightSelection);
+      const previewPointerDownEvent = typeof window.PointerEvent === 'function' ? 'pointerdown' : 'mousedown';
+      const previewPointerUpEvent = typeof window.PointerEvent === 'function' ? 'pointerup' : 'mouseup';
+      const beginPreviewPointerSelection = () => {
+        isPreviewPointerSelectionActive = true;
+        postHighlightActionDismiss();
+      };
+      const endPreviewPointerSelection = () => {
+        if (!isPreviewPointerSelectionActive) return;
+        isPreviewPointerSelectionActive = false;
+        scheduleHighlightSelectionPost(true);
+      };
+      document.addEventListener(previewPointerDownEvent, beginPreviewPointerSelection, { capture: true });
+      document.addEventListener(previewPointerUpEvent, endPreviewPointerSelection, { capture: true });
+      if (typeof window.PointerEvent === 'function') {
+        document.addEventListener('pointercancel', endPreviewPointerSelection, { capture: true });
+      }
+      document.addEventListener('selectionchange', () => scheduleHighlightSelectionPost(true));
+      document.addEventListener('keyup', () => scheduleHighlightSelectionPost(true));
       window.addEventListener('scroll', scheduleFloatingActionPositionUpdate, { passive: true });
       window.addEventListener('resize', scheduleFloatingActionPositionUpdate, { passive: true });
     })();
@@ -1956,6 +1994,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     let lastEditorSyncedLine = 0;
     let lastPreviewSyncedLine = 0;
     let editorSelectionFrame = 0;
+    let editorPointerSelectionActive = false;
     let suppressFloatingActionsUntil = 0;
     const previewScrollAnchorSelector = '.message-scroll-anchor[data-source-line]';
     let previewScrollSyncSuppressedUntil = 0;
@@ -2451,7 +2490,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     };
 
     const captureEditorHighlightSelection = () => {
-      if (!supportsMarkdownPreview || shouldSuppressFloatingHighlightActions()) return;
+      if (!supportsMarkdownPreview || shouldSuppressFloatingHighlightActions() || editorPointerSelectionActive) return;
       const selectionRange = editor.getSelectionRange();
       if (!selectionRange || selectionRange.isEmpty()) {
         lastEditorHighlightSelection = null;
@@ -3966,7 +4005,17 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     document.addEventListener('mousedown', (event) => {
       const target = event.target;
       if (target instanceof Element && target.closest('.floating-highlight-action')) return;
+      editorPointerSelectionActive = target instanceof Element && editor.container.contains(target);
       dismissFloatingHighlightActions();
+      if (!editorPointerSelectionActive) {
+        suppressFloatingActionsUntil = window.performance.now() + 220;
+      }
+    });
+
+    window.addEventListener('mouseup', () => {
+      if (!editorPointerSelectionActive) return;
+      editorPointerSelectionActive = false;
+      scheduleEditorHighlightSelectionCapture();
     });
 
     window.addEventListener('keydown', (event) => {
