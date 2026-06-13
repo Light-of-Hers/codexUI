@@ -1184,7 +1184,10 @@ function markdownPreviewScript(localPath: string): string {
         width: rect.width,
         height: rect.height,
       });
+      let activePreviewActionTarget = null;
+      let floatingActionPositionFrame = 0;
       const postHighlightActionDismiss = () => {
+        activePreviewActionTarget = null;
         window.parent.postMessage({
           type: 'codex-local-markdown-highlight-dismiss',
           path: sourcePath,
@@ -1232,18 +1235,19 @@ function markdownPreviewScript(localPath: string): string {
 
       const postHighlightSelection = () => {
         const selection = window.getSelection();
-        if (!selection || selection.isCollapsed || selection.rangeCount === 0) return;
+        if (!selection || selection.isCollapsed || selection.rangeCount === 0) return false;
         const text = selection.toString().replace(/\\u00a0/g, ' ').trim();
-        if (!text) return;
+        if (!text) return false;
         const range = selection.getRangeAt(0);
         const sourceElement = sourceElementForTarget(range.commonAncestorContainer)
           || sourceElementForTarget(range.startContainer)
           || sourceElementForTarget(range.endContainer);
-        if (!sourceElement) return;
+        if (!sourceElement) return false;
         const sourceLine = Number.parseInt(sourceElement.getAttribute('data-source-line') || '', 10);
-        if (!Number.isFinite(sourceLine) || sourceLine < 1) return;
+        if (!Number.isFinite(sourceLine) || sourceLine < 1) return false;
         const sourceEndLine = Number.parseInt(sourceElement.getAttribute('data-source-end-line') || '', 10);
         const rect = range.getBoundingClientRect();
+        activePreviewActionTarget = null;
         window.parent.postMessage({
           type: 'codex-local-markdown-preview-selection',
           path: sourcePath,
@@ -1252,6 +1256,76 @@ function markdownPreviewScript(localPath: string): string {
           endLine: Number.isFinite(sourceEndLine) && sourceEndLine >= sourceLine ? sourceEndLine : sourceLine,
           rect: serializeRect(rect),
         }, '*');
+        return true;
+      };
+
+      const postAnnotationMarkClick = (annotationMarkElement) => {
+        const sourceElement = sourceElementForTarget(annotationMarkElement);
+        if (!sourceElement) return false;
+        const sourceLine = Number.parseInt(sourceElement.getAttribute('data-source-line') || '', 10);
+        if (!Number.isFinite(sourceLine) || sourceLine < 1) return false;
+        const sourceEndLine = Number.parseInt(sourceElement.getAttribute('data-source-end-line') || '', 10);
+        const markText = annotationMarkElement.textContent || '';
+        const siblingMarks = Array.from(sourceElement.querySelectorAll('mark.message-annotation-mark'));
+        const occurrence = Math.max(0, siblingMarks
+          .filter((element) => (element.textContent || '') === markText)
+          .indexOf(annotationMarkElement));
+        const annotationElement = annotationMarkElement.closest('.message-annotation');
+        const commentText = annotationElement?.querySelector('.message-annotation-body')?.textContent || '';
+        window.parent.postMessage({
+          type: 'codex-local-markdown-mark-click',
+          path: sourcePath,
+          text: markText,
+          comment: commentText,
+          line: sourceLine,
+          endLine: Number.isFinite(sourceEndLine) && sourceEndLine >= sourceLine ? sourceEndLine : sourceLine,
+          occurrence,
+          rect: serializeRect(annotationMarkElement.getBoundingClientRect()),
+        }, '*');
+        return true;
+      };
+
+      const postHighlightClick = (highlightElement) => {
+        const sourceElement = sourceElementForTarget(highlightElement);
+        if (!sourceElement) return false;
+        const sourceLine = Number.parseInt(sourceElement.getAttribute('data-source-line') || '', 10);
+        if (!Number.isFinite(sourceLine) || sourceLine < 1) return false;
+        const sourceEndLine = Number.parseInt(sourceElement.getAttribute('data-source-end-line') || '', 10);
+        const highlightText = highlightElement.textContent || '';
+        const siblingHighlights = Array.from(sourceElement.querySelectorAll('mark.message-highlight'));
+        const occurrence = Math.max(0, siblingHighlights
+          .filter((element) => (element.textContent || '') === highlightText)
+          .indexOf(highlightElement));
+        window.parent.postMessage({
+          type: 'codex-local-markdown-highlight-click',
+          path: sourcePath,
+          text: highlightText,
+          line: sourceLine,
+          endLine: Number.isFinite(sourceEndLine) && sourceEndLine >= sourceLine ? sourceEndLine : sourceLine,
+          occurrence,
+          rect: serializeRect(highlightElement.getBoundingClientRect()),
+        }, '*');
+        return true;
+      };
+
+      const postActiveFloatingActionPosition = () => {
+        if (postHighlightSelection()) return;
+        if (!activePreviewActionTarget || !activePreviewActionTarget.element?.isConnected) return;
+        if (activePreviewActionTarget.kind === 'mark') {
+          postAnnotationMarkClick(activePreviewActionTarget.element);
+          return;
+        }
+        if (activePreviewActionTarget.kind === 'highlight') {
+          postHighlightClick(activePreviewActionTarget.element);
+        }
+      };
+
+      const scheduleFloatingActionPositionUpdate = () => {
+        if (floatingActionPositionFrame) return;
+        floatingActionPositionFrame = window.requestAnimationFrame(() => {
+          floatingActionPositionFrame = 0;
+          postActiveFloatingActionPosition();
+        });
       };
 
       document.addEventListener('click', (event) => {
@@ -1270,55 +1344,18 @@ function markdownPreviewScript(localPath: string): string {
         }
         const annotationMarkElement = targetElement?.closest('mark.message-annotation-mark');
         if (annotationMarkElement) {
-          const sourceElement = sourceElementForTarget(annotationMarkElement);
-          if (!sourceElement) return;
-          const sourceLine = Number.parseInt(sourceElement.getAttribute('data-source-line') || '', 10);
-          if (!Number.isFinite(sourceLine) || sourceLine < 1) return;
-          const sourceEndLine = Number.parseInt(sourceElement.getAttribute('data-source-end-line') || '', 10);
-          const markText = annotationMarkElement.textContent || '';
-          const siblingMarks = Array.from(sourceElement.querySelectorAll('mark.message-annotation-mark'));
-          const occurrence = Math.max(0, siblingMarks
-            .filter((element) => (element.textContent || '') === markText)
-            .indexOf(annotationMarkElement));
-          const annotationElement = annotationMarkElement.closest('.message-annotation');
-          const commentText = annotationElement?.querySelector('.message-annotation-body')?.textContent || '';
           event.preventDefault();
           event.stopPropagation();
-          window.parent.postMessage({
-            type: 'codex-local-markdown-mark-click',
-            path: sourcePath,
-            text: markText,
-            comment: commentText,
-            line: sourceLine,
-            endLine: Number.isFinite(sourceEndLine) && sourceEndLine >= sourceLine ? sourceEndLine : sourceLine,
-            occurrence,
-            rect: serializeRect(annotationMarkElement.getBoundingClientRect()),
-          }, '*');
+          activePreviewActionTarget = { kind: 'mark', element: annotationMarkElement };
+          postAnnotationMarkClick(annotationMarkElement);
           return;
         }
         const highlightElement = targetElement?.closest('mark.message-highlight');
         if (!highlightElement) return;
-        const sourceElement = sourceElementForTarget(highlightElement);
-        if (!sourceElement) return;
-        const sourceLine = Number.parseInt(sourceElement.getAttribute('data-source-line') || '', 10);
-        if (!Number.isFinite(sourceLine) || sourceLine < 1) return;
-        const sourceEndLine = Number.parseInt(sourceElement.getAttribute('data-source-end-line') || '', 10);
-        const highlightText = highlightElement.textContent || '';
-        const siblingHighlights = Array.from(sourceElement.querySelectorAll('mark.message-highlight'));
-        const occurrence = Math.max(0, siblingHighlights
-          .filter((element) => (element.textContent || '') === highlightText)
-          .indexOf(highlightElement));
         event.preventDefault();
         event.stopPropagation();
-        window.parent.postMessage({
-          type: 'codex-local-markdown-highlight-click',
-          path: sourcePath,
-          text: highlightText,
-          line: sourceLine,
-          endLine: Number.isFinite(sourceEndLine) && sourceEndLine >= sourceLine ? sourceEndLine : sourceLine,
-          occurrence,
-          rect: serializeRect(highlightElement.getBoundingClientRect()),
-        }, '*');
+        activePreviewActionTarget = { kind: 'highlight', element: highlightElement };
+        postHighlightClick(highlightElement);
       });
 
       document.addEventListener('keydown', (event) => {
@@ -1337,6 +1374,8 @@ function markdownPreviewScript(localPath: string): string {
       document.addEventListener('selectionchange', postHighlightSelection);
       document.addEventListener('mouseup', postHighlightSelection);
       document.addEventListener('keyup', postHighlightSelection);
+      window.addEventListener('scroll', scheduleFloatingActionPositionUpdate, { passive: true });
+      window.addEventListener('resize', scheduleFloatingActionPositionUpdate, { passive: true });
     })();
   `
 }
@@ -2079,19 +2118,39 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
         top: frameRect.top + top,
         right: frameRect.left + right,
         bottom: frameRect.top + bottom,
+        clipLeft: frameRect.left,
+        clipTop: frameRect.top,
+        clipRight: frameRect.right,
+        clipBottom: frameRect.bottom,
       };
     };
 
     const positionFloatingHighlightAction = (button, rect, offsetX = 0) => {
       if (!button || !rect || shouldSuppressFloatingHighlightActions()) return;
-      const centerX = (Number(rect.left) + Number(rect.right)) / 2;
+      const left = Number(rect.left);
+      const right = Number(rect.right);
       const top = Number(rect.top);
       const bottom = Number(rect.bottom);
-      if (![centerX, top, bottom].every(Number.isFinite)) return;
+      if (![left, right, top, bottom].every(Number.isFinite)) return;
+      const clipLeft = Number(rect.clipLeft);
+      const clipRight = Number(rect.clipRight);
+      const clipTop = Number(rect.clipTop);
+      const clipBottom = Number(rect.clipBottom);
+      if ([clipLeft, clipRight, clipTop, clipBottom].every(Number.isFinite)) {
+        if (right < clipLeft || left > clipRight || bottom < clipTop || top > clipBottom) {
+          button.hidden = true;
+          return;
+        }
+      }
+      const visibleLeft = Number.isFinite(clipLeft) ? Math.max(left, clipLeft) : left;
+      const visibleRight = Number.isFinite(clipRight) ? Math.min(right, clipRight) : right;
+      const visibleTop = Number.isFinite(clipTop) ? Math.max(top, clipTop) : top;
+      const visibleBottom = Number.isFinite(clipBottom) ? Math.min(bottom, clipBottom) : bottom;
+      const centerX = (visibleLeft + visibleRight) / 2;
       const padding = 12;
       const x = Math.min(Math.max(centerX + offsetX, padding), Math.max(padding, window.innerWidth - padding));
-      const placeBelow = top < 48;
-      const y = placeBelow ? Math.min(Math.max(bottom, padding), Math.max(padding, window.innerHeight - padding)) : Math.min(Math.max(top, padding), Math.max(padding, window.innerHeight - padding));
+      const placeBelow = visibleTop < 48;
+      const y = placeBelow ? Math.min(Math.max(visibleBottom, padding), Math.max(padding, window.innerHeight - padding)) : Math.min(Math.max(visibleTop, padding), Math.max(padding, window.innerHeight - padding));
       button.dataset.placement = placeBelow ? 'below' : 'above';
       button.style.left = x + 'px';
       button.style.top = y + 'px';
