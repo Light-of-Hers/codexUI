@@ -1451,7 +1451,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     ? '<button id="previewBtn" type="button" aria-pressed="false">Preview</button>'
     : ''
   const floatingHighlightControls = supportsMarkdownPreview
-    ? '<div id="floatingSelectionActions" class="floating-highlight-action floating-action-group" hidden><button id="floatingHighlightBtn" type="button">Highlight</button><button id="floatingMarkBtn" type="button">Mark</button><button id="floatingSelectionCommentBtn" type="button">Add comment</button></div><div id="floatingHighlightActions" class="floating-highlight-action floating-action-group" hidden><button id="floatingRemoveHighlightBtn" class="danger" type="button">Remove highlight</button><button id="floatingAddHighlightCommentBtn" type="button">Add comment</button></div><div id="floatingMarkActions" class="floating-highlight-action floating-action-group" hidden><button id="floatingUnmarkBtn" type="button">Unmark</button><button id="floatingAddMarkCommentBtn" type="button">Add comment</button></div><div id="floatingCommentActions" class="floating-highlight-action floating-action-group" hidden><button id="floatingEditCommentBtn" type="button">Edit comment</button><button id="floatingRemoveCommentBtn" class="danger" type="button">Remove comment</button></div>'
+    ? '<div id="floatingSelectionActions" class="floating-highlight-action floating-action-group" hidden><button id="floatingHighlightBtn" type="button">Highlight</button><button id="floatingMarkBtn" type="button">Mark</button><button id="floatingSelectionCommentBtn" type="button">Add comment</button></div><div id="floatingHighlightActions" class="floating-highlight-action floating-action-group" hidden><button id="floatingRemoveHighlightBtn" class="danger" type="button">Remove highlight</button><button id="floatingAddHighlightCommentBtn" type="button">Add comment</button></div><div id="floatingMarkActions" class="floating-highlight-action floating-action-group" hidden><button id="floatingUnmarkBtn" type="button">Unmark</button><button id="floatingAddMarkCommentBtn" type="button">Add comment</button></div><div id="floatingCommentActions" class="floating-highlight-action floating-action-group" hidden><button id="floatingEditCommentBtn" type="button">Edit comment</button><button id="floatingRemoveCommentBtn" class="danger" type="button">Remove comment</button></div><form id="floatingCommentEditor" class="floating-highlight-action floating-comment-editor" hidden><label id="floatingCommentEditorTitle" class="floating-comment-title" for="floatingCommentInput">Add comment</label><textarea id="floatingCommentInput" class="floating-comment-input" rows="3"></textarea><div class="floating-comment-row"><button id="floatingCancelCommentBtn" type="button">Cancel</button><button id="floatingSaveCommentBtn" type="submit">Save</button></div></form>'
     : ''
   const previewPane = supportsMarkdownPreview
     ? '<div id="previewSplitter" class="preview-splitter" role="separator" aria-orientation="vertical" aria-label="Resize markdown preview" tabindex="0" hidden></div><iframe id="previewFrame" class="preview-pane" title="Markdown preview" hidden></iframe>'
@@ -1590,6 +1590,39 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     .floating-action-group button.danger {
       border-color: #d1242f;
       color: #d1242f;
+    }
+    .floating-comment-editor {
+      width: min(320px, calc(100vw - 24px));
+      padding: 10px;
+      border: 1px solid var(--control-border);
+      border-radius: 8px;
+      background: var(--toolbar-bg);
+      color: var(--page-fg);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      white-space: normal;
+    }
+    .floating-comment-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--muted-fg);
+    }
+    .floating-comment-input {
+      min-height: 76px;
+      resize: vertical;
+      border: 1px solid var(--control-border);
+      border-radius: 6px;
+      padding: 8px;
+      background: var(--control-bg);
+      color: var(--control-fg);
+      font: inherit;
+      line-height: 1.35;
+    }
+    .floating-comment-row {
+      display: flex;
+      justify-content: flex-end;
+      gap: 6px;
     }
     @media (prefers-color-scheme: dark) {
       .floating-highlight-action.danger {
@@ -1758,6 +1791,11 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     const floatingCommentActions = document.getElementById('floatingCommentActions');
     const floatingEditCommentBtn = document.getElementById('floatingEditCommentBtn');
     const floatingRemoveCommentBtn = document.getElementById('floatingRemoveCommentBtn');
+    const floatingCommentEditor = document.getElementById('floatingCommentEditor');
+    const floatingCommentEditorTitle = document.getElementById('floatingCommentEditorTitle');
+    const floatingCommentInput = document.getElementById('floatingCommentInput');
+    const floatingSaveCommentBtn = document.getElementById('floatingSaveCommentBtn');
+    const floatingCancelCommentBtn = document.getElementById('floatingCancelCommentBtn');
     const status = document.getElementById('status');
     const previewStatus = document.getElementById('previewStatus');
     const editorShell = document.getElementById('editorShell');
@@ -1856,6 +1894,8 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     let lastPreviewClickedMark = null;
     let lastPreviewClickedComment = null;
     let lastEditorHighlightSelection = null;
+    let pendingFloatingCommentSubmit = null;
+    let lastFloatingCommentEditorRect = null;
     let lastEditorSyncedLine = 0;
     let lastPreviewSyncedLine = 0;
     let editorSelectionFrame = 0;
@@ -2117,7 +2157,13 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       }
     };
 
-    const hideFloatingHighlightActions = () => {
+    const hideFloatingCommentEditor = () => {
+      pendingFloatingCommentSubmit = null;
+      if (floatingCommentEditor) floatingCommentEditor.hidden = true;
+      if (floatingCommentInput) floatingCommentInput.value = '';
+    };
+
+    const hideFloatingActionGroups = () => {
       if (floatingSelectionActions) floatingSelectionActions.hidden = true;
       if (floatingHighlightBtn) floatingHighlightBtn.hidden = true;
       if (floatingMarkBtn) floatingMarkBtn.hidden = true;
@@ -2128,6 +2174,11 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       if (floatingMarkActions) floatingMarkActions.hidden = true;
       if (floatingAddMarkCommentBtn) floatingAddMarkCommentBtn.hidden = true;
       if (floatingCommentActions) floatingCommentActions.hidden = true;
+    };
+
+    const hideFloatingHighlightActions = () => {
+      hideFloatingActionGroups();
+      hideFloatingCommentEditor();
     };
 
     const dismissFloatingHighlightActions = () => {
@@ -2200,8 +2251,59 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       button.hidden = false;
     };
 
+    const rectFromElement = (element) => {
+      if (!element || typeof element.getBoundingClientRect !== 'function') return null;
+      const rect = element.getBoundingClientRect();
+      return {
+        left: rect.left,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+      };
+    };
+
+    const showFloatingCommentEditor = ({ title, initialValue = '', rect, onSubmit }) => {
+      if (!supportsMarkdownPreview || !floatingCommentEditor || !floatingCommentInput || typeof onSubmit !== 'function') return false;
+      pendingFloatingCommentSubmit = onSubmit;
+      if (floatingCommentEditorTitle) floatingCommentEditorTitle.textContent = title || 'Comment';
+      if (floatingSaveCommentBtn) floatingSaveCommentBtn.textContent = title === 'Edit comment' ? 'Save' : 'Add';
+      floatingCommentInput.value = String(initialValue || '');
+      floatingCommentInput.setAttribute('aria-label', title || 'Comment');
+      hideFloatingActionGroups();
+      const targetRect = rect || lastFloatingCommentEditorRect;
+      if (targetRect) {
+        positionFloatingHighlightAction(floatingCommentEditor, targetRect);
+      } else {
+        floatingCommentEditor.dataset.placement = 'below';
+        floatingCommentEditor.style.left = '50%';
+        floatingCommentEditor.style.top = '72px';
+        floatingCommentEditor.hidden = false;
+      }
+      if (floatingCommentEditor.hidden) return false;
+      window.requestAnimationFrame(() => {
+        floatingCommentInput.focus();
+        floatingCommentInput.select();
+      });
+      return true;
+    };
+
+    const submitFloatingCommentEditor = () => {
+      if (!floatingCommentInput || typeof pendingFloatingCommentSubmit !== 'function') return;
+      const normalized = String(floatingCommentInput.value || '').trim();
+      if (!normalized) {
+        setPreviewStatus('Comment cannot be empty');
+        floatingCommentInput.focus();
+        return;
+      }
+      const submitComment = pendingFloatingCommentSubmit;
+      hideFloatingCommentEditor();
+      submitComment(normalized);
+    };
+
     const showFloatingHighlightButton = (rect) => {
       if (!supportsMarkdownPreview) return;
+      lastFloatingCommentEditorRect = rect || lastFloatingCommentEditorRect;
+      hideFloatingCommentEditor();
       if (floatingSelectionActions) {
         if (floatingHighlightBtn) floatingHighlightBtn.hidden = false;
         if (floatingMarkBtn) floatingMarkBtn.hidden = false;
@@ -2225,6 +2327,8 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
 
     const showFloatingRemoveHighlightButton = (rect) => {
       if (!supportsMarkdownPreview) return;
+      lastFloatingCommentEditorRect = rect || lastFloatingCommentEditorRect;
+      hideFloatingCommentEditor();
       if (floatingSelectionActions) floatingSelectionActions.hidden = true;
       if (floatingHighlightBtn) floatingHighlightBtn.hidden = true;
       if (floatingMarkBtn) floatingMarkBtn.hidden = true;
@@ -2242,6 +2346,8 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
 
     const showFloatingMarkActions = (rect) => {
       if (!supportsMarkdownPreview || !floatingMarkActions) return;
+      lastFloatingCommentEditorRect = rect || lastFloatingCommentEditorRect;
+      hideFloatingCommentEditor();
       if (floatingSelectionActions) floatingSelectionActions.hidden = true;
       if (floatingHighlightBtn) floatingHighlightBtn.hidden = true;
       if (floatingMarkBtn) floatingMarkBtn.hidden = true;
@@ -2255,6 +2361,8 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
 
     const showFloatingCommentActions = (rect) => {
       if (!supportsMarkdownPreview || !floatingCommentActions) return;
+      lastFloatingCommentEditorRect = rect || lastFloatingCommentEditorRect;
+      hideFloatingCommentEditor();
       if (floatingSelectionActions) floatingSelectionActions.hidden = true;
       if (floatingHighlightBtn) floatingHighlightBtn.hidden = true;
       if (floatingMarkBtn) floatingMarkBtn.hidden = true;
@@ -2856,17 +2964,6 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       return true;
     };
 
-    const promptForAnnotationComment = (initialValue = '') => {
-      const nextValue = window.prompt(initialValue ? 'Edit comment' : 'Add comment', initialValue);
-      if (nextValue === null) return null;
-      const normalized = String(nextValue).trim();
-      if (!normalized) {
-        setPreviewStatus('Comment cannot be empty');
-        return null;
-      }
-      return normalized;
-    };
-
     const insertEditorCommentAt = (insertIndex, commentText) => {
       if (typeof commentText !== 'string') return false;
       const editorValue = editor.getValue();
@@ -3010,7 +3107,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       return match.endIndex;
     };
 
-    const addCommentToCurrentSelection = () => {
+    const addCommentToCurrentSelection = (rect = null) => {
       if (!supportsMarkdownPreview) return;
       const editorInsertIndex = findCommentInsertIndexForEditorSelection();
       const insertIndex = editorInsertIndex === null ? findCommentInsertIndexForPreviewSelection() : editorInsertIndex;
@@ -3018,9 +3115,13 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
         setPreviewStatus('Select text in preview or editor first');
         return;
       }
-      const commentText = promptForAnnotationComment('');
-      if (commentText === null) return;
-      insertEditorCommentAt(insertIndex, commentText);
+      showFloatingCommentEditor({
+        title: 'Add comment',
+        rect,
+        onSubmit: (commentText) => {
+          insertEditorCommentAt(insertIndex, commentText);
+        },
+      });
     };
 
     const findCurrentMarkMarkup = () => {
@@ -3075,12 +3176,17 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       return match;
     };
 
-    const editCurrentComment = () => {
+    const editCurrentComment = (rect = null) => {
       const match = findCurrentCommentMarkup();
       if (!match) return;
-      const commentText = promptForAnnotationComment(match.comment || '');
-      if (commentText === null) return;
-      upsertCommentMarkup(match, commentText);
+      showFloatingCommentEditor({
+        title: 'Edit comment',
+        initialValue: match.comment || '',
+        rect,
+        onSubmit: (commentText) => {
+          upsertCommentMarkup(match, commentText);
+        },
+      });
     };
 
     const removeCurrentComment = () => {
@@ -3119,26 +3225,30 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       return null;
     };
 
-    const addCommentAtInsertIndex = (insertIndex) => {
+    const addCommentAtInsertIndex = (insertIndex, rect = null) => {
       if (!Number.isFinite(insertIndex)) {
         setPreviewStatus('Could not find annotation target in source');
         return;
       }
-      const commentText = promptForAnnotationComment('');
-      if (commentText === null) return;
-      insertEditorCommentAt(insertIndex, commentText);
+      showFloatingCommentEditor({
+        title: 'Add comment',
+        rect,
+        onSubmit: (commentText) => {
+          insertEditorCommentAt(insertIndex, commentText);
+        },
+      });
     };
 
-    const addCommentToCurrentHighlight = () => {
+    const addCommentToCurrentHighlight = (rect = null) => {
       const match = findCurrentHighlightMarkup();
       if (!match) return;
-      addCommentAtInsertIndex(commentInsertIndexAfterMarkup(match, match.highlightEndIndex));
+      addCommentAtInsertIndex(commentInsertIndexAfterMarkup(match, match.highlightEndIndex), rect);
     };
 
-    const addCommentToCurrentMark = () => {
+    const addCommentToCurrentMark = (rect = null) => {
       const match = findCurrentMarkMarkup();
       if (!match) return;
-      addCommentAtInsertIndex(commentInsertIndexAfterMarkup(match, match.markEndIndex));
+      addCommentAtInsertIndex(commentInsertIndexAfterMarkup(match, match.markEndIndex), rect);
     };
 
     const removeCurrentHighlight = () => {
@@ -3725,7 +3835,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       floatingAddHighlightCommentBtn.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
-        addCommentToCurrentHighlight();
+        addCommentToCurrentHighlight(rectFromElement(event.currentTarget));
       });
     }
 
@@ -3733,7 +3843,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       floatingSelectionCommentBtn.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
-        addCommentToCurrentSelection();
+        addCommentToCurrentSelection(rectFromElement(event.currentTarget));
       });
     }
 
@@ -3749,7 +3859,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       floatingAddMarkCommentBtn.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
-        addCommentToCurrentMark();
+        addCommentToCurrentMark(rectFromElement(event.currentTarget));
       });
     }
 
@@ -3757,7 +3867,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       floatingEditCommentBtn.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
-        editCurrentComment();
+        editCurrentComment(rectFromElement(event.currentTarget));
       });
     }
 
@@ -3766,6 +3876,38 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
         event.preventDefault();
         event.stopPropagation();
         removeCurrentComment();
+      });
+    }
+
+    if (floatingCommentEditor) {
+      floatingCommentEditor.addEventListener('submit', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        submitFloatingCommentEditor();
+      });
+    }
+
+    if (floatingCancelCommentBtn) {
+      floatingCancelCommentBtn.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        hideFloatingCommentEditor();
+      });
+    }
+
+    if (floatingCommentInput) {
+      floatingCommentInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          event.stopPropagation();
+          hideFloatingCommentEditor();
+          return;
+        }
+        if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+          event.preventDefault();
+          event.stopPropagation();
+          submitFloatingCommentEditor();
+        }
       });
     }
 

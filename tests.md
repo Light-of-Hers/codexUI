@@ -5324,8 +5324,8 @@ Markdown files opened through the local editor expose a preview button that rend
 7. Confirm the editor source wraps the matching text with `==` delimiters and the preview rerenders it with a highlighted background.
 8. Click the highlighted block in the preview and confirm floating `Remove highlight` and `Add comment` actions appear beside it.
 9. Scroll the preview pane and confirm the floating highlight actions stay attached to the highlighted block while visible, then hide once the block leaves the preview viewport.
-10. Click `Add comment`, enter comment text, and confirm the source inserts `\comment{...}` after the highlighted source span or its adjacent comment, then preview renders a `cmt` comment pill.
-11. Click the rendered comment pill, use `Edit comment`, and confirm the existing comment changes in source and preview.
+10. Click `Add comment`, enter comment text in the inline floating editor, save it, and confirm the source inserts `\comment{...}` after the highlighted source span or its adjacent comment, then preview renders a `cmt` comment pill.
+11. Click the rendered comment pill, use `Edit comment`, edit the inline floating editor, save it, and confirm the existing comment changes in source and preview.
 12. Click the rendered comment pill again, use `Remove comment`, and confirm only the selected `\comment{...}` or `\cmt{...}` command is removed.
 13. Click outside the highlighted block or comment pill and confirm the floating actions disappear.
 14. Click the highlighted block again, then click `Remove highlight` and confirm the editor source removes only the surrounding `==` delimiters.
@@ -5339,6 +5339,7 @@ Markdown files opened through the local editor expose a preview button that rend
 - `Highlight`, `Mark`, and `Add comment` appear near the current editor or preview selection instead of occupying the toolbar.
 - Selection, highlight, and comment actions disappear when clicking anywhere other than the floating action itself.
 - Clicking an existing preview highlight exposes `Remove highlight` and `Add comment`; comment editing is entered from the rendered comment pill.
+- Add/edit comment uses an inline floating editor near the current preview action, not a browser prompt dialog.
 - Floating preview actions track the selected/highlighted preview text during preview scrolling instead of staying at stale viewport coordinates.
 - Add comment is available from text selections and clicked highlights; edit/remove comment updates only the rendered comment command selected through the comment pill.
 - `Remove highlight` removes the source delimiters without deleting an adjacent comment.
@@ -5401,8 +5402,8 @@ Markdown files opened through the local editor expose a preview button that rend
 4. Select text in the editor or preview and confirm floating `Highlight`, `Mark`, and `Add comment` buttons appear near the selection.
 5. Click `Mark` and confirm the source wraps the selected text as `\mark{...}` and the preview renders marked text.
 6. Click the marked text in preview and confirm floating `Unmark` and `Add comment` actions appear.
-7. Click `Add comment`, enter comment text, and confirm the source inserts `\comment{...}` after the marked source span or its adjacent comment, then preview renders the comment pill.
-8. Click the rendered comment pill, use `Edit comment`, and confirm the existing comment changes in source and preview.
+7. Click `Add comment`, enter comment text in the inline floating editor, save it, and confirm the source inserts `\comment{...}` after the marked source span or its adjacent comment, then preview renders the comment pill.
+8. Click the rendered comment pill, use `Edit comment`, edit the inline floating editor, save it, and confirm the existing comment changes in source and preview.
 9. Click the rendered comment pill again, use `Remove comment`, and confirm only the selected `\comment{...}` portion is removed.
 10. Click the marked text again, use `Unmark`, and confirm only the mark command is removed while the original text remains.
 11. Repeat the selection, mark action, comment action, and unmark checks in dark theme.
@@ -5411,6 +5412,7 @@ Markdown files opened through the local editor expose a preview button that rend
 - Mark actions reuse the floating-selection workflow without replacing highlight behavior.
 - Marking selected text writes escaped `\mark{...}` source syntax and refreshes preview.
 - Clicking marked preview text exposes `Unmark` and `Add comment`; comment editing is entered from the rendered comment pill.
+- Add/edit comment uses an inline floating editor near the current preview action, not a browser prompt dialog.
 - Add comment is available from text selections and clicked marks; edit/remove comment updates only the selected comment command.
 - Unmark removes only the mark command, preserving marked text and any adjacent comment command.
 - Light and dark theme action buttons and annotation styles remain readable.
