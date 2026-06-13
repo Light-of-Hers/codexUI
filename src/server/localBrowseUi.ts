@@ -801,6 +801,12 @@ function markdownPreviewStyles(): string {
       --syntax-deletion-bg: #ffeef0;
       --highlight-bg: #fff3b0;
       --highlight-fg: #3b2300;
+      --annotation-mark-bg: rgba(9, 105, 218, 0.12);
+      --annotation-mark-border: #0969da;
+      --annotation-comment-bg: #fff8c5;
+      --annotation-comment-border: #d4a72c;
+      --annotation-comment-fg: #3b2300;
+      --annotation-comment-label: #9a6700;
     }
     @media (prefers-color-scheme: dark) {
       :root {
@@ -835,6 +841,12 @@ function markdownPreviewStyles(): string {
         --syntax-deletion-bg: #67060c;
         --highlight-bg: rgba(187, 128, 9, 0.42);
         --highlight-fg: #f2cc60;
+        --annotation-mark-bg: rgba(56, 139, 253, 0.18);
+        --annotation-mark-border: #58a6ff;
+        --annotation-comment-bg: rgba(210, 153, 34, 0.14);
+        --annotation-comment-border: rgba(210, 153, 34, 0.38);
+        --annotation-comment-fg: #f8e3a1;
+        --annotation-comment-label: #e3b341;
       }
     }
     * { box-sizing: border-box; }
@@ -1072,6 +1084,49 @@ function markdownPreviewStyles(): string {
       padding: 0 0.12em;
       box-decoration-break: clone;
       -webkit-box-decoration-break: clone;
+    }
+    .message-annotation {
+      display: inline-flex;
+      max-width: 100%;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 0.25rem;
+      vertical-align: baseline;
+    }
+    .message-annotation-mark {
+      border-radius: 3px;
+      border-bottom: 2px solid var(--annotation-mark-border);
+      background: var(--annotation-mark-bg);
+      color: inherit;
+      padding: 0 0.12em;
+      box-decoration-break: clone;
+      -webkit-box-decoration-break: clone;
+    }
+    .message-annotation-comment {
+      display: inline-flex;
+      max-width: 100%;
+      align-items: baseline;
+      gap: 0.3rem;
+      border: 1px solid var(--annotation-comment-border);
+      border-radius: 6px;
+      background: var(--annotation-comment-bg);
+      color: var(--annotation-comment-fg);
+      padding: 0.08rem 0.4rem;
+      font-size: 0.82em;
+      line-height: 1.35;
+      vertical-align: baseline;
+      overflow-wrap: anywhere;
+    }
+    .message-annotation-label {
+      flex-shrink: 0;
+      color: var(--annotation-comment-label);
+      font-size: 0.72em;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+    .message-annotation-body {
+      min-width: 0;
     }
     .message-divider {
       height: 1px;

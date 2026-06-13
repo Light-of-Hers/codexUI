@@ -1060,6 +1060,33 @@
   -webkit-box-decoration-break: clone;
 }
 
+.message-annotation {
+  @apply inline-flex max-w-full flex-wrap items-baseline gap-1 align-baseline;
+}
+
+.message-annotation-mark {
+  border-radius: 0.22em;
+  border-bottom: 2px solid #0969da;
+  background: rgba(9, 105, 218, 0.12);
+  color: inherit;
+  padding: 0 0.12em;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.message-annotation-comment {
+  @apply inline-flex max-w-full items-baseline gap-1 rounded-md border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[0.82em] leading-snug text-amber-950 align-baseline;
+  overflow-wrap: anywhere;
+}
+
+.message-annotation-label {
+  @apply shrink-0 text-[0.72em] font-semibold uppercase tracking-normal text-amber-700;
+}
+
+.message-annotation-body {
+  @apply min-w-0;
+}
+
 .message-markdown-image {
   @apply w-auto h-auto max-w-[min(560px,85vw)] max-h-[min(460px,62vh)] object-contain bg-white;
 }
@@ -1373,6 +1400,19 @@
 
 :root.dark .message-inline-code {
   @apply border-zinc-600 bg-zinc-700/60 text-zinc-200;
+}
+
+:root.dark .message-annotation-mark {
+  border-bottom-color: #58a6ff;
+  background: rgba(56, 139, 253, 0.18);
+}
+
+:root.dark .message-annotation-comment {
+  @apply border-amber-500/30 bg-amber-500/10 text-amber-100;
+}
+
+:root.dark .message-annotation-label {
+  @apply text-amber-300;
 }
 
 :root.dark .message-inline-code .message-inline-code-link {

@@ -5345,6 +5345,37 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Rollback/Cleanup
 - Remove any `==...==` markers added to a non-disposable markdown file, or discard the disposable copy.
 
+### Feature: Markdown mark/comment annotation rendering
+
+#### Prerequisites
+- App server is running from this repository.
+- A writable `.md` or `.markdown` file is available, preferably a disposable copy.
+- Light and dark themes are both available from the operating system or browser color-scheme setting.
+
+#### Steps
+1. Run `pnpm exec vitest run src/components/content/markdownRenderer.test.ts src/server/localBrowseUi.test.ts`.
+2. Open the markdown file through `/codex-local-edit/<absolute-markdown-path>`.
+3. Add `\mark{annotated text}\comment{review this}` to a paragraph.
+4. Add `\cmt{standalone note}` to another paragraph.
+5. Click `Preview` and confirm the marked text renders with annotation styling and the comments render as inline comment pills.
+6. Add `` `\mark{code}\comment{raw}` `` and confirm code spans keep the literal text.
+7. Repeat the preview check in dark theme.
+
+#### Expected Results
+- `\mark{...}` renders as an annotation mark without exposing the raw command syntax.
+- `\comment{...}` and `\cmt{...}` render as readable inline comment notes.
+- Adjacent `\mark{...}\comment{...}` renders as a paired annotation.
+- Code spans are not parsed as annotations.
+- Annotation marks and comment notes remain readable in light and dark themes.
+
+#### Performance Audit
+- Annotation parsing runs during the existing markdown tree transform and scans only text nodes that contain annotation command prefixes or `==`.
+- Code, links, math, and existing ignored text ancestors are skipped as before.
+- No extra filesystem access, network requests, preview iframe messages, or preview rerenders are introduced.
+
+#### Rollback/Cleanup
+- Remove the disposable `\mark{...}`, `\comment{...}`, or `\cmt{...}` examples from non-test markdown files.
+
 ### Feature: Composer markdown preview
 
 #### Prerequisites

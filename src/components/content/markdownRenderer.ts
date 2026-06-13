@@ -54,6 +54,21 @@ type InlineToken =
   | { kind: 'file'; value: string; path: string; displayPath: string; line: number | null; endLine: number | null }
   | { kind: 'image'; alt: string; url: string; markdown: string }
 
+type AnnotationCommandKind = 'mark' | 'comment'
+
+type AnnotationCommandMatch = {
+  kind: AnnotationCommandKind
+  start: number
+  end: number
+  value: string
+}
+
+type DecorationRange =
+  | { kind: 'highlight'; start: number; end: number; value: string }
+  | { kind: 'mark'; start: number; end: number; value: string }
+  | { kind: 'comment'; start: number; end: number; value: string }
+  | { kind: 'markComment'; start: number; end: number; mark: string; comment: string }
+
 type ParsedFileReference = {
   path: string
   line: number | null
@@ -361,22 +376,22 @@ function isWhitespaceText(node: MarkdownNode): boolean {
 
 function transformMarkdownTree(root: MarkdownNode, context: MarkdownRenderContext): void {
   if (!Array.isArray(root.children)) return
-  splitHighlightSyntax(root, [])
+  splitDecorationSyntax(root, [])
   transformChildren(root, [], context)
   annotateSourceLocations(root)
 }
 
-function splitHighlightSyntax(parent: MarkdownNode, ancestors: MarkdownElement[]): void {
+function splitDecorationSyntax(parent: MarkdownNode, ancestors: MarkdownElement[]): void {
   if (!Array.isArray(parent.children)) return
 
   for (let index = 0; index < parent.children.length; index += 1) {
     const child = parent.children[index]
 
     if (isText(child)) {
-      if (hasIgnoredTextAncestor(ancestors) || !child.value.includes('==')) {
+      if (hasIgnoredTextAncestor(ancestors) || !hasDecorationSyntax(child.value)) {
         continue
       }
-      const replacement = splitHighlightTextNode(child.value)
+      const replacement = splitDecoratedTextNode(child.value)
       if (replacement.length === 1 && replacement[0] === child) {
         continue
       }
@@ -389,30 +404,27 @@ function splitHighlightSyntax(parent: MarkdownNode, ancestors: MarkdownElement[]
       continue
     }
 
-    splitHighlightSyntax(child, [...ancestors, child])
+    splitDecorationSyntax(child, [...ancestors, child])
   }
 }
 
-function splitHighlightTextNode(text: string): MarkdownNode[] {
+function hasDecorationSyntax(text: string): boolean {
+  return text.includes('==') || text.includes('\\mark{') || text.includes('\\comment{') || text.includes('\\cmt{')
+}
+
+function splitDecoratedTextNode(text: string): MarkdownNode[] {
   const nodes: MarkdownNode[] = []
   let cursor = 0
 
   while (cursor < text.length) {
-    const range = findNextHighlightRange(text, cursor)
+    const range = findNextDecorationRange(text, cursor)
     if (!range) break
 
     if (range.start > cursor) {
       nodes.push({ type: 'text', value: text.slice(cursor, range.start) })
     }
 
-    nodes.push({
-      type: 'element',
-      tagName: 'mark',
-      properties: {
-        className: ['message-highlight'],
-      },
-      children: [{ type: 'text', value: range.value }],
-    })
+    nodes.push(createDecorationNode(range))
     cursor = range.end
   }
 
@@ -423,10 +435,93 @@ function splitHighlightTextNode(text: string): MarkdownNode[] {
   return nodes.length > 0 ? nodes : [{ type: 'text', value: text }]
 }
 
+function createDecorationNode(range: DecorationRange): MarkdownNode {
+  if (range.kind === 'highlight') {
+    return {
+      type: 'element',
+      tagName: 'mark',
+      properties: {
+        className: ['message-highlight'],
+      },
+      children: [{ type: 'text', value: range.value }],
+    }
+  }
+
+  if (range.kind === 'mark') {
+    return createAnnotationMarkNode(range.value)
+  }
+
+  if (range.kind === 'comment') {
+    return createAnnotationCommentNode(range.value)
+  }
+
+  return {
+    type: 'element',
+    tagName: 'span',
+    properties: {
+      className: ['message-annotation'],
+    },
+    children: [
+      createAnnotationMarkNode(range.mark),
+      createAnnotationCommentNode(range.comment),
+    ],
+  }
+}
+
+function createAnnotationMarkNode(value: string): MarkdownElement {
+  return {
+    type: 'element',
+    tagName: 'mark',
+    properties: {
+      className: ['message-annotation-mark'],
+    },
+    children: [{ type: 'text', value }],
+  }
+}
+
+function createAnnotationCommentNode(value: string): MarkdownElement {
+  return {
+    type: 'element',
+    tagName: 'span',
+    properties: {
+      className: ['message-annotation-comment'],
+      role: 'note',
+    },
+    children: [
+      {
+        type: 'element',
+        tagName: 'span',
+        properties: {
+          className: ['message-annotation-label'],
+          ariaHidden: 'true',
+        },
+        children: [{ type: 'text', value: 'Comment' }],
+      },
+      {
+        type: 'element',
+        tagName: 'span',
+        properties: {
+          className: ['message-annotation-body'],
+        },
+        children: [{ type: 'text', value }],
+      },
+    ],
+  }
+}
+
+function findNextDecorationRange(text: string, fromIndex: number): DecorationRange | null {
+  const highlightRange = findNextHighlightRange(text, fromIndex)
+  const annotationRange = findNextAnnotationRange(text, fromIndex)
+
+  if (!highlightRange) return annotationRange
+  if (!annotationRange) return highlightRange
+  return highlightRange.start <= annotationRange.start ? highlightRange : annotationRange
+}
+
 function findNextHighlightRange(
   text: string,
   fromIndex: number,
-): { start: number; end: number; value: string } | null {
+): DecorationRange | null {
   let openIndex = text.indexOf('==', fromIndex)
   while (openIndex >= 0) {
     if (text[openIndex - 1] === '=' || text[openIndex + 2] === '=') {
@@ -447,6 +542,7 @@ function findNextHighlightRange(
       }
 
       return {
+        kind: 'highlight',
         start: openIndex,
         end: closeIndex + 2,
         value,
@@ -457,6 +553,122 @@ function findNextHighlightRange(
   }
 
   return null
+}
+
+function findNextAnnotationRange(text: string, fromIndex: number): DecorationRange | null {
+  let scanFrom = fromIndex
+
+  while (scanFrom < text.length) {
+    const commandIndex = text.indexOf('\\', scanFrom)
+    if (commandIndex < 0) return null
+
+    const command = parseAnnotationCommandAt(text, commandIndex)
+    if (!command) {
+      scanFrom = commandIndex + 1
+      continue
+    }
+
+    if (command.value.trim().length === 0) {
+      scanFrom = command.end
+      continue
+    }
+
+    if (command.kind === 'mark') {
+      const comment = parseAdjacentCommentCommand(text, command.end)
+      if (comment && comment.value.trim().length > 0) {
+        return {
+          kind: 'markComment',
+          start: command.start,
+          end: comment.end,
+          mark: command.value,
+          comment: comment.value,
+        }
+      }
+
+      return {
+        kind: 'mark',
+        start: command.start,
+        end: command.end,
+        value: command.value,
+      }
+    }
+
+    return {
+      kind: 'comment',
+      start: command.start,
+      end: command.end,
+      value: command.value,
+    }
+  }
+
+  return null
+}
+
+function parseAdjacentCommentCommand(text: string, fromIndex: number): AnnotationCommandMatch | null {
+  let cursor = fromIndex
+  while (cursor < text.length && (text[cursor] === ' ' || text[cursor] === '\t')) {
+    cursor += 1
+  }
+
+  const command = parseAnnotationCommandAt(text, cursor)
+  return command?.kind === 'comment' ? command : null
+}
+
+function parseAnnotationCommandAt(text: string, start: number): AnnotationCommandMatch | null {
+  if (text[start] !== '\\') return null
+
+  const commandMap: Array<{ raw: string; kind: AnnotationCommandKind }> = [
+    { raw: '\\comment{', kind: 'comment' },
+    { raw: '\\mark{', kind: 'mark' },
+    { raw: '\\cmt{', kind: 'comment' },
+  ]
+
+  const command = commandMap.find((candidate) => text.startsWith(candidate.raw, start))
+  if (!command) return null
+
+  const openBraceIndex = start + command.raw.length - 1
+  const body = readBalancedAnnotationBody(text, openBraceIndex)
+  if (!body) return null
+
+  return {
+    kind: command.kind,
+    start,
+    end: body.end,
+    value: decodeAnnotationValue(body.value),
+  }
+}
+
+function readBalancedAnnotationBody(text: string, openBraceIndex: number): { value: string; end: number } | null {
+  if (text[openBraceIndex] !== '{') return null
+
+  let depth = 1
+  let cursor = openBraceIndex + 1
+
+  while (cursor < text.length) {
+    const char = text[cursor]
+    if (char === '\\') {
+      cursor += 2
+      continue
+    }
+    if (char === '{') {
+      depth += 1
+    } else if (char === '}') {
+      depth -= 1
+      if (depth === 0) {
+        return {
+          value: text.slice(openBraceIndex + 1, cursor),
+          end: cursor + 1,
+        }
+      }
+    }
+    cursor += 1
+  }
+
+  return null
+}
+
+function decodeAnnotationValue(value: string): string {
+  return value.replace(/\\([{}\\])/gu, '$1')
 }
 
 function transformChildren(parent: MarkdownNode, ancestors: MarkdownElement[], context: MarkdownRenderContext): void {

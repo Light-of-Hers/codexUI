@@ -105,6 +105,19 @@ const answer = 42
     expect(html).toContain('>==code==</code>')
   })
 
+  it('renders inline mark and comment annotation commands', () => {
+    const html = render('Review \\mark{this part}\\comment{check terms} and \\cmt{loose note}, but keep `\\mark{code}\\comment{nope}`.')
+
+    expect(html).toContain('class="message-annotation"')
+    expect(html).toContain('<mark class="message-annotation-mark">this part</mark>')
+    expect(html).toContain('class="message-annotation-comment" role="note"')
+    expect(html).toContain('class="message-annotation-label" aria-hidden="true">Comment</span>')
+    expect(html).toContain('<span class="message-annotation-body">check terms</span>')
+    expect(html).toContain('<span class="message-annotation-body">loose note</span>')
+    expect(html).toContain('<code class="message-inline-code"')
+    expect(html).toContain(String.raw`>\mark{code}\comment{nope}</code>`)
+  })
+
   it('wraps tight list item inline content in a single text block', () => {
     const html = render('- `repos/codexUI`：`origin/crz/dev` → `18dd52c`')
 

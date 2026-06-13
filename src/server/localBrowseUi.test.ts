@@ -154,6 +154,8 @@ describe('local browse markdown preview', () => {
       '',
       'This is ==important==.',
       '',
+      String.raw`Review \mark{annotated text}\comment{check this} and \cmt{standalone note}.`,
+      '',
       '![Diagram](./assets/diagram.png)',
       '',
       '```ts',
@@ -168,8 +170,14 @@ describe('local browse markdown preview', () => {
     expect(html).toContain('src="/codex-local-image?path=%2Ftmp%2Fpreview%20space%2Fassets%2Fdiagram.png"')
     expect(html).toContain('message-code-block')
     expect(html).toContain('<mark class="message-highlight">important</mark>')
+    expect(html).toContain('<mark class="message-annotation-mark">annotated text</mark>')
+    expect(html).toContain('class="message-annotation-comment" role="note"')
+    expect(html).toContain('<span class="message-annotation-body">check this</span>')
+    expect(html).toContain('<span class="message-annotation-body">standalone note</span>')
     expect(html).toContain('--highlight-bg: #fff3b0;')
     expect(html).toContain('--highlight-bg: rgba(187, 128, 9, 0.42);')
+    expect(html).toContain('--annotation-mark-bg: rgba(9, 105, 218, 0.12);')
+    expect(html).toContain('--annotation-mark-bg: rgba(56, 139, 253, 0.18);')
     expect(html).toContain('message-scroll-anchor')
     expect(html).toContain('language-ts')
     expect(html).toContain('--syntax-keyword: #d73a49;')
