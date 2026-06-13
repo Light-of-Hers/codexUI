@@ -40,7 +40,10 @@ describe('local browse markdown preview', () => {
     expect(markdownEditorHtml).toContain('id="previewBtn"')
     expect(markdownEditorHtml).toContain('id="floatingHighlightBtn"')
     expect(markdownEditorHtml).toContain('id="floatingMarkBtn"')
+    expect(markdownEditorHtml).toContain('id="floatingHighlightActions"')
     expect(markdownEditorHtml).toContain('id="floatingRemoveHighlightBtn"')
+    expect(markdownEditorHtml).toContain('id="floatingHighlightCommentBtn"')
+    expect(markdownEditorHtml).toContain('id="floatingRemoveHighlightCommentBtn"')
     expect(markdownEditorHtml).toContain('id="floatingMarkActions"')
     expect(markdownEditorHtml).toContain('id="floatingUnmarkBtn"')
     expect(markdownEditorHtml).toContain('id="floatingCommentBtn"')
@@ -80,6 +83,9 @@ describe('local browse markdown preview', () => {
     expect(markdownEditorHtml).toContain('highlightCurrentSelection')
     expect(markdownEditorHtml).toContain('markCurrentSelection')
     expect(markdownEditorHtml).toContain('removeCurrentHighlight')
+    expect(markdownEditorHtml).toContain('editCurrentHighlightComment')
+    expect(markdownEditorHtml).toContain('removeCurrentHighlightComment')
+    expect(markdownEditorHtml).toContain('upsertHighlightComment')
     expect(markdownEditorHtml).toContain('unmarkCurrentMark')
     expect(markdownEditorHtml).toContain('editCurrentMarkComment')
     expect(markdownEditorHtml).toContain('removeCurrentMarkComment')
@@ -88,6 +94,7 @@ describe('local browse markdown preview', () => {
     expect(markdownEditorHtml).toContain('saveEditorContent();')
     expect(markdownEditorHtml).toContain("editor.session.replace(new Range(start.row, start.column, end.row, end.column), '==' + selectedSource + '==')")
     expect(markdownEditorHtml).toContain('findHighlightMarkupInEditor')
+    expect(markdownEditorHtml).toContain('highlightEndIndex')
     expect(markdownEditorHtml).toContain('matchedOccurrence')
     expect(markdownEditorHtml).toContain('removeHighlightMarkup')
     expect(markdownEditorHtml).toContain("editor.selection.on('changeSelection'")
@@ -110,6 +117,7 @@ describe('local browse markdown preview', () => {
     expect(textEditorHtml).not.toContain('id="previewBtn"')
     expect(textEditorHtml).not.toContain('id="floatingHighlightBtn"')
     expect(textEditorHtml).not.toContain('id="floatingMarkBtn"')
+    expect(textEditorHtml).not.toContain('id="floatingHighlightActions"')
     expect(textEditorHtml).not.toContain('id="floatingRemoveHighlightBtn"')
     expect(textEditorHtml).not.toContain('id="floatingMarkActions"')
     expect(textEditorHtml).not.toContain('id="previewSplitter"')
@@ -167,7 +175,7 @@ describe('local browse markdown preview', () => {
       'L_0',
       '$$',
       '',
-      'This is ==important==.',
+      String.raw`This is ==important==\comment{highlight note}.`,
       '',
       String.raw`Review \mark{annotated text}\comment{check this} and \cmt{standalone note}.`,
       '',
@@ -187,6 +195,7 @@ describe('local browse markdown preview', () => {
     expect(html).toContain('<mark class="message-highlight">important</mark>')
     expect(html).toContain('<mark class="message-annotation-mark">annotated text</mark>')
     expect(html).toContain('class="message-annotation-comment" role="note"')
+    expect(html).toContain('<span class="message-annotation-body">highlight note</span>')
     expect(html).toContain('<span class="message-annotation-body">check this</span>')
     expect(html).toContain('<span class="message-annotation-body">standalone note</span>')
     expect(html).toContain('--highlight-bg: #fff3b0;')

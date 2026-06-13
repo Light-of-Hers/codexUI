@@ -5320,19 +5320,24 @@ Markdown files opened through the local editor expose a preview button that rend
 5. Click an unrelated area in the editor, preview, or toolbar and confirm the floating `Highlight` button disappears.
 6. Select the preview phrase again, then click the floating `Highlight` button.
 7. Confirm the editor source wraps the matching text with `==` delimiters and the preview rerenders it with a highlighted background.
-8. Click the highlighted block in the preview and confirm a floating `Remove highlight` button appears beside it.
-9. Click outside the highlighted block and confirm the floating `Remove highlight` button disappears.
-10. Click the highlighted block again, then click `Remove highlight` and confirm the editor source removes only the surrounding `==` delimiters.
-11. Select text directly inside the editor and confirm the floating `Highlight` button can add `==...==` there too.
-12. Click inside the preview pane so it has focus, press `Ctrl+S`, reload the editor URL, and confirm the current editor content is saved instead of the browser saving/downloading the preview page.
-13. Edit the file again, then press `Ctrl+S` with focus in the editor or click `Save`, reload the editor URL, and confirm the remaining highlight edits persist.
-14. Repeat the preview, floating action, dismissal, preview-focused save, removal, and highlight visibility checks in dark theme.
+8. Click the highlighted block in the preview and confirm floating `Remove highlight` and `Add comment` actions appear beside it.
+9. Click `Add comment`, enter comment text, and confirm the source becomes `==...==\comment{...}` and preview renders the comment pill after the highlight.
+10. Click the highlighted block again, use `Edit comment`, and confirm the existing comment changes in source and preview.
+11. Click the highlighted block again, use `Remove comment`, and confirm only the adjacent `\comment{...}` portion is removed.
+12. Click outside the highlighted block and confirm the floating highlight actions disappear.
+13. Click the highlighted block again, then click `Remove highlight` and confirm the editor source removes only the surrounding `==` delimiters.
+14. Select text directly inside the editor and confirm the floating `Highlight` button can add `==...==` there too.
+15. Click inside the preview pane so it has focus, press `Ctrl+S`, reload the editor URL, and confirm the current editor content is saved instead of the browser saving/downloading the preview page.
+16. Edit the file again, then press `Ctrl+S` with focus in the editor or click `Save`, reload the editor URL, and confirm the remaining highlight edits persist.
+17. Repeat the preview, floating action, dismissal, preview-focused save, removal, and highlight visibility checks in dark theme.
 
 #### Expected Results
 - Markdown preview renders `==highlighted text==` as a readable highlighted `<mark>` style.
 - `Highlight` appears near the current editor or preview selection instead of occupying the toolbar.
-- `Highlight` and `Remove highlight` disappear when clicking anywhere other than the floating action itself.
-- Clicking an existing preview highlight exposes `Remove highlight`, which removes the source delimiters.
+- `Highlight`, `Remove highlight`, and highlight comment actions disappear when clicking anywhere other than the floating action itself.
+- Clicking an existing preview highlight exposes `Remove highlight` and comment controls.
+- Add/edit/remove comment updates only the adjacent `\comment{...}` command after the highlight.
+- `Remove highlight` removes the source delimiters without deleting an adjacent comment.
 - `Ctrl+S` saves the editor file whether focus is in the editor page or inside the preview iframe.
 - Existing preview links, scroll sync, resize behavior, and double-click source jump continue to work.
 - Highlight colors are readable in both light and dark themes.
@@ -5343,7 +5348,7 @@ Markdown files opened through the local editor expose a preview button that rend
 - No filesystem access, network requests, preview rerenders, or markdown reparsing are triggered merely by hiding the floating buttons.
 
 #### Rollback/Cleanup
-- Remove any `==...==` markers added to a non-disposable markdown file, or discard the disposable copy.
+- Remove any `==...==` or `\comment{...}` markers added to a non-disposable markdown file, or discard the disposable copy.
 
 ### Feature: Markdown mark/comment annotation rendering
 
