@@ -518,6 +518,9 @@ type MarkdownRendererModule = typeof import('./markdownRenderer')
 type ComposerFileMentionsModule = typeof import('./composerFileMentions')
 type ComposerSkillMentionsModule = typeof import('./composerSkillMentions')
 
+const INLINE_MENTION_TOKEN_PATTERN = /(^|\s)([@\uFF20$\uFF04][^\s@\uFF20$\uFF04]*)$/u
+const FULL_WIDTH_DOLLAR = '\uFF04'
+
 let markdownRendererModulePromise: Promise<MarkdownRendererModule> | null = null
 let composerFileMentionsModulePromise: Promise<ComposerFileMentionsModule> | null = null
 let composerSkillMentionsModulePromise: Promise<ComposerSkillMentionsModule> | null = null
@@ -1857,7 +1860,7 @@ function updateInlineMentionState(): void {
   }
   const cursor = input.selectionStart ?? draft.value.length
   const beforeCursor = draft.value.slice(0, cursor)
-  const match = beforeCursor.match(/(^|\s)([@$][^\s@$]*)$/u)
+  const match = beforeCursor.match(INLINE_MENTION_TOKEN_PATTERN)
   if (!match) {
     closeInlineMention()
     return
@@ -1866,7 +1869,7 @@ function updateInlineMentionState(): void {
   const mentionToken = match[2] ?? ''
   const mentionOffset = mentionToken.length
   const startIndex = cursor - mentionOffset
-  const mentionKind = mentionToken.startsWith('$') ? 'skill' : 'file'
+  const mentionKind = mentionToken.startsWith('$') || mentionToken.startsWith(FULL_WIDTH_DOLLAR) ? 'skill' : 'file'
   mentionStartIndex.value = startIndex
   mentionQuery.value = mentionToken.slice(1)
   activeMentionKind.value = mentionKind

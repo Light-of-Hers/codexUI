@@ -89,6 +89,21 @@ describe('composerFileMentions', () => {
     ])
   })
 
+  it('extracts full-width @ inline mentions as file attachments', () => {
+    const attachments = extractComposerFileMentionAttachments(
+      'Read \uFF20notes/2026-04-24-codex-sandboxing.md next.',
+      '/root/work/my-notebook',
+    )
+
+    expect(attachments).toEqual([
+      {
+        label: '2026-04-24-codex-sandboxing.md',
+        path: 'notes/2026-04-24-codex-sandboxing.md',
+        fsPath: '/root/work/my-notebook/notes/2026-04-24-codex-sandboxing.md',
+      },
+    ])
+  })
+
   it('formats absolute selections as @ mentions so they remain extractable', () => {
     expect(formatComposerFileMention('/root/work/my-agent-configs/repos/codexUI')).toBe(
       '@/root/work/my-agent-configs/repos/codexUI',

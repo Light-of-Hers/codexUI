@@ -6548,16 +6548,21 @@ Markdown files opened through the local editor expose a preview button that rend
 - Light and dark themes are both available from Settings.
 
 #### Steps
-1. Run `pnpm exec vitest run src/components/content/composerFileMentions.test.ts src/server/composerFileSearch.test.ts`.
-2. Open the project in light theme.
-3. Focus the composer and type `@~/work/my-agent-configs/repos/codexUI`.
-4. Confirm the mention dropdown can resolve the path, select the result, and confirm the inserted mention starts with `@/root/work/my-agent-configs/repos/codexUI` or preserves an equivalent absolute path.
-5. Send a short prompt containing that mention.
-6. Confirm the generated request includes `codexUI` under `# Files mentioned by the user` and does not rewrite it under the current project cwd.
-7. Repeat steps 2-6 in dark theme.
+1. Run `pnpm exec vitest run src/components/content/composerFileMentions.test.ts src/server/composerFileSearch.test.ts src/server/codexAppServerBridge.inlinePayload.test.ts -t "composer file search|composerFileMentions|searchComposerPaths"`.
+2. Open the project in light theme, including the launch-path form `~/work/my-notebook` if available.
+3. Focus the composer and type bare `@`.
+4. Confirm the file mention dropdown opens with path suggestions instead of doing nothing.
+5. Type full-width `＠` with a Chinese input method and confirm it also opens file mention state.
+6. Type `@~/work/my-agent-configs/repos/codexUI`.
+7. Confirm the mention dropdown can resolve the path, select the result, and confirm the inserted mention starts with `@/root/work/my-agent-configs/repos/codexUI` or preserves an equivalent absolute path.
+8. Send a short prompt containing that mention.
+9. Confirm the generated request includes `codexUI` under `# Files mentioned by the user` and does not rewrite it under the current project cwd.
+10. Repeat steps 2-9 in dark theme.
 
 #### Expected Results
 - `@/src/...` style project-relative searches still behave as project-relative paths.
+- Bare `@` opens the dropdown when the active cwd came from `~/work/my-notebook`.
+- Full-width `＠` opens and extracts file mentions the same way as ASCII `@`.
 - `@~/...` and `@/root/...` paths resolve to the real filesystem path instead of becoming `<cwd>/~/...` or `<cwd>/root/...`.
 - Absolute path suggestions insert as `@` mentions so inline attachment extraction still sees them.
 - Light and dark theme suggestion rows remain readable.
@@ -6565,6 +6570,7 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Performance Audit
 - Home and absolute path searches first try exact stat-based resolution, then search only the nearest existing parent directory for partial path completion.
 - The change avoids falling back to a full cwd scan for home or absolute queries that do not resolve.
+- Home-prefixed cwd normalization is a constant-time string check before the existing filesystem validation.
 - Existing relative mention searches continue to use the existing single `rg --files` scan.
 
 #### Rollback/Cleanup

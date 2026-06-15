@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -1933,6 +1933,54 @@ describe('app-server runtime configuration', () => {
       const byPath = new Map(payload.data.map((entry) => [entry.path, entry]))
       expect(byPath.get('file-link.txt')).toMatchObject({ kind: 'file', isSymlink: true })
       expect(byPath.get('dir-link')).toMatchObject({ kind: 'directory', isSymlink: true })
+    } finally {
+      middleware.dispose()
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('expands home-prefixed cwd in composer file search route', async () => {
+    const home = homedir().replace(/[\\/]+$/u, '')
+    const tempDir = await mkdtemp(join(home, 'codexui-composer-route-home-'))
+    const middleware = createCodexBridgeMiddleware()
+    try {
+      await writeFile(join(tempDir, 'alpha.txt'), 'alpha')
+
+      const responseChunks: string[] = []
+      const response = {
+        statusCode: 0,
+        setHeader: () => undefined,
+        write: (chunk?: unknown) => {
+          if (chunk) responseChunks.push(String(chunk))
+          return true
+        },
+        end: (chunk?: unknown) => {
+          if (chunk) responseChunks.push(String(chunk))
+        },
+        once: () => response,
+      }
+      const homeCwd = `~/${tempDir.slice(home.length + 1)}`
+      const body = JSON.stringify({ cwd: homeCwd, query: 'alpha', limit: 20 })
+      const request = Readable.from([body]) as Readable & {
+        url: string
+        method: string
+        headers: Record<string, string>
+      }
+      request.url = '/codex-api/composer-file-search'
+      request.method = 'POST'
+      request.headers = { 'content-type': 'application/json' }
+
+      await middleware(
+        request as never,
+        response as never,
+        () => { throw new Error('composer file search route should handle the request') },
+      )
+
+      expect(response.statusCode).toBe(200)
+      const payload = JSON.parse(responseChunks.join('')) as {
+        data: Array<{ path: string; kind?: string; isSymlink?: boolean }>
+      }
+      expect(payload.data.some((entry) => entry.path === 'alpha.txt')).toBe(true)
     } finally {
       middleware.dispose()
       await rm(tempDir, { recursive: true, force: true })

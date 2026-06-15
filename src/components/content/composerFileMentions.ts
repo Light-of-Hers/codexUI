@@ -6,6 +6,8 @@ export type ComposerInlineFileAttachment = {
   fsPath: string
 }
 
+const FILE_MENTION_TRIGGERS = ['@', '\uFF20'] as const
+
 const MENTION_BOUNDARY_CHARS = new Set([
   '(', '[', '{', '<',
   '"', "'",
@@ -117,7 +119,7 @@ function readMentionPathAt(text: string, atIndex: number): { path: string; endIn
   if (!hasMentionBoundary(text, atIndex)) return null
 
   let startIndex = -1
-  if (text[atIndex] === '@') {
+  if (FILE_MENTION_TRIGGERS.includes(text[atIndex] as typeof FILE_MENTION_TRIGGERS[number])) {
     startIndex = atIndex + 1
   } else if (text[atIndex] === '.' && text[atIndex + 1] === '/') {
     startIndex = atIndex + 2
@@ -258,11 +260,10 @@ export function extractComposerFileMentionAttachments(text: string, cwd = ''): C
 
   while (index < text.length) {
     const atIndex = text.indexOf('@', index)
+    const fullWidthAtIndex = text.indexOf('\uFF20', index)
     const dotIndex = text.indexOf('./', index)
-    const nextIndex =
-      atIndex < 0 ? dotIndex
-        : dotIndex < 0 ? atIndex
-          : Math.min(atIndex, dotIndex)
+    const mentionIndexes = [atIndex, fullWidthAtIndex, dotIndex].filter((value) => value >= 0)
+    const nextIndex = mentionIndexes.length > 0 ? Math.min(...mentionIndexes) : -1
     if (nextIndex < 0) break
 
     const mention = readMentionPathAt(text, nextIndex)

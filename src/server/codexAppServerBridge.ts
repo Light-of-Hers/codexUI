@@ -5171,13 +5171,21 @@ function stripPathLineReference(value: string): string {
   return trimmed
 }
 
+function normalizeLocalPathInput(value: string): string {
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  if (trimmed === '~') return homedir()
+  if (trimmed.startsWith('~/')) return resolve(homedir(), trimmed.slice(2))
+  return isAbsolute(trimmed) ? trimmed : resolve(trimmed)
+}
+
 async function normalizeExistingDirectoryRoots(rawRoots: readonly string[], maxRoots: number): Promise<string[]> {
   const roots: string[] = []
   const seen = new Set<string>()
   for (const rawRoot of rawRoots) {
     const trimmed = rawRoot.trim()
     if (!trimmed) continue
-    const root = isAbsolute(trimmed) ? trimmed : resolve(trimmed)
+    const root = normalizeLocalPathInput(trimmed)
     if (seen.has(root)) continue
     seen.add(root)
     try {
@@ -8952,7 +8960,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           return
         }
 
-        const normalizedPath = isAbsolute(rawPath) ? rawPath : resolve(rawPath)
+        const normalizedPath = normalizeLocalPathInput(rawPath)
         let pathExists = true
         try {
           const info = await stat(normalizedPath)
@@ -8984,7 +8992,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           return
         }
 
-        const normalizedPath = isAbsolute(rawPath) ? rawPath : resolve(rawPath)
+        const normalizedPath = normalizeLocalPathInput(rawPath)
         try {
           const info = await stat(normalizedPath)
           if (!info.isDirectory()) {
@@ -9030,7 +9038,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           setJson(res, 400, { error: 'Missing basePath' })
           return
         }
-        const normalizedBasePath = isAbsolute(basePath) ? basePath : resolve(basePath)
+        const normalizedBasePath = normalizeLocalPathInput(basePath)
         try {
           const baseInfo = await stat(normalizedBasePath)
           if (!baseInfo.isDirectory()) {
@@ -9070,7 +9078,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           setJson(res, 400, { error: 'Missing cwd' })
           return
         }
-        const cwd = isAbsolute(rawCwd) ? rawCwd : resolve(rawCwd)
+        const cwd = normalizeLocalPathInput(rawCwd)
         try {
           const info = await stat(cwd)
           if (!info.isDirectory()) {
@@ -9105,7 +9113,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           setJson(res, 200, { data: [] })
           return
         }
-        const cwd = isAbsolute(rawCwd) ? rawCwd : resolve(rawCwd)
+        const cwd = normalizeLocalPathInput(rawCwd)
         try {
           const info = await stat(cwd)
           if (!info.isDirectory()) {
