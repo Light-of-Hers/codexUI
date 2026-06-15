@@ -36,12 +36,6 @@ const COMPOSER_RIPGREP_FILE_ARGS = [
   '!.git',
   '-g',
   '!node_modules',
-  '-g',
-  '!.venv',
-  '-g',
-  '!venv',
-  '-g',
-  '!__pycache__',
 ]
 
 type ComposerPathCacheEntry = {
