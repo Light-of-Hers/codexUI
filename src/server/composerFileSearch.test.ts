@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { searchComposerPaths } from './composerFileSearch'
 
 let tempDir = ''
@@ -58,6 +58,53 @@ describe('searchComposerPaths', () => {
 
     expect(results[0]?.path).toBe('install-configs.py')
     expect(results.some((entry) => entry.path === 'install-configs.py')).toBe(true)
+  })
+
+  it('returns exact absolute path queries without treating them as cwd-relative text', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'codexui-composer-search-'))
+    const targetDir = join(tempDir, 'absolute-target')
+    await mkdir(targetDir, { recursive: true })
+    await writeFile(join(targetDir, 'README.md'), 'target')
+
+    const results = await searchComposerPaths(tempDir, targetDir, 20)
+
+    expect(results[0]).toMatchObject({
+      path: targetDir,
+      kind: 'directory',
+      isSymlink: false,
+    })
+  })
+
+  it('completes partial absolute path queries from the nearest existing parent', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'codexui-composer-search-'))
+    const targetDir = join(tempDir, 'absolute-target')
+    await mkdir(targetDir, { recursive: true })
+    await writeFile(join(targetDir, 'README.md'), 'target')
+
+    const results = await searchComposerPaths(tempDir, join(tempDir, 'absolute-targ'), 20)
+
+    expect(results[0]).toMatchObject({
+      path: targetDir,
+      kind: 'directory',
+      isSymlink: false,
+    })
+  })
+
+  it('expands home-prefixed path queries before searching', async () => {
+    const home = homedir().replace(/[\\/]+$/u, '')
+    tempDir = await mkdtemp(join(home, 'codexui-composer-home-'))
+    const targetDir = join(tempDir, 'home-target')
+    await mkdir(targetDir, { recursive: true })
+    await writeFile(join(targetDir, 'README.md'), 'target')
+    const homeQuery = `~/${targetDir.slice(home.length + 1)}`
+
+    const results = await searchComposerPaths(tempDir, homeQuery, 20)
+
+    expect(results[0]).toMatchObject({
+      path: targetDir,
+      kind: 'directory',
+      isSymlink: false,
+    })
   })
 
   it('prefers simpler paths when matches have the same quality', async () => {

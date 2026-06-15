@@ -3,6 +3,7 @@ import {
   extractComposerFileMentionAttachments,
   formatComposerFileMention,
   insertComposerFileMentionText,
+  resolveComposerFileMentionFsPath,
   toComposerFileMentionSearchQuery,
 } from './composerFileMentions'
 
@@ -35,6 +36,15 @@ describe('composerFileMentions', () => {
     expect(toComposerFileMentionSearchQuery('src/App')).toBe('src/App')
   })
 
+  it('preserves home and likely absolute paths in mention search text', () => {
+    expect(toComposerFileMentionSearchQuery('~/work/my-agent-configs/repos/codexUI')).toBe(
+      '~/work/my-agent-configs/repos/codexUI',
+    )
+    expect(toComposerFileMentionSearchQuery('/root/work/my-agent-configs/repos/codexUI')).toBe(
+      '/root/work/my-agent-configs/repos/codexUI',
+    )
+  })
+
   it('extracts inline ./ mentions as file attachments', () => {
     const attachments = extractComposerFileMentionAttachments(
       'Read ./repos/codexUI and ./"New Project/app file.ts", then ignore user@example.com.',
@@ -57,5 +67,44 @@ describe('composerFileMentions', () => {
     expect(attachments).toEqual([
       { label: 'App.vue', path: 'src/App.vue', fsPath: '/root/work/project/src/App.vue' },
     ])
+  })
+
+  it('extracts home and likely absolute inline @ mentions as file attachments', () => {
+    const attachments = extractComposerFileMentionAttachments(
+      'Compare @~/work/my-agent-configs/repos/codexUI with @"/root/work/my-notebook/notes/space file.md".',
+      '/root/work/my-notebook',
+    )
+
+    expect(attachments).toEqual([
+      {
+        label: 'codexUI',
+        path: '~/work/my-agent-configs/repos/codexUI',
+        fsPath: '/root/work/my-agent-configs/repos/codexUI',
+      },
+      {
+        label: 'space file.md',
+        path: '/root/work/my-notebook/notes/space file.md',
+        fsPath: '/root/work/my-notebook/notes/space file.md',
+      },
+    ])
+  })
+
+  it('formats absolute selections as @ mentions so they remain extractable', () => {
+    expect(formatComposerFileMention('/root/work/my-agent-configs/repos/codexUI')).toBe(
+      '@/root/work/my-agent-configs/repos/codexUI',
+    )
+    expect(formatComposerFileMention('/root/work/my notebook/notes.md')).toBe(
+      '@"/root/work/my notebook/notes.md"',
+    )
+    expect(insertComposerFileMentionText('', '/root/work/my-agent-configs/repos/codexUI', 0)).toEqual({
+      text: '@/root/work/my-agent-configs/repos/codexUI ',
+      selectionIndex: 43,
+    })
+  })
+
+  it('expands tilde file mentions from the current cwd', () => {
+    expect(resolveComposerFileMentionFsPath('~/work/my-agent-configs/repos/codexUI', '/root/work/my-notebook')).toBe(
+      '/root/work/my-agent-configs/repos/codexUI',
+    )
   })
 })

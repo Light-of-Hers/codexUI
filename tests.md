@@ -6540,6 +6540,36 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Rollback/Cleanup
 - No persistent cleanup is required.
 
+### Feature: Composer file mentions for home and absolute paths
+
+#### Prerequisites
+- A project is open with cwd `/root/work/my-notebook` or another project outside `/root/work/my-agent-configs`.
+- The path `/root/work/my-agent-configs/repos/codexUI` exists on the machine.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Run `pnpm exec vitest run src/components/content/composerFileMentions.test.ts src/server/composerFileSearch.test.ts`.
+2. Open the project in light theme.
+3. Focus the composer and type `@~/work/my-agent-configs/repos/codexUI`.
+4. Confirm the mention dropdown can resolve the path, select the result, and confirm the inserted mention starts with `@/root/work/my-agent-configs/repos/codexUI` or preserves an equivalent absolute path.
+5. Send a short prompt containing that mention.
+6. Confirm the generated request includes `codexUI` under `# Files mentioned by the user` and does not rewrite it under the current project cwd.
+7. Repeat steps 2-6 in dark theme.
+
+#### Expected Results
+- `@/src/...` style project-relative searches still behave as project-relative paths.
+- `@~/...` and `@/root/...` paths resolve to the real filesystem path instead of becoming `<cwd>/~/...` or `<cwd>/root/...`.
+- Absolute path suggestions insert as `@` mentions so inline attachment extraction still sees them.
+- Light and dark theme suggestion rows remain readable.
+
+#### Performance Audit
+- Home and absolute path searches first try exact stat-based resolution, then search only the nearest existing parent directory for partial path completion.
+- The change avoids falling back to a full cwd scan for home or absolute queries that do not resolve.
+- Existing relative mention searches continue to use the existing single `rg --files` scan.
+
+#### Rollback/Cleanup
+- No persistent cleanup is required.
+
 ### Feature: Consecutive tool-call rows group like command rows
 
 #### Prerequisites

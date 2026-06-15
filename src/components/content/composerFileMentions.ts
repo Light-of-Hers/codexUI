@@ -20,10 +20,45 @@ const UNQUOTED_MENTION_STOP_CHARS = new Set([
   ',', ';', '!', '?',
 ])
 
+const ABSOLUTE_MENTION_ROOT_SEGMENTS = new Set([
+  'Applications',
+  'Library',
+  'Volumes',
+  'Users',
+  'etc',
+  'home',
+  'media',
+  'mnt',
+  'opt',
+  'private',
+  'root',
+  'srv',
+  'tmp',
+  'usr',
+  'var',
+])
+
+function isWindowsAbsolutePath(pathValue: string): boolean {
+  return /^[A-Za-z]:\//u.test(pathValue)
+}
+
+function isLikelyAbsoluteMentionPath(pathValue: string): boolean {
+  if (isWindowsAbsolutePath(pathValue)) return true
+  if (!pathValue.startsWith('/')) return false
+  const firstSegment = pathValue.slice(1).split('/').filter(Boolean)[0] ?? ''
+  return ABSOLUTE_MENTION_ROOT_SEGMENTS.has(firstSegment)
+}
+
 function normalizeMentionPath(pathValue: string): string {
-  return normalizePathForUi(pathValue)
+  const normalized = normalizePathForUi(pathValue)
     .trim()
     .replace(/\\/gu, '/')
+
+  if (normalized.startsWith('~/') || isLikelyAbsoluteMentionPath(normalized)) {
+    return normalized
+  }
+
+  return normalized
     .replace(/^(?:\.\/|\/)+/u, '')
 }
 
@@ -112,6 +147,16 @@ function normalizeBasePath(pathValue: string): string {
     .replace(/[\\/]+$/u, '')
 }
 
+function inferHomeFromCwd(cwd: string): string {
+  const normalized = normalizePathSeparators(cwd)
+  if (normalized === '/root' || normalized.startsWith('/root/')) return '/root'
+  const userMatch = normalized.match(/^\/Users\/([^/]+)/u)
+  if (userMatch) return `/Users/${userMatch[1]}`
+  const homeMatch = normalized.match(/^\/home\/([^/]+)/u)
+  if (homeMatch) return `/home/${homeMatch[1]}`
+  return ''
+}
+
 function normalizePathDots(pathValue: string): string {
   const normalized = normalizePathSeparators(pathValue)
   if (!normalized) return normalized
@@ -147,8 +192,13 @@ export function resolveComposerFileMentionFsPath(pathValue: string, cwd: string)
   const normalizedPath = normalizeMentionPath(pathValue)
   if (!normalizedPath) return ''
 
-  const looksLikeAbsolute = normalizedPath.startsWith('/') || /^[A-Za-z]:\//u.test(normalizedPath)
+  const looksLikeAbsolute = isLikelyAbsoluteMentionPath(normalizedPath)
   if (looksLikeAbsolute) return normalizePathDots(normalizedPath)
+
+  if (normalizedPath.startsWith('~/')) {
+    const homeBase = inferHomeFromCwd(cwd)
+    if (homeBase) return normalizePathDots(`${homeBase}/${normalizedPath.slice(2)}`)
+  }
 
   const normalizedCwd = normalizeBasePath(cwd)
   if (!normalizedCwd) return normalizePathDots(normalizedPath)
@@ -157,7 +207,9 @@ export function resolveComposerFileMentionFsPath(pathValue: string, cwd: string)
 
 export function formatComposerFileMention(pathValue: string): string {
   const normalizedPath = normalizeMentionPath(pathValue)
-  return normalizedPath ? `./${quoteMentionPathIfNeeded(normalizedPath)}` : ''
+  if (!normalizedPath) return ''
+  const prefix = normalizedPath.startsWith('~/') || isLikelyAbsoluteMentionPath(normalizedPath) ? '@' : './'
+  return `${prefix}${quoteMentionPathIfNeeded(normalizedPath)}`
 }
 
 export function insertComposerFileMentionText(

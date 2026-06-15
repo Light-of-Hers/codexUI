@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
-import { lstat } from 'node:fs/promises'
-import { dirname, isAbsolute, parse, resolve } from 'node:path'
+import { lstat, stat } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { basename, dirname, isAbsolute, parse, resolve } from 'node:path'
 import { normalizePathForUi } from '../pathUtils.js'
 import { resolveRipgrepCommand } from '../commandResolution.js'
 
@@ -28,6 +29,27 @@ function normalizeComposerSearchPath(rawPath: string): string {
     .trim()
     .replace(/\\/gu, '/')
     .replace(/^\.[/]+/u, '')
+}
+
+function normalizeSearchInput(rawPath: string): string {
+  return normalizePathForUi(rawPath)
+    .trim()
+    .replace(/\\/gu, '/')
+}
+
+function expandHomeSearchPath(rawPath: string): string {
+  const normalized = normalizeSearchInput(rawPath)
+  if (normalized === '~') return homedir()
+  if (normalized.startsWith('~/')) return resolve(homedir(), normalized.slice(2))
+  return normalized
+}
+
+function isAbsoluteSearchInput(rawPath: string): boolean {
+  const normalized = normalizeSearchInput(rawPath)
+  return normalized === '~'
+    || normalized.startsWith('~/')
+    || isAbsolute(normalized)
+    || /^[A-Za-z]:\//u.test(normalized)
 }
 
 function addCandidate(
@@ -167,14 +189,86 @@ async function isSymlinkPath(cwd: string, path: string): Promise<boolean> {
   }
 }
 
+async function readAbsolutePathResult(pathValue: string): Promise<ComposerSearchPathResult | null> {
+  try {
+    const linkInfo = await lstat(pathValue)
+    let targetInfo = linkInfo
+    if (linkInfo.isSymbolicLink()) {
+      try {
+        targetInfo = await stat(pathValue)
+      } catch {
+        targetInfo = linkInfo
+      }
+    }
+
+    return {
+      path: normalizeSearchInput(pathValue),
+      kind: targetInfo.isDirectory() ? 'directory' : 'file',
+      isSymlink: linkInfo.isSymbolicLink(),
+    }
+  } catch {
+    return null
+  }
+}
+
+async function searchAbsoluteComposerPaths(
+  query: string,
+  limit: number,
+): Promise<ComposerSearchPathResult[] | null> {
+  if (!isAbsoluteSearchInput(query)) return null
+
+  const expandedQuery = expandHomeSearchPath(query)
+  if (!isAbsolute(expandedQuery) && !/^[A-Za-z]:\//u.test(expandedQuery)) return []
+
+  const results: ComposerSearchPathResult[] = []
+  const seen = new Set<string>()
+  const exact = await readAbsolutePathResult(expandedQuery)
+  if (exact) {
+    results.push(exact)
+    seen.add(exact.path)
+    return results.slice(0, limit)
+  }
+
+  const parentPath = expandedQuery.endsWith('/') ? expandedQuery.replace(/\/+$/u, '') : dirname(expandedQuery)
+  if (!parentPath || parentPath === expandedQuery || parentPath === parse(parentPath).root) {
+    return results
+  }
+
+  try {
+    const parentInfo = await stat(parentPath)
+    if (!parentInfo.isDirectory()) return results
+  } catch {
+    return results
+  }
+
+  const childQuery = expandedQuery.endsWith('/') ? '' : basename(expandedQuery)
+  const rows = await searchComposerPaths(parentPath, childQuery, limit)
+  for (const row of rows) {
+    const absolutePath = normalizeSearchInput(isAbsolute(row.path) ? row.path : resolve(parentPath, row.path))
+    if (seen.has(absolutePath)) continue
+    seen.add(absolutePath)
+    results.push({
+      path: absolutePath,
+      kind: row.kind,
+      isSymlink: row.isSymlink,
+    })
+    if (results.length >= limit) break
+  }
+
+  return results
+}
+
 export async function searchComposerPaths(
   cwd: string,
   query: string,
   limit: number,
 ): Promise<ComposerSearchPathResult[]> {
-  const paths = await listPathsWithRipgrep(cwd)
   const trimmedQuery = query.trim()
   const maxResults = Math.max(1, Math.min(100, Math.floor(limit)))
+  const absoluteResults = await searchAbsoluteComposerPaths(trimmedQuery, maxResults)
+  if (absoluteResults) return absoluteResults
+
+  const paths = await listPathsWithRipgrep(cwd)
   const candidates = buildComposerSearchPathCandidates(paths)
     .map((candidate) => ({
       ...candidate,
