@@ -13,7 +13,7 @@ afterEach(async () => {
 })
 
 describe('searchComposerPaths', () => {
-  it('includes directories and symlinks alongside files', async () => {
+  it('lists top-level directories and symlinks for empty queries', async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'codexui-composer-search-'))
 
     const realDir = join(tempDir, 'real')
@@ -27,14 +27,14 @@ describe('searchComposerPaths', () => {
     const results = await searchComposerPaths(tempDir, '', 20)
     const byPath = new Map(results.map((entry) => [entry.path, entry]))
 
-    expect(byPath.get('real/alpha.txt')?.kind).toBe('file')
-    expect(byPath.get('real/alpha.txt')?.isSymlink).toBe(false)
+    expect(byPath.get('real')?.kind).toBe('directory')
+    expect(byPath.get('real')?.isSymlink).toBe(false)
     expect(byPath.get('file-link.txt')?.kind).toBe('file')
     expect(byPath.get('file-link.txt')?.isSymlink).toBe(true)
     expect(byPath.get('dir-link')?.kind).toBe('directory')
     expect(byPath.get('dir-link')?.isSymlink).toBe(true)
-    expect(byPath.get('real/nested')?.kind).toBe('directory')
-    expect(byPath.get('real/nested')?.isSymlink).toBe(false)
+    expect(byPath.has('real/alpha.txt')).toBe(false)
+    expect(byPath.has('real/nested')).toBe(false)
   })
 
   it('keeps partial results when ripgrep reports a symlink loop', async () => {

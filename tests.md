@@ -6571,6 +6571,7 @@ Markdown files opened through the local editor expose a preview button that rend
 - Home and absolute path searches first try exact stat-based resolution, then search only the nearest existing parent directory for partial path completion.
 - The change avoids falling back to a full cwd scan for home or absolute queries that do not resolve.
 - Home-prefixed cwd normalization is a constant-time string check before the existing filesystem validation.
+- Bare `@` empty-query search reads only the current directory's top-level entries, avoiding a full recursive `rg --files` scan of large notebook caches.
 - Existing relative mention searches continue to use the existing single `rg --files` scan.
 
 #### Rollback/Cleanup

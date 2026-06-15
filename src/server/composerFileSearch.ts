@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { lstat, stat } from 'node:fs/promises'
+import { lstat, readdir, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, parse, resolve } from 'node:path'
 import { normalizePathForUi } from '../pathUtils.js'
@@ -23,6 +23,8 @@ type RankedComposerSearchPathCandidate = ComposerSearchPathCandidate & {
   pathDepth: number
   pathLength: number
 }
+
+const COMPOSER_SEARCH_EXCLUDED_TOP_LEVEL_NAMES = new Set(['.git', 'node_modules'])
 
 function normalizeComposerSearchPath(rawPath: string): string {
   return normalizePathForUi(rawPath)
@@ -189,6 +191,36 @@ async function isSymlinkPath(cwd: string, path: string): Promise<boolean> {
   }
 }
 
+async function listTopLevelComposerPaths(cwd: string, limit: number): Promise<ComposerSearchPathResult[]> {
+  const entries = await readdir(cwd, { withFileTypes: true })
+  const candidates = await Promise.all(entries
+    .filter((entry) => !COMPOSER_SEARCH_EXCLUDED_TOP_LEVEL_NAMES.has(entry.name))
+    .map(async (entry) => {
+      let isDirectory = entry.isDirectory()
+      const isSymlink = entry.isSymbolicLink()
+      if (isSymlink) {
+        try {
+          isDirectory = (await stat(resolve(cwd, entry.name))).isDirectory()
+        } catch {
+          isDirectory = false
+        }
+      }
+      return {
+        path: normalizeComposerSearchPath(entry.name),
+        kind: isDirectory ? 'directory' as const : 'file' as const,
+        isSymlink,
+        isDirectory,
+      }
+    }))
+
+  const topLevelResults = candidates
+    .filter((entry) => Boolean(entry.path))
+    .sort((a, b) => Number(b.isDirectory) - Number(a.isDirectory) || a.path.localeCompare(b.path))
+    .slice(0, limit)
+
+  return topLevelResults.map(({ path, kind, isSymlink }) => ({ path, kind, isSymlink }))
+}
+
 async function readAbsolutePathResult(pathValue: string): Promise<ComposerSearchPathResult | null> {
   try {
     const linkInfo = await lstat(pathValue)
@@ -267,6 +299,10 @@ export async function searchComposerPaths(
   const maxResults = Math.max(1, Math.min(100, Math.floor(limit)))
   const absoluteResults = await searchAbsoluteComposerPaths(trimmedQuery, maxResults)
   if (absoluteResults) return absoluteResults
+
+  if (!trimmedQuery) {
+    return await listTopLevelComposerPaths(cwd, maxResults)
+  }
 
   const paths = await listPathsWithRipgrep(cwd)
   const candidates = buildComposerSearchPathCandidates(paths)
