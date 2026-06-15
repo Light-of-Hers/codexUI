@@ -68,6 +68,36 @@ function needsForcedInstall() {
   }
 }
 
+function readPackageManifest() {
+  try {
+    return JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8'))
+  } catch {
+    return {}
+  }
+}
+
+function packageNodeModulesPath(packageName) {
+  const parts = packageName.split('/')
+  return join(process.cwd(), 'node_modules', ...parts, 'package.json')
+}
+
+function hasMissingDirectDependencies() {
+  const manifest = readPackageManifest()
+  const dependencyGroups = [
+    manifest.dependencies,
+    manifest.devDependencies,
+  ]
+  for (const group of dependencyGroups) {
+    if (!group || typeof group !== 'object' || Array.isArray(group)) continue
+    for (const packageName of Object.keys(group)) {
+      if (!existsSync(packageNodeModulesPath(packageName))) {
+        return true
+      }
+    }
+  }
+  return false
+}
+
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     stdio: 'inherit',
@@ -103,7 +133,7 @@ if (isAndroidRuntime()) {
   ])
 }
 
-if (!existsSync(viteBinPath) || !existsSync(vueTscBinPath)) {
+if (!existsSync(viteBinPath) || !existsSync(vueTscBinPath) || hasMissingDirectDependencies()) {
   const installArgs = ['install']
   if (needsForcedInstall()) {
     installArgs.push('--force')

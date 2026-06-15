@@ -6540,6 +6540,29 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Rollback/Cleanup
 - No persistent cleanup is required.
 
+### Feature: Dev server repairs missing direct dependencies
+
+#### Prerequisites
+- The repository has a `node_modules` directory that may be incomplete.
+- `pnpm`, `corepack`, or `npm` is available on PATH.
+
+#### Steps
+1. Run `node -c scripts/dev.cjs`.
+2. Run `timeout 8s node scripts/dev.cjs --port 5274`.
+3. In a local smoke environment with a deliberately missing direct dependency symlink, run `codex-ui-dev --port 5273`.
+
+#### Expected Results
+- The dev wrapper starts Vite when direct dependencies are present.
+- If a direct dependency such as `rehype-raw` is missing while `vite` still exists, the wrapper runs `pnpm install` before launching Vite.
+- Startup does not fail with `ERR_MODULE_NOT_FOUND` for direct package dependencies imported by Vite config or app code.
+
+#### Performance Audit
+- The startup check reads `package.json` once and checks direct dependency package files with bounded `existsSync` calls.
+- No recursive filesystem scan is added.
+
+#### Rollback/Cleanup
+- Stop the temporary dev server after the smoke check.
+
 ### Feature: Composer file mentions for home and absolute paths
 
 #### Prerequisites
