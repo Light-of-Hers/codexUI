@@ -25,6 +25,14 @@ type RankedComposerSearchPathCandidate = ComposerSearchPathCandidate & {
 }
 
 const COMPOSER_SEARCH_EXCLUDED_TOP_LEVEL_NAMES = new Set(['.git', 'node_modules'])
+const COMPOSER_PATH_CACHE_TTL_MS = 30_000
+
+type ComposerPathCacheEntry = {
+  expiresAt: number
+  promise: Promise<string[]>
+}
+
+const composerPathCache = new Map<string, ComposerPathCacheEntry>()
 
 function normalizeComposerSearchPath(rawPath: string): string {
   return normalizePathForUi(rawPath)
@@ -172,6 +180,26 @@ async function listPathsWithRipgrep(cwd: string): Promise<string[]> {
   })
 }
 
+async function listCachedPathsWithRipgrep(cwd: string): Promise<string[]> {
+  const now = Date.now()
+  const cached = composerPathCache.get(cwd)
+  if (cached && cached.expiresAt > now) {
+    return cached.promise
+  }
+
+  const promise = listPathsWithRipgrep(cwd).catch((error) => {
+    if (composerPathCache.get(cwd)?.promise === promise) {
+      composerPathCache.delete(cwd)
+    }
+    throw error
+  })
+  composerPathCache.set(cwd, {
+    expiresAt: now + COMPOSER_PATH_CACHE_TTL_MS,
+    promise,
+  })
+  return promise
+}
+
 function buildComposerSearchPathCandidates(paths: string[]): ComposerSearchPathCandidate[] {
   const candidates = new Map<string, ComposerSearchPathCandidate>()
   for (const path of paths) {
@@ -191,7 +219,7 @@ async function isSymlinkPath(cwd: string, path: string): Promise<boolean> {
   }
 }
 
-async function listTopLevelComposerPaths(cwd: string, limit: number): Promise<ComposerSearchPathResult[]> {
+async function listTopLevelComposerPaths(cwd: string): Promise<ComposerSearchPathResult[]> {
   const entries = await readdir(cwd, { withFileTypes: true })
   const candidates = await Promise.all(entries
     .filter((entry) => !COMPOSER_SEARCH_EXCLUDED_TOP_LEVEL_NAMES.has(entry.name))
@@ -216,9 +244,27 @@ async function listTopLevelComposerPaths(cwd: string, limit: number): Promise<Co
   const topLevelResults = candidates
     .filter((entry) => Boolean(entry.path))
     .sort((a, b) => Number(b.isDirectory) - Number(a.isDirectory) || a.path.localeCompare(b.path))
-    .slice(0, limit)
 
   return topLevelResults.map(({ path, kind, isSymlink }) => ({ path, kind, isSymlink }))
+}
+
+function filterComposerPathResults(
+  rows: ComposerSearchPathResult[],
+  query: string,
+  limit: number,
+): ComposerSearchPathResult[] {
+  const trimmedQuery = query.trim()
+  return rows
+    .map((row) => ({
+      ...row,
+      score: scoreComposerPathCandidate(row.path, trimmedQuery),
+      pathDepth: row.path.split('/').filter(Boolean).length,
+      pathLength: row.path.length,
+    }))
+    .filter((row) => trimmedQuery.length === 0 || row.score < 10)
+    .sort(compareComposerPathCandidates)
+    .slice(0, limit)
+    .map(({ path, kind, isSymlink }) => ({ path, kind, isSymlink }))
 }
 
 async function readAbsolutePathResult(pathValue: string): Promise<ComposerSearchPathResult | null> {
@@ -300,11 +346,17 @@ export async function searchComposerPaths(
   const absoluteResults = await searchAbsoluteComposerPaths(trimmedQuery, maxResults)
   if (absoluteResults) return absoluteResults
 
+  const topLevelRows = await listTopLevelComposerPaths(cwd)
   if (!trimmedQuery) {
-    return await listTopLevelComposerPaths(cwd, maxResults)
+    return topLevelRows.slice(0, maxResults)
   }
 
-  const paths = await listPathsWithRipgrep(cwd)
+  const topLevelMatches = filterComposerPathResults(topLevelRows, trimmedQuery, maxResults)
+  if (topLevelMatches.some((row) => row.path.toLowerCase().startsWith(trimmedQuery.toLowerCase()))) {
+    return topLevelMatches
+  }
+
+  const paths = await listCachedPathsWithRipgrep(cwd)
   const candidates = buildComposerSearchPathCandidates(paths)
     .map((candidate) => ({
       ...candidate,

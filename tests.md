@@ -6595,7 +6595,8 @@ Markdown files opened through the local editor expose a preview button that rend
 - The change avoids falling back to a full cwd scan for home or absolute queries that do not resolve.
 - Home-prefixed cwd normalization is a constant-time string check before the existing filesystem validation.
 - Bare `@` empty-query search reads only the current directory's top-level entries, avoiding a full recursive `rg --files` scan of large notebook caches.
-- Existing relative mention searches continue to use the existing single `rg --files` scan.
+- Relative mention searches with top-level prefix matches return from the same top-level listing instead of waiting for a recursive scan.
+- Fuzzy relative searches that need the full tree continue to use one `rg --files` scan, cached per cwd for short follow-up queries while the user keeps typing.
 
 #### Rollback/Cleanup
 - No persistent cleanup is required.

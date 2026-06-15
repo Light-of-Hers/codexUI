@@ -60,6 +60,20 @@ describe('searchComposerPaths', () => {
     expect(results.some((entry) => entry.path === 'install-configs.py')).toBe(true)
   })
 
+  it('returns top-level prefix matches without waiting for deep duplicate paths', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'codexui-composer-search-'))
+
+    await mkdir(join(tempDir, 'notes'), { recursive: true })
+    await writeFile(join(tempDir, 'notes', 'README.md'), 'notes')
+    await mkdir(join(tempDir, 'files', 'cache', 'triton', 'docs', 'meetups'), { recursive: true })
+    await writeFile(join(tempDir, 'files', 'cache', 'triton', 'docs', 'meetups', 'notes.md'), 'deep')
+
+    const results = await searchComposerPaths(tempDir, 'notes', 20)
+
+    expect(results[0]?.path).toBe('notes')
+    expect(results.some((entry) => entry.path === 'files/cache/triton/docs/meetups/notes.md')).toBe(false)
+  })
+
   it('returns exact absolute path queries without treating them as cwd-relative text', async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'codexui-composer-search-'))
     const targetDir = join(tempDir, 'absolute-target')
@@ -117,7 +131,7 @@ describe('searchComposerPaths', () => {
     await mkdir(join(tempDir, '_workspace.tmp', 'deep', '3rdparty', 'SeedKernelBench'), { recursive: true })
     await writeFile(join(tempDir, '_workspace.tmp', 'deep', '3rdparty', 'SeedKernelBench', 'README.md'), 'workspace')
 
-    const results = await searchComposerPaths(tempDir, 'SeedKernelBench', 20)
+    const results = await searchComposerPaths(tempDir, 'KernelBench', 20)
 
     expect(results[0]?.path).toBe('SeedKernelBench')
     expect(results.findIndex((entry) => entry.path === 'SeedKernelBench')).toBeLessThan(
