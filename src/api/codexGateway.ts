@@ -2160,7 +2160,8 @@ export interface FreeModeStatus {
   currentModel: string | null
   customKey: boolean
   maskedKey: string | null
-  provider?: 'openrouter' | 'custom' | 'opencode-zen' | 'moon' | 'ark' | 'cursor'
+  provider?: string
+  providers?: Array<{ id: string; label: string }>
   customBaseUrl?: string
   wireApi?: 'responses' | 'chat' | null
 }
@@ -2191,7 +2192,7 @@ export async function setFreeModeCustomKey(key: string): Promise<{ ok: boolean; 
 export async function setCustomProvider(
   baseUrl: string,
   apiKey: string,
-  options?: { wireApi?: 'responses' | 'chat'; provider?: 'custom' | 'opencode-zen' | 'openrouter' | 'moon' | 'ark' | 'cursor' },
+  options?: { wireApi?: 'responses' | 'chat'; provider?: string },
 ): Promise<{ ok: boolean }> {
   const response = await fetch('/codex-api/free-mode/custom-provider', {
     method: 'POST',

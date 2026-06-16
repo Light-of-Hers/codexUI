@@ -393,7 +393,7 @@ describe('provider session helpers', () => {
   it('defaults provider selections to Codex', () => {
     expect(normalizeProviderId('')).toBe('codex')
     expect(normalizeProviderId('openai')).toBe('codex')
-    expect(normalizeProviderId('rustcat')).toBe('codex')
+    expect(normalizeProviderId('rustcat')).toBe('rustcat')
     expect(normalizeProviderId('openrouter-free')).toBe('openrouter')
     expect(normalizeProviderId('custom-endpoint')).toBe('custom')
     expect(normalizeProviderId('ark')).toBe('ark')
@@ -406,6 +406,12 @@ describe('provider session helpers', () => {
 
     expect(readSelectedProvider(next, 'thread-a')).toBe('moon')
     expect(readSelectedProvider(next, 'thread-b')).toBe('codex')
+  })
+
+  it('stores dynamic provider selections by session context', () => {
+    const next = writeSelectedProviderForContext({}, 'thread-a', 'rustcat')
+
+    expect(readSelectedProvider(next, 'thread-a')).toBe('rustcat')
   })
 
   it('persists explicit Codex provider selections for existing sessions', () => {

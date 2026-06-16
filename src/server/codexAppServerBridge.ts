@@ -48,9 +48,18 @@ import {
 import { handleOpenRouterProxyRequest } from './openRouterProxy.js'
 import { handleZenProxyRequest } from './zenProxy.js'
 import { handleCustomEndpointProxyRequest } from './customEndpointProxy.js'
+import {
+  buildCodexUiProviderConfigArgs,
+  type CodexUiProviderDescriptor,
+  fetchCodexUiProviderModelIds,
+  getCodexUiProviderCatalogSelection,
+  readCodexUiProviderDescriptor,
+  readCodexUiProviderDescriptors,
+} from './codexUiProviders.js'
 import { ThreadTerminalManager } from './terminalManager.js'
 import { getSpawnInvocation } from '../utils/commandInvocation.js'
 import {
+  resolveExecutableCommand,
   resolveCodexCommand,
   resolveCodexArkCommand,
   resolveCodexCursorCommand,
@@ -150,7 +159,7 @@ type ThreadSearchIndex = {
 type ProviderModelsResponse = {
   data: string[]
   providerId: string
-  source: 'provider'
+  source: 'provider' | 'codex-ui-catalog' | 'codex-ui-provider' | 'codex-ui-default'
 }
 
 type ComposioUserData = {
@@ -1535,12 +1544,102 @@ function sortOpenCodeZenModelIds(modelIds: string[]): string[] {
   return [...freeIds, ...paidIds]
 }
 
+const CODEX_UI_PROVIDER_MODELS_CACHE_TTL_MS = 60_000
+const codexUiProviderModelsCache = new Map<string, { expiresAt: number; promise: Promise<ProviderModelsResponse> }>()
+
+function orderProviderModels(modelIds: string[], preferredModel: string | null | undefined): string[] {
+  const preferred = preferredModel?.trim()
+  if (!preferred || !modelIds.includes(preferred)) return modelIds
+  return [preferred, ...modelIds.filter((modelId) => modelId !== preferred)]
+}
+
+function codexUiProviderModelsCacheKey(
+  descriptor: CodexUiProviderDescriptor,
+  preferredModel: string | null | undefined,
+): string {
+  return JSON.stringify({
+    id: descriptor.id,
+    catalog: descriptor.modelCatalogJson,
+    defaultModel: descriptor.defaultModel,
+    providerInfo: descriptor.providerInfo,
+    preferredModel: preferredModel?.trim() ?? '',
+  })
+}
+
+async function loadCodexUiProviderModelIds(
+  descriptor: CodexUiProviderDescriptor,
+  preferredModel?: string | null,
+): Promise<ProviderModelsResponse> {
+  const catalogSelection = getCodexUiProviderCatalogSelection(descriptor, preferredModel)
+  if (catalogSelection.models.length > 0 && catalogSelection.metadata.length > 0) {
+    return {
+      data: orderProviderModels(catalogSelection.models, catalogSelection.currentModel),
+      providerId: descriptor.id,
+      source: 'codex-ui-catalog',
+    }
+  }
+
+  const providerModelIds = await fetchCodexUiProviderModelIds(descriptor)
+  if (providerModelIds.length > 0) {
+    const preferred = preferredModel?.trim()
+    const defaultModel = descriptor.defaultModel?.trim()
+    const currentModel = preferred && providerModelIds.includes(preferred)
+      ? preferred
+      : defaultModel && providerModelIds.includes(defaultModel)
+        ? defaultModel
+        : providerModelIds[0]
+    return {
+      data: orderProviderModels(providerModelIds, currentModel),
+      providerId: descriptor.id,
+      source: 'codex-ui-provider',
+    }
+  }
+
+  const fallbackModel = descriptor.defaultModel?.trim() || catalogSelection.currentModel.trim()
+  return {
+    data: fallbackModel ? [fallbackModel] : [],
+    providerId: descriptor.id,
+    source: 'codex-ui-default',
+  }
+}
+
+async function readCodexUiProviderModelIds(
+  descriptor: CodexUiProviderDescriptor,
+  preferredModel?: string | null,
+): Promise<ProviderModelsResponse> {
+  const key = codexUiProviderModelsCacheKey(descriptor, preferredModel)
+  const now = Date.now()
+  const cached = codexUiProviderModelsCache.get(key)
+  if (cached && cached.expiresAt > now) {
+    return await cached.promise
+  }
+
+  const promise = loadCodexUiProviderModelIds(descriptor, preferredModel)
+    .catch((error) => {
+      codexUiProviderModelsCache.delete(key)
+      throw error
+    })
+  codexUiProviderModelsCache.set(key, {
+    expiresAt: now + CODEX_UI_PROVIDER_MODELS_CACHE_TTL_MS,
+    promise,
+  })
+  return await promise
+}
+
 async function readProviderBackedModelIds(appServer: AppServerProcess): Promise<ProviderModelsResponse> {
   const configPayload = asRecord(await appServer.rpc('config/read', {}))
   const config = asRecord(configPayload?.config)
   const providerId = readNonEmptyString(config?.model_provider)
   if (!providerId) {
     return { data: [], providerId: '', source: 'provider' }
+  }
+
+  const codexUiProvider = readCodexUiProviderDescriptor(providerId)
+  if (codexUiProvider) {
+    const dynamicModels = await readCodexUiProviderModelIds(codexUiProvider, readNonEmptyString(config?.model))
+    if (dynamicModels.data.length > 0) {
+      return dynamicModels
+    }
   }
 
   const providers = asRecord(config?.model_providers)
@@ -5622,7 +5721,17 @@ export function buildAppServerConfigForState(state: FreeModeState): AppServerCon
   if (!command) {
     throw new Error('Codex CLI is not available. Install @openai/codex or set CODEXUI_CODEX_COMMAND.')
   }
-  if (state.enabled && state.provider === MOONBRIDGE_PROVIDER_ID) {
+  const dynamicProvider = state.enabled ? readCodexUiProviderDescriptor(state.provider) : null
+  if (dynamicProvider && (!isWrapperProvider(state.provider) || dynamicProvider.hasUiConfig)) {
+    if (dynamicProvider.executable) {
+      const resolvedCommand = resolveExecutableCommand(dynamicProvider.executable)
+      if (!resolvedCommand) {
+        throw new Error(`Provider launcher is not available: ${dynamicProvider.executable}`)
+      }
+      command = resolvedCommand
+    }
+    args.push(...buildCodexUiProviderConfigArgs(dynamicProvider, state.model))
+  } else if (state.enabled && state.provider === MOONBRIDGE_PROVIDER_ID) {
     command = resolveCodexMoonCommand()
     if (!command) {
       throw new Error('Codex Moon Bridge CLI is not available. Install codex-moon or set CODEXUI_CODEX_MOON_COMMAND.')
@@ -6847,7 +6956,7 @@ class AppServerRuntimePool {
     runtime = new AppServerRuntime(state, (notification) => {
       this.emitNotification(notification)
     }, (method, params) => {
-      const requestedProvider = readRequestedWrapperProvider(method, params)
+      const requestedProvider = readRequestedRuntimeProvider(method, params)
       if (!requestedProvider) return runtime.appServer
 
       const routedState = buildWrapperRuntimeState(this.activeState, requestedProvider, params)
@@ -7039,19 +7148,22 @@ function createLazyBridgeDependency<T extends object>(resolve: () => T): T {
   })
 }
 
-type WrapperProviderId = 'moon' | 'ark' | 'cursor'
+type RuntimeProviderId = string
 
-function readRequestedWrapperProvider(method: string, params: unknown): WrapperProviderId | null {
+function shouldUseProviderRuntime(provider: string): boolean {
+  if (!provider) return false
+  if (isWrapperProvider(provider)) return true
+  return readCodexUiProviderDescriptor(provider) != null
+}
+
+function readRequestedRuntimeProvider(method: string, params: unknown): RuntimeProviderId | null {
   if (!THREAD_MODEL_PROVIDER_OVERRIDE_METHODS.has(method)) return null
 
   const paramsRecord = asRecord(params)
   const provider = readNonEmptyString(paramsRecord?.modelProvider)
     || readNonEmptyString(paramsRecord?.model_provider)
   const normalizedProvider = provider.trim().toLowerCase()
-  if (normalizedProvider === MOONBRIDGE_PROVIDER_ID) return MOONBRIDGE_PROVIDER_ID
-  if (normalizedProvider === ARK_PROVIDER_ID) return ARK_PROVIDER_ID
-  if (normalizedProvider === CURSOR_PROVIDER_ID) return CURSOR_PROVIDER_ID
-  return null
+  return shouldUseProviderRuntime(normalizedProvider) ? normalizedProvider : null
 }
 
 async function ensureTurnStartRuntimeThreadState(
@@ -7060,7 +7172,7 @@ async function ensureTurnStartRuntimeThreadState(
   params: unknown,
 ): Promise<void> {
   if (method !== 'turn/start') return
-  const requestedProvider = readRequestedWrapperProvider(method, params)
+  const requestedProvider = readRequestedRuntimeProvider(method, params)
   if (!requestedProvider) return
 
   const paramsRecord = asRecord(params)
@@ -7084,7 +7196,7 @@ async function ensureTurnStartRuntimeThreadState(
       throw error
     }
 
-    writeDebugLog('turn-start-runtime-resume-no-rollout', 'Skipping wrapper runtime resume because the thread rollout is not materialized yet', {
+    writeDebugLog('turn-start-runtime-resume-no-rollout', 'Skipping provider runtime resume because the thread rollout is not materialized yet', {
       threadId,
       provider: requestedProvider,
     }).catch(() => {})
@@ -7119,16 +7231,21 @@ export function persistTurnStartModelProviderInCollaborationMode(method: string,
 
 function buildWrapperRuntimeState(
   currentState: FreeModeState,
-  provider: WrapperProviderId,
+  provider: RuntimeProviderId,
   params: unknown,
 ): FreeModeState {
   const paramsRecord = asRecord(params)
   const requestedModel = readNonEmptyString(paramsRecord?.model).trim()
-  const fallbackModel = provider === CURSOR_PROVIDER_ID
+  const dynamicDescriptor = readCodexUiProviderDescriptor(provider)
+  const dynamicSelection = dynamicDescriptor
+    ? getCodexUiProviderCatalogSelection(dynamicDescriptor, currentState.model)
+    : null
+  const fallbackModel = dynamicSelection?.currentModel
+    || (provider === CURSOR_PROVIDER_ID
     ? getCursorModelSelection(currentState.model).currentModel
     : provider === ARK_PROVIDER_ID
       ? getArkModelSelection(currentState.model).currentModel
-      : getMoonBridgeModels()[0] ?? currentState.model
+      : getMoonBridgeModels()[0] ?? currentState.model)
   const state: FreeModeState = {
     ...currentState,
     enabled: true,
@@ -7140,6 +7257,65 @@ function buildWrapperRuntimeState(
     wireApi: undefined,
   }
   return normalizeFreeModeState(state) ?? state
+}
+
+function readConfiguredProviderOptions(): Array<{ id: string; label: string }> {
+  return readCodexUiProviderDescriptors().map((descriptor) => ({
+    id: descriptor.id,
+    label: descriptor.label,
+  }))
+}
+
+function isCodexUiConfiguredRuntimeProvider(provider: string): boolean {
+  const descriptor = readCodexUiProviderDescriptor(provider)
+  return Boolean(descriptor && (!isWrapperProvider(provider) || descriptor.hasUiConfig))
+}
+
+function normalizeFreeModeProviderType(value: unknown): string {
+  const provider = readNonEmptyString(value).trim().toLowerCase()
+  if (provider === 'openrouter' || provider === FREE_MODE_PROVIDER_ID) return 'openrouter'
+  if (provider === 'opencode-zen') return OPENCODE_ZEN_PROVIDER_ID
+  if (provider === 'custom' || provider === 'custom-endpoint') return 'custom'
+  if (provider === MOONBRIDGE_PROVIDER_ID) return MOONBRIDGE_PROVIDER_ID
+  if (provider === ARK_PROVIDER_ID) return ARK_PROVIDER_ID
+  if (provider === CURSOR_PROVIDER_ID) return CURSOR_PROVIDER_ID
+  if (isCodexUiConfiguredRuntimeProvider(provider)) return provider
+  return 'custom'
+}
+
+function providerUsesStoredApiKey(provider: string): boolean {
+  return provider === 'openrouter' || provider === 'custom' || provider === OPENCODE_ZEN_PROVIDER_ID
+}
+
+async function resolveProviderStateModel(
+  provider: string,
+  currentModel: string | null | undefined,
+  baseUrl: string,
+  apiKey: string,
+): Promise<string> {
+  if (provider === 'openrouter') return currentModel || FREE_MODE_DEFAULT_MODEL
+  if (provider === 'custom') return await fetchCustomEndpointDefaultModel(baseUrl, apiKey)
+  if (provider === MOONBRIDGE_PROVIDER_ID && !isCodexUiConfiguredRuntimeProvider(provider)) {
+    const moonModels = getMoonBridgeModels()
+    const normalizedCurrentModel = currentModel?.trim() ?? ''
+    return normalizedCurrentModel && moonModels.includes(normalizedCurrentModel)
+      ? normalizedCurrentModel
+      : moonModels[0] ?? ''
+  }
+  if (provider === ARK_PROVIDER_ID && !isCodexUiConfiguredRuntimeProvider(provider)) {
+    return getArkModelSelection(currentModel).currentModel
+  }
+  if (provider === CURSOR_PROVIDER_ID && !isCodexUiConfiguredRuntimeProvider(provider)) {
+    return getCursorModelSelection(currentModel).currentModel
+  }
+
+  const descriptor = readCodexUiProviderDescriptor(provider)
+  if (descriptor) {
+    const models = await readCodexUiProviderModelIds(descriptor, currentModel)
+    return models.data[0] ?? ''
+  }
+
+  return OPENCODE_ZEN_DEFAULT_MODEL
 }
 
 type SharedBridgeState = {
@@ -7331,7 +7507,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
   }
 
   function getRpcRuntime(method: string, params: unknown): AppServerRuntime {
-    const requestedProvider = readRequestedWrapperProvider(method, params)
+    const requestedProvider = readRequestedRuntimeProvider(method, params)
     if (!requestedProvider) return getActiveRuntime()
 
     const state = buildWrapperRuntimeState(runtimePool.getActiveState(), requestedProvider, params)
@@ -7540,13 +7716,20 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         if (req.method === 'GET' && url.pathname === '/codex-api/free-mode/status') {
           try {
             const state = readFreeModeState()
+            const providerOptions = readConfiguredProviderOptions()
             const maskedKey = state.apiKey && state.customKey
               ? state.apiKey.substring(0, 12) + '...' + state.apiKey.substring(state.apiKey.length - 4)
               : null
             let models = getCachedFreeModels()
             let currentModel = state.enabled ? state.model : null
             let wireApi = state.wireApi ?? null
-            if (state.provider === MOONBRIDGE_PROVIDER_ID) {
+            const activeDescriptor = state.provider ? readCodexUiProviderDescriptor(state.provider) : null
+            if (activeDescriptor && (!isWrapperProvider(state.provider) || activeDescriptor.hasUiConfig)) {
+              const dynamicModels = await readCodexUiProviderModelIds(activeDescriptor, state.model)
+              models = dynamicModels.data
+              currentModel = state.enabled ? dynamicModels.data[0] ?? activeDescriptor.defaultModel ?? state.model : null
+              wireApi = activeDescriptor.executable ? null : wireApi
+            } else if (state.provider === MOONBRIDGE_PROVIDER_ID) {
               models = getMoonBridgeModels()
               wireApi = null
             } else if (state.provider === ARK_PROVIDER_ID) {
@@ -7595,6 +7778,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
               customKey: Boolean(state.customKey),
               maskedKey,
               provider: state.provider ?? 'openrouter',
+              providers: providerOptions,
               customBaseUrl: state.customBaseUrl ?? null,
               wireApi,
             })
@@ -7662,17 +7846,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
             const baseUrl = typeof body?.baseUrl === 'string' ? body.baseUrl.trim() : ''
             const apiKey = typeof body?.apiKey === 'string' ? body.apiKey.trim() : ''
             const wireApi = body?.wireApi === 'chat' ? 'chat' as const : 'responses' as const
-            const providerType = body?.provider === 'opencode-zen'
-              ? 'opencode-zen' as const
-              : body?.provider === 'openrouter'
-                ? 'openrouter' as const
-                : body?.provider === 'moon'
-                  ? 'moon' as const
-                  : body?.provider === 'ark'
-                    ? 'ark' as const
-                    : body?.provider === 'cursor'
-                      ? 'cursor' as const
-                      : 'custom' as const
+            const providerType = normalizeFreeModeProviderType(body?.provider)
             if (providerType === 'custom' && !baseUrl) {
               setJson(res, 400, { error: 'baseUrl is required' })
               return
@@ -7682,35 +7856,21 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
             if (current.provider && current.apiKey) {
               prevKeys[current.provider] = current.apiKey
             }
-            const resolvedKey = apiKey || prevKeys[providerType] || ''
-            if (resolvedKey) {
+            const keyBackedProvider = providerUsesStoredApiKey(providerType)
+            const resolvedKey = keyBackedProvider ? apiKey || prevKeys[providerType] || '' : ''
+            if (keyBackedProvider && resolvedKey) {
               prevKeys[providerType] = resolvedKey
             }
-            const resolvedModel = providerType === 'openrouter'
-              ? (current.model || FREE_MODE_DEFAULT_MODEL)
-              : providerType === 'custom'
-                ? await fetchCustomEndpointDefaultModel(baseUrl, resolvedKey)
-                : providerType === 'moon'
-                  ? (() => {
-                      const moonModels = getMoonBridgeModels()
-                      const currentModel = current.model?.trim() ?? ''
-                      return currentModel && moonModels.includes(currentModel)
-                        ? currentModel
-                        : moonModels[0] ?? ''
-                    })()
-                  : providerType === 'ark'
-                    ? getArkModelSelection(current.model).currentModel
-                    : providerType === 'cursor'
-                      ? getCursorModelSelection(current.model).currentModel
-                      : OPENCODE_ZEN_DEFAULT_MODEL
+            const resolvedModel = await resolveProviderStateModel(providerType, current.model, baseUrl, resolvedKey)
+            const wrapperLikeProvider = isWrapperProvider(providerType) || isCodexUiConfiguredRuntimeProvider(providerType)
             const state: FreeModeState = {
               enabled: true,
-              apiKey: isWrapperProvider(providerType) ? null : resolvedKey,
+              apiKey: wrapperLikeProvider ? null : resolvedKey,
               model: resolvedModel,
-              customKey: providerType === 'openrouter' ? current.customKey : !isWrapperProvider(providerType),
+              customKey: providerType === 'openrouter' ? current.customKey : !wrapperLikeProvider,
               provider: providerType,
               customBaseUrl: providerType === 'custom' ? baseUrl : undefined,
-              wireApi: isWrapperProvider(providerType) ? undefined : wireApi,
+              wireApi: wrapperLikeProvider ? undefined : wireApi,
               providerKeys: prevKeys,
             }
             await applyActiveFreeModeState(state)
@@ -8364,6 +8524,17 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         try {
           const fmState = appServer.getFreeModeState()
           if (fmState.enabled) {
+            const activeDescriptor = fmState.provider ? readCodexUiProviderDescriptor(fmState.provider) : null
+            if (activeDescriptor && (!isWrapperProvider(fmState.provider) || activeDescriptor.hasUiConfig)) {
+              const dynamicModels = await readCodexUiProviderModelIds(activeDescriptor, fmState.model)
+              setJson(res, 200, {
+                data: dynamicModels.data,
+                exclusive: true,
+                providerId: activeDescriptor.id,
+                source: dynamicModels.source,
+              })
+              return
+            }
             if (fmState.provider === MOONBRIDGE_PROVIDER_ID) {
               setJson(res, 200, { data: getMoonBridgeModels(), exclusive: true, source: 'moon' })
               return

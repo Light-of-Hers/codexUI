@@ -1,6 +1,10 @@
-import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import {
+  getCodexUiProviderCatalogSelection,
+  readCodexUiProviderDescriptor,
+  readModelCatalogMetadata,
+} from './codexUiProviders.js'
 
 const ENCRYPTED_KEYS: string[] = [
   "FhkYWwEZE0MYBhAGUEADDBYFBEoDBxIHVUpUVRIMVUYDAkEHVRYNAxABUUAEAUMDV0pUDEQAU0ZTDEQCVERQVkoBVhAEBBBXAQ==",
@@ -215,62 +219,8 @@ export function getArkModelCatalogPath(): string {
   return join(getArkDataHomeDir(), 'my-agent-configs', 'ark', 'codex', ARK_MODEL_CATALOG_FILE)
 }
 
-function readMoonBridgeModelCatalogRows(value: unknown): unknown[] {
-  if (Array.isArray(value)) return value
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    const record = value as Record<string, unknown>
-    return Array.isArray(record.models) ? record.models : []
-  }
-  return []
-}
-
-function readMoonBridgeModelId(record: Record<string, unknown>): string {
-  for (const key of ['slug', 'display_name', 'id', 'model', 'name']) {
-    const value = record[key]
-    if (typeof value !== 'string') continue
-    const candidate = value.trim()
-    if (candidate.length > 0) return candidate
-  }
-  return ''
-}
-
-function readMoonBridgeTokenCount(value: unknown): number | null {
-  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
-    return Math.trunc(value)
-  }
-  if (typeof value === 'string' && value.trim().length > 0) {
-    const parsed = Number(value)
-    if (Number.isFinite(parsed) && parsed > 0) {
-      return Math.trunc(parsed)
-    }
-  }
-  return null
-}
-
 export function getMoonBridgeModelMetadata(): MoonBridgeModelMetadata[] {
-  try {
-    const raw = JSON.parse(readFileSync(getMoonBridgeModelCatalogPath(), 'utf8')) as unknown
-    const rows = readMoonBridgeModelCatalogRows(raw)
-    const models: MoonBridgeModelMetadata[] = []
-    for (const row of rows) {
-      if (!row || typeof row !== 'object' || Array.isArray(row)) continue
-      const record = row as Record<string, unknown>
-      const id = readMoonBridgeModelId(record)
-      if (!id || models.some((model) => model.id === id)) continue
-      models.push({
-        id,
-        contextWindow: readMoonBridgeTokenCount(
-          record.context_window
-            ?? record.contextWindow
-            ?? record.max_context_window
-            ?? record.maxContextWindow,
-        ),
-      })
-    }
-    return models
-  } catch {
-    return []
-  }
+  return readModelCatalogMetadata(getMoonBridgeModelCatalogPath())
 }
 
 export function getMoonBridgeModels(): string[] {
@@ -278,29 +228,7 @@ export function getMoonBridgeModels(): string[] {
 }
 
 export function getArkModelMetadata(): MoonBridgeModelMetadata[] {
-  try {
-    const raw = JSON.parse(readFileSync(getArkModelCatalogPath(), 'utf8')) as unknown
-    const rows = readMoonBridgeModelCatalogRows(raw)
-    const models: MoonBridgeModelMetadata[] = []
-    for (const row of rows) {
-      if (!row || typeof row !== 'object' || Array.isArray(row)) continue
-      const record = row as Record<string, unknown>
-      const id = readMoonBridgeModelId(record)
-      if (!id || models.some((model) => model.id === id)) continue
-      models.push({
-        id,
-        contextWindow: readMoonBridgeTokenCount(
-          record.context_window
-            ?? record.contextWindow
-            ?? record.max_context_window
-            ?? record.maxContextWindow,
-        ),
-      })
-    }
-    return models
-  } catch {
-    return []
-  }
+  return readModelCatalogMetadata(getArkModelCatalogPath())
 }
 
 export function getArkModels(): string[] {
@@ -308,29 +236,7 @@ export function getArkModels(): string[] {
 }
 
 export function getCursorModelMetadata(): MoonBridgeModelMetadata[] {
-  try {
-    const raw = JSON.parse(readFileSync(getCursorModelCatalogPath(), 'utf8')) as unknown
-    const rows = readMoonBridgeModelCatalogRows(raw)
-    const models: MoonBridgeModelMetadata[] = []
-    for (const row of rows) {
-      if (!row || typeof row !== 'object' || Array.isArray(row)) continue
-      const record = row as Record<string, unknown>
-      const id = readMoonBridgeModelId(record)
-      if (!id || models.some((model) => model.id === id)) continue
-      models.push({
-        id,
-        contextWindow: readMoonBridgeTokenCount(
-          record.context_window
-            ?? record.contextWindow
-            ?? record.max_context_window
-            ?? record.maxContextWindow,
-        ),
-      })
-    }
-    return models
-  } catch {
-    return []
-  }
+  return readModelCatalogMetadata(getCursorModelCatalogPath())
 }
 
 export function getCursorModels(): string[] {
@@ -387,7 +293,7 @@ export interface FreeModeState {
   apiKey: string | null
   model: string
   customKey?: boolean
-  provider?: 'openrouter' | 'custom' | 'opencode-zen' | 'moon' | 'ark' | 'cursor'
+  provider?: string
   customBaseUrl?: string
   wireApi?: WireApi
   providerKeys?: Record<string, string>
@@ -411,6 +317,16 @@ export function normalizeFreeModeState(state: FreeModeState | null): FreeModeSta
       enabled: true,
       model: arkSelection.currentModel,
       wireApi: undefined,
+    }
+  }
+  const descriptor = readCodexUiProviderDescriptor(state.provider)
+  if (descriptor) {
+    const selection = getCodexUiProviderCatalogSelection(descriptor, state.model)
+    return {
+      ...state,
+      enabled: true,
+      model: selection.currentModel,
+      wireApi: descriptor.executable ? undefined : state.wireApi,
     }
   }
   return state

@@ -6482,6 +6482,42 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Rollback/Cleanup
 - No persistent cleanup is required.
 
+### Feature: Dynamic Codex UI provider config
+
+#### Prerequisites
+- App server can run from this repository.
+- Light and dark themes are both available from Settings.
+- Use a temporary `CODEX_HOME` or back up the existing `config.toml` before editing provider config.
+
+#### Steps
+1. Run `pnpm exec vue-tsc --noEmit`.
+2. Run `pnpm exec vitest run src/server/codexUiProviders.test.ts src/server/freeMode.test.ts src/server/codexAppServerBridge.inlinePayload.test.ts src/composables/useDesktopState.test.ts src/api/codexGateway.test.ts`.
+3. Add a user-level provider config with both `[model_providers.example]` and `[codex_ui.providers.example]`, including `model_catalog_json` and `default_model`.
+4. Start the app and open Settings in light theme.
+5. Confirm the Provider select shows the configured provider label.
+6. Select the configured provider and confirm the model list uses the configured catalog when present.
+7. Repeat steps 4-6 in dark theme.
+8. Remove `executable` from `[codex_ui.providers.example]` and confirm the backend uses plain `codex` with `model_provider="example"`.
+9. Add an executable wrapper command and confirm the backend uses that executable without shell expansion.
+10. Add only `[model_providers.example2]` without `codex_ui.providers.example2` and confirm the provider appears and uses plain `codex`.
+
+#### Expected Results
+- Custom provider IDs appear in the Provider select without editing frontend source.
+- `model_catalog_json` drives the UI model list and is injected into Codex startup args.
+- `executable` switches runtime launch to the configured command.
+- Existing Moon, Ark, and Cursor selections still work when no `codex_ui` override is configured.
+- Project-level `.codex/config.toml` cannot introduce an executable launcher.
+- Provider controls remain readable in light and dark themes.
+
+#### Performance Audit
+- Provider descriptors are read from user `config.toml` only on provider status, model list, and runtime construction paths.
+- Catalog reads are local JSON file reads and avoid network calls when valid models are present.
+- `/models` fetches are bounded by an 8 second timeout and only used after catalog fallback.
+
+#### Rollback/Cleanup
+- Restore the original `config.toml` or remove the temporary `CODEX_HOME`.
+- Stop any wrapper process started during manual verification.
+
 ### Feature: Cursor CLI first turn no-rollout recovery
 
 #### Prerequisites

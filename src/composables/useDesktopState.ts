@@ -120,7 +120,7 @@ function isCodexCliMissingError(error: unknown): boolean {
   return message.includes('Codex CLI is not available')
 }
 
-export type ProviderId = 'codex' | 'openrouter' | 'opencode-zen' | 'custom' | 'moon' | 'ark' | 'cursor'
+export type ProviderId = string
 type StoredProviderId = string
 
 function loadReadStateMap(): Record<string, string> {
@@ -207,7 +207,7 @@ export function normalizeProviderId(value: unknown): ProviderId {
   if (normalized === 'cursor') {
     return 'cursor'
   }
-  return 'codex'
+  return normalized || 'codex'
 }
 
 function normalizeStoredProviderId(value: unknown): StoredProviderId {
@@ -295,7 +295,8 @@ function toRpcModelProviderId(providerId: ProviderId): string {
   if (providerId === 'moon') return 'moon'
   if (providerId === 'ark') return 'ark'
   if (providerId === 'cursor') return 'cursor'
-  return ''
+  if (providerId === 'codex') return ''
+  return providerId
 }
 
 function toStoredRpcModelProviderId(providerId: unknown, fallbackCodexProviderId = ''): string {

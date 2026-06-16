@@ -219,11 +219,18 @@ describe('Ark catalog loading', () => {
     }
   })
 
-  it('falls back to the Ark coding default when the catalog is missing', () => {
-    expect(getArkModelSelection('openrouter/free')).toEqual({
-      models: [ARK_FALLBACK_MODEL],
-      currentModel: ARK_FALLBACK_MODEL,
-    })
+  it('falls back to the Ark coding default when the catalog is missing', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-ark-missing-catalog-'))
+    try {
+      vi.stubEnv('XDG_DATA_HOME', tempDir)
+
+      expect(getArkModelSelection('openrouter/free')).toEqual({
+        models: [ARK_FALLBACK_MODEL],
+        currentModel: ARK_FALLBACK_MODEL,
+      })
+    } finally {
+      await rm(tempDir, { recursive: true, force: true })
+    }
   })
 })
 

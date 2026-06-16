@@ -2299,6 +2299,7 @@ describe('app-server runtime configuration', () => {
       const moonCommand = join(tempDir, 'codex-moon')
       await writeMockCommand(codexCommand)
       await writeMockCommand(moonCommand)
+      vi.stubEnv('CODEX_HOME', tempDir)
       vi.stubEnv('CODEXUI_CODEX_COMMAND', codexCommand)
       vi.stubEnv('CODEXUI_CODEX_MOON_COMMAND', moonCommand)
 
@@ -2331,6 +2332,7 @@ describe('app-server runtime configuration', () => {
       const cursorCommand = join(tempDir, 'codex-cursor')
       await writeMockCommand(codexCommand)
       await writeMockCommand(cursorCommand)
+      vi.stubEnv('CODEX_HOME', tempDir)
       vi.stubEnv('CODEXUI_CODEX_COMMAND', codexCommand)
       vi.stubEnv('CODEXUI_CODEX_CURSOR_COMMAND', cursorCommand)
 
@@ -2356,6 +2358,7 @@ describe('app-server runtime configuration', () => {
       const arkCommand = join(tempDir, 'codex-ark')
       await writeMockCommand(codexCommand)
       await writeMockCommand(arkCommand)
+      vi.stubEnv('CODEX_HOME', tempDir)
       vi.stubEnv('CODEXUI_CODEX_COMMAND', codexCommand)
       vi.stubEnv('CODEXUI_CODEX_ARK_COMMAND', arkCommand)
 
@@ -2369,6 +2372,121 @@ describe('app-server runtime configuration', () => {
       expect(arkConfig.command).toBe(arkCommand)
       expect(arkConfig.args[0]).toBe('app-server')
       expect(arkConfig.args.some((arg) => arg.includes('model_provider'))).toBe(false)
+    } finally {
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('uses a configured codex-ui executable provider and injects provider config args', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-runtime-config-dynamic-'))
+    try {
+      const codexCommand = join(tempDir, 'codex')
+      const zedCommand = join(tempDir, 'codex-zed')
+      const catalogPath = join(tempDir, 'zed-models.json')
+      await writeMockCommand(codexCommand)
+      await writeMockCommand(zedCommand)
+      await writeFile(catalogPath, JSON.stringify({ models: [{ slug: 'zed-large' }] }), 'utf8')
+      await writeFile(
+        join(tempDir, 'config.toml'),
+        [
+          '[model_providers.zed]',
+          'name = "Zed Local"',
+          'base_url = "http://127.0.0.1:4555/v1"',
+          'wire_api = "responses"',
+          '',
+          '[codex_ui.providers.zed]',
+          `executable = ${JSON.stringify(zedCommand)}`,
+          'model_catalog_json = "zed-models.json"',
+          'default_model = "zed-large"',
+        ].join('\n'),
+        'utf8',
+      )
+      vi.stubEnv('CODEX_HOME', tempDir)
+      vi.stubEnv('CODEXUI_CODEX_COMMAND', codexCommand)
+
+      const config = buildAppServerConfigForState({
+        enabled: true,
+        apiKey: null,
+        model: 'zed-large',
+        provider: 'zed',
+      })
+
+      expect(config.command).toBe(zedCommand)
+      expect(config.args).toContain('model="zed-large"')
+      expect(config.args).toContain('model_provider="zed"')
+      expect(config.args).toContain(`model_catalog_json=${JSON.stringify(catalogPath)}`)
+    } finally {
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('uses plain codex for a configured provider without an executable', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-runtime-config-plain-provider-'))
+    try {
+      const codexCommand = join(tempDir, 'codex')
+      await writeMockCommand(codexCommand)
+      await writeFile(
+        join(tempDir, 'config.toml'),
+        [
+          '[model_providers.ark]',
+          'name = "Ark Coding Plan"',
+          'base_url = "https://ark.example/v1"',
+          'wire_api = "responses"',
+          '',
+          '[codex_ui.providers.ark]',
+          'model_catalog_json = "ark-models.json"',
+        ].join('\n'),
+        'utf8',
+      )
+      vi.stubEnv('CODEX_HOME', tempDir)
+      vi.stubEnv('CODEXUI_CODEX_COMMAND', codexCommand)
+
+      const config = buildAppServerConfigForState({
+        enabled: true,
+        apiKey: null,
+        model: 'doubao-code',
+        provider: 'ark',
+      })
+
+      expect(config.command).toBe(codexCommand)
+      expect(config.args).toContain('model="doubao-code"')
+      expect(config.args).toContain('model_provider="ark"')
+      expect(config.args).toContain(`model_catalog_json=${JSON.stringify(join(tempDir, 'ark-models.json'))}`)
+    } finally {
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps legacy Moon wrapper behavior when only model_providers.moon is configured', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-runtime-config-legacy-moon-'))
+    try {
+      const codexCommand = join(tempDir, 'codex')
+      const moonCommand = join(tempDir, 'codex-moon')
+      await writeMockCommand(codexCommand)
+      await writeMockCommand(moonCommand)
+      await writeFile(
+        join(tempDir, 'config.toml'),
+        [
+          '[model_providers.moon]',
+          'name = "Moon Bridge"',
+          'base_url = "http://127.0.0.1:38440/v1"',
+          'wire_api = "responses"',
+        ].join('\n'),
+        'utf8',
+      )
+      vi.stubEnv('CODEX_HOME', tempDir)
+      vi.stubEnv('CODEXUI_CODEX_COMMAND', codexCommand)
+      vi.stubEnv('CODEXUI_CODEX_MOON_COMMAND', moonCommand)
+
+      const config = buildAppServerConfigForState({
+        enabled: true,
+        apiKey: null,
+        model: 'moon-model',
+        provider: 'moon',
+      })
+
+      expect(config.command).toBe(moonCommand)
+      expect(config.args.some((arg) => arg.includes('model_provider'))).toBe(false)
     } finally {
       await rm(tempDir, { recursive: true, force: true })
     }

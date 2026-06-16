@@ -267,13 +267,7 @@
                   :disabled="freeModeLoading"
                   @change="onProviderChange(($event.target as HTMLSelectElement).value)"
                 >
-                  <option value="codex">Codex</option>
-                  <option value="openrouter">OpenRouter</option>
-                  <option value="opencode-zen">OpenCode Zen</option>
-                  <option value="moon">Moon Bridge</option>
-                  <option value="ark">Ark Coding Plan</option>
-                  <option value="cursor">Cursor CLI</option>
-                  <option value="custom">Custom endpoint</option>
+                  <option v-for="option in providerOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
                 </select>
               </div>
               <div v-if="providerError" class="sidebar-settings-row sidebar-settings-error">
@@ -1577,6 +1571,7 @@ const freeModeHasCustomKey = ref(false)
 const freeModeCustomKeyMasked = ref<string | null>(null)
 const freeModeCustomKeySaving = ref(false)
 const providerError = ref('')
+const dynamicProviderOptions = ref<Array<{ value: string; label: string }>>([])
 const customEndpointUrl = ref('')
 const customEndpointKey = ref('')
 const customEndpointWireApi = ref<'responses' | 'chat'>('responses')
@@ -1688,6 +1683,32 @@ const latestUserTurnId = computed(() => {
 const liveOverlay = computed(() => selectedLiveOverlay.value)
 const composerThreadContextId = computed(() => (isHomeRoute.value ? '__new-thread__' : selectedThreadId.value))
 const composerSelectedModelId = computed(() => readModelIdForThread(composerThreadContextId.value))
+const providerOptions = computed(() => {
+  const options: Array<{ value: string; label: string }> = [
+    { value: 'codex', label: 'Codex' },
+    { value: 'openrouter', label: 'OpenRouter' },
+    { value: 'opencode-zen', label: 'OpenCode Zen' },
+  ]
+  for (const option of dynamicProviderOptions.value) {
+    const value = option.value.trim()
+    if (!value || options.some((existing) => existing.value === value)) continue
+    options.push({
+      value,
+      label: option.label.trim() || value,
+    })
+  }
+  for (const option of [
+    { value: 'moon', label: 'Moon Bridge' },
+    { value: 'ark', label: 'Ark Coding Plan' },
+    { value: 'cursor', label: 'Cursor CLI' },
+  ]) {
+    if (!options.some((existing) => existing.value === option.value)) {
+      options.push(option)
+    }
+  }
+  options.push({ value: 'custom', label: 'Custom endpoint' })
+  return options
+})
 const composerSelectedReasoningEffort = computed(() => readReasoningEffortForThread(composerThreadContextId.value))
 const selectedThreadPendingRequest = computed<UiServerRequest | null>(() => {
   const rows = selectedThreadServerRequests.value
@@ -4100,20 +4121,14 @@ function toggleDictationAutoSend(): void {
   window.localStorage.setItem(DICTATION_AUTO_SEND_KEY, dictationAutoSend.value ? '1' : '0')
 }
 
-type ProviderSelection = 'codex' | 'openrouter' | 'opencode-zen' | 'custom' | 'moon' | 'ark' | 'cursor'
+type ProviderSelection = string
 
 function normalizeProviderSelection(provider: string): ProviderSelection {
-  if (
-    provider === 'openrouter'
-    || provider === 'opencode-zen'
-    || provider === 'custom'
-    || provider === 'moon'
-    || provider === 'ark'
-    || provider === 'cursor'
-  ) {
-    return provider
-  }
-  return 'codex'
+  const normalized = provider.trim().toLowerCase()
+  if (!normalized || normalized === 'openai') return 'codex'
+  if (normalized === 'openrouter-free') return 'openrouter'
+  if (normalized === 'custom-endpoint') return 'custom'
+  return normalized
 }
 
 function buildProviderStateSignature(provider: ProviderSelection = selectedProvider.value): string {
@@ -4186,6 +4201,12 @@ async function applySelectedProviderState(
       await setCustomProvider('', '', {
         wireApi: 'responses',
         provider: 'cursor',
+      })
+      freeModeEnabled.value = true
+    } else if (provider !== 'custom') {
+      await setCustomProvider('', '', {
+        wireApi: 'responses',
+        provider,
       })
       freeModeEnabled.value = true
     } else {
@@ -4313,13 +4334,21 @@ async function loadFreeModeStatus(): Promise<void> {
     freeModeEnabled.value = status.enabled
     freeModeHasCustomKey.value = status.customKey ?? false
     freeModeCustomKeyMasked.value = status.maskedKey ?? null
+    dynamicProviderOptions.value = Array.isArray(status.providers)
+      ? status.providers
+        .map((provider) => ({
+          value: typeof provider.id === 'string' ? provider.id.trim() : '',
+          label: typeof provider.label === 'string' ? provider.label.trim() : '',
+        }))
+        .filter((provider) => provider.value.length > 0)
+      : []
     if (status.provider === 'custom') {
       customEndpointUrl.value = status.customBaseUrl ?? ''
       customEndpointWireApi.value = status.wireApi === 'chat' ? 'chat' : 'responses'
     } else if (status.provider === 'openrouter') {
       openRouterWireApi.value = status.wireApi === 'chat' ? 'chat' : 'responses'
     }
-    if (status.enabled && (status.provider === 'moon' || status.provider === 'ark' || status.provider === 'cursor')) {
+    if (status.enabled && status.provider && status.provider !== 'openrouter' && status.provider !== 'custom' && status.provider !== 'opencode-zen') {
       setSelectedProvider(normalizeProviderSelection(status.provider))
     }
   } catch {

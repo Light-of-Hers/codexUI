@@ -44,7 +44,7 @@ function getPathExecutableCandidates(command: string): string[] {
     .map((ext) => `${command}${ext.toLowerCase()}`)
 }
 
-function isResolvableExecutable(command: string): boolean {
+export function isResolvableExecutable(command: string): boolean {
   if (isPathLike(command)) {
     return existsSync(command) && canAccessExecutable(command)
   }
@@ -62,6 +62,12 @@ function isResolvableExecutable(command: string): boolean {
     }
   }
   return false
+}
+
+export function resolveExecutableCommand(command: string | null | undefined): string | null {
+  const normalized = command?.trim()
+  if (!normalized) return null
+  return isResolvableExecutable(normalized) ? normalized : null
 }
 
 function isRunnableCommand(command: string, args: string[] = []): boolean {
