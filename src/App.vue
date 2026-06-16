@@ -274,142 +274,6 @@
                 <span>{{ providerError }}</span>
                 <a class="visible-error-feedback" :href="feedbackMailto" @click="prepareFeedbackLink($event, providerError)">{{ t('Send feedback') }}</a>
               </div>
-              <div v-if="selectedProvider === 'openrouter'" class="sidebar-settings-row sidebar-settings-row--input">
-                <div class="sidebar-settings-provider-info">
-                  <span class="sidebar-settings-label">{{ t('OpenRouter API key') }}</span>
-                  <a
-                    class="sidebar-settings-provider-link"
-                    href="https://openrouter.ai/keys"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >{{ t('Get API key') }}</a>
-                </div>
-                <div class="sidebar-settings-key-group">
-                  <template v-if="freeModeHasCustomKey && !freeModeCustomKey">
-                    <span class="sidebar-settings-key-masked">{{ freeModeCustomKeyMasked }}</span>
-                    <button
-                      class="sidebar-settings-key-clear"
-                      type="button"
-                      :disabled="freeModeCustomKeySaving"
-                      :title="t('Remove custom key, use community keys')"
-                      @click="clearFreeModeCustomKey"
-                    >&#x2715;</button>
-                  </template>
-                  <template v-else>
-                    <input
-                      v-model="freeModeCustomKey"
-                      class="sidebar-settings-key-input"
-                      type="password"
-                      :placeholder="t('sk-or-v1-... (optional, uses free keys if empty)')"
-                      @keydown.enter="saveFreeModeCustomKey"
-                    />
-                    <button
-                      class="sidebar-settings-key-save"
-                      type="button"
-                      :disabled="freeModeCustomKeySaving || !freeModeCustomKey.trim()"
-                      @click="saveFreeModeCustomKey"
-                    >{{ freeModeCustomKeySaving ? '...' : t('Set') }}</button>
-                  </template>
-                </div>
-                <div class="sidebar-settings-row sidebar-settings-row--select" style="margin-top: 4px; padding: 0">
-                  <span class="sidebar-settings-label">{{ t('API format') }}</span>
-                  <div class="sidebar-settings-segmented" role="group" :aria-label="t('OpenRouter API format')">
-                    <button
-                      type="button"
-                      class="sidebar-settings-segmented-option"
-                      :class="{ 'is-active': openRouterWireApi === 'responses' }"
-                      :disabled="freeModeCustomKeySaving || freeModeLoading"
-                      @click="setOpenRouterWireApi('responses')"
-                    >
-                      Responses
-                    </button>
-                    <button
-                      type="button"
-                      class="sidebar-settings-segmented-option"
-                      :class="{ 'is-active': openRouterWireApi === 'chat' }"
-                      :disabled="freeModeCustomKeySaving || freeModeLoading"
-                      @click="setOpenRouterWireApi('chat')"
-                    >
-                      Completions
-                    </button>
-                  </div>
-                </div>
-              </div>
-              <div v-if="selectedProvider === 'opencode-zen'" class="sidebar-settings-row sidebar-settings-row--input">
-                <div class="sidebar-settings-provider-info">
-                  <span class="sidebar-settings-label">{{ t('OpenCode Zen API key') }}</span>
-                  <a
-                    class="sidebar-settings-provider-link"
-                    href="https://opencode.ai/auth"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >{{ t('Get API key') }}</a>
-                </div>
-                <div class="sidebar-settings-key-group">
-                  <input
-                    v-model="opencodeZenKey"
-                    class="sidebar-settings-key-input"
-                    type="password"
-                    :placeholder="t('sk-...')"
-                    @keydown.enter="saveOpencodeZen"
-                  />
-                  <button
-                    class="sidebar-settings-key-save"
-                    type="button"
-                    :disabled="freeModeCustomKeySaving || !opencodeZenKey.trim()"
-                    @click="saveOpencodeZen"
-                  >{{ freeModeCustomKeySaving ? '...' : t('Save') }}</button>
-                </div>
-              </div>
-              <div v-if="selectedProvider === 'custom'" class="sidebar-settings-row sidebar-settings-row--input">
-                <span class="sidebar-settings-label">{{ t('Custom endpoint URL') }}</span>
-                <div class="sidebar-settings-key-group">
-                  <input
-                    v-model="customEndpointUrl"
-                    class="sidebar-settings-key-input"
-                    type="url"
-                    :placeholder="t('https://api.example.com/v1')"
-                    @keydown.enter="saveCustomEndpoint"
-                  />
-                </div>
-                <span class="sidebar-settings-label" style="margin-top: 4px">{{ t('API key') }}</span>
-                <div class="sidebar-settings-key-group">
-                  <input
-                    v-model="customEndpointKey"
-                    class="sidebar-settings-key-input"
-                    type="password"
-                    :placeholder="t('Bearer token (optional)')"
-                    @keydown.enter="saveCustomEndpoint"
-                  />
-                  <button
-                    class="sidebar-settings-key-save"
-                    type="button"
-                    :disabled="freeModeCustomKeySaving || !customEndpointUrl.trim()"
-                    @click="saveCustomEndpoint"
-                  >{{ freeModeCustomKeySaving ? '...' : t('Save') }}</button>
-                </div>
-                <div class="sidebar-settings-row sidebar-settings-row--select" style="margin-top: 4px; padding: 0">
-                  <span class="sidebar-settings-label">{{ t('API format') }}</span>
-                  <div class="sidebar-settings-segmented" role="group" :aria-label="t('Custom endpoint API format')">
-                    <button
-                      type="button"
-                      class="sidebar-settings-segmented-option"
-                      :class="{ 'is-active': customEndpointWireApi === 'responses' }"
-                      @click="customEndpointWireApi = 'responses'"
-                    >
-                      Responses
-                    </button>
-                    <button
-                      type="button"
-                      class="sidebar-settings-segmented-option"
-                      :class="{ 'is-active': customEndpointWireApi === 'chat' }"
-                      @click="customEndpointWireApi = 'chat'"
-                    >
-                      Completions
-                    </button>
-                  </div>
-                </div>
-              </div>
               <div class="sidebar-settings-row sidebar-settings-row--select" :title="SETTINGS_HELP.dictationLanguage">
                 <span class="sidebar-settings-label">{{ t('Dictation language') }}</span>
                 <ComposerDropdown
@@ -1173,7 +1037,7 @@ import {
 import type { ReasoningEffort, SpeedMode, UiAccountEntry, UiRateLimitWindow, UiServerRequest, UiServerRequestReply, UiThreadAutomation, UiThreadTokenUsage } from './types/codex'
 import type { ComposerDraftPayload, ThreadComposerExposed } from './components/content/ThreadComposer.vue'
 import type { GitCommitOption, LocalDirectoryEntry, TelegramStatus, ThreadTerminalQuickCommand, WorktreeBranchOption } from './api/codexGateway'
-import { getFreeModeStatus, setFreeMode, setFreeModeCustomKey, setCustomProvider } from './api/codexGateway'
+import { getFreeModeStatus, setFreeMode, setCustomProvider } from './api/codexGateway'
 import { getPathLeafName, getPathParent, isProjectlessChatPath, normalizePathForUi } from './pathUtils.js'
 
 const ThreadConversation = defineAsyncComponent(() => import('./components/content/ThreadConversation.vue'))
@@ -1566,17 +1430,9 @@ const dictationLanguageOptions = computed(() => buildDictationLanguageOptions())
 const showFirstLaunchPluginsCard = ref(false)
 const freeModeEnabled = ref(false)
 const freeModeLoading = ref(false)
-const freeModeCustomKey = ref('')
-const freeModeHasCustomKey = ref(false)
-const freeModeCustomKeyMasked = ref<string | null>(null)
-const freeModeCustomKeySaving = ref(false)
 const providerError = ref('')
 const dynamicProviderOptions = ref<Array<{ value: string; label: string }>>([])
-const customEndpointUrl = ref('')
-const customEndpointKey = ref('')
-const customEndpointWireApi = ref<'responses' | 'chat'>('responses')
-const openRouterWireApi = ref<'responses' | 'chat'>('responses')
-const opencodeZenKey = ref('')
+const providerOptionsLoaded = ref(false)
 const isTelegramConfigOpen = ref(false)
 const telegramBotTokenDraft = ref('')
 const telegramAllowedUserIdsDraft = ref('')
@@ -1686,8 +1542,6 @@ const composerSelectedModelId = computed(() => readModelIdForThread(composerThre
 const providerOptions = computed(() => {
   const options: Array<{ value: string; label: string }> = [
     { value: 'codex', label: 'Codex' },
-    { value: 'openrouter', label: 'OpenRouter' },
-    { value: 'opencode-zen', label: 'OpenCode Zen' },
   ]
   for (const option of dynamicProviderOptions.value) {
     const value = option.value.trim()
@@ -1697,16 +1551,6 @@ const providerOptions = computed(() => {
       label: option.label.trim() || value,
     })
   }
-  for (const option of [
-    { value: 'moon', label: 'Moon Bridge' },
-    { value: 'ark', label: 'Ark Coding Plan' },
-    { value: 'cursor', label: 'Cursor CLI' },
-  ]) {
-    if (!options.some((existing) => existing.value === option.value)) {
-      options.push(option)
-    }
-  }
-  options.push({ value: 'custom', label: 'Custom endpoint' })
   return options
 })
 const composerSelectedReasoningEffort = computed(() => readReasoningEffortForThread(composerThreadContextId.value))
@@ -4126,30 +3970,27 @@ type ProviderSelection = string
 function normalizeProviderSelection(provider: string): ProviderSelection {
   const normalized = provider.trim().toLowerCase()
   if (!normalized || normalized === 'openai') return 'codex'
-  if (normalized === 'openrouter-free') return 'openrouter'
-  if (normalized === 'custom-endpoint') return 'custom'
   return normalized
 }
 
 function buildProviderStateSignature(provider: ProviderSelection = selectedProvider.value): string {
-  if (provider === 'openrouter') {
-    return `${provider}|${openRouterWireApi.value}`
-  }
-  if (provider === 'opencode-zen') {
-    return `${provider}|${opencodeZenKey.value.trim()}`
-  }
-  if (provider === 'custom') {
-    return `${provider}|${customEndpointUrl.value.trim()}|${customEndpointKey.value.trim()}|${customEndpointWireApi.value}`
-  }
   return provider
 }
 
 let lastAppliedProviderStateSignature = ''
 
+function isAvailableProvider(provider: ProviderSelection): boolean {
+  return providerOptions.value.some((option) => option.value === provider)
+}
+
 async function applySelectedProviderState(
   options: { force?: boolean; refreshAncillary?: boolean; explicitProviderChange?: boolean } = {},
 ): Promise<void> {
-  const provider = selectedProvider.value
+  let provider = selectedProvider.value
+  if (provider !== 'codex' && providerOptionsLoaded.value && !isAvailableProvider(provider)) {
+    provider = 'codex'
+    setSelectedProviderForComposerContext(composerThreadContextId.value, provider)
+  }
   const signature = buildProviderStateSignature(provider)
   if (!options.force && signature === lastAppliedProviderStateSignature) {
     if (options.refreshAncillary !== false && options.explicitProviderChange === true) {
@@ -4164,54 +4005,14 @@ async function applySelectedProviderState(
     return
   }
 
-  if (provider === 'custom' && !customEndpointUrl.value.trim()) {
-    return
-  }
-
   try {
     if (provider === 'codex') {
       const result = await setFreeMode(false)
       freeModeEnabled.value = result.enabled
-    } else if (provider === 'openrouter') {
-      const result = await setFreeMode(true)
-      freeModeEnabled.value = result.enabled
-      await setCustomProvider('', '', {
-        wireApi: openRouterWireApi.value,
-        provider: 'openrouter',
-      })
-    } else if (provider === 'opencode-zen') {
-      await setCustomProvider('', opencodeZenKey.value.trim(), {
-        wireApi: 'responses',
-        provider: 'opencode-zen',
-      })
-      freeModeEnabled.value = true
-    } else if (provider === 'moon') {
-      await setCustomProvider('', '', {
-        wireApi: 'responses',
-        provider: 'moon',
-      })
-      freeModeEnabled.value = true
-    } else if (provider === 'ark') {
-      await setCustomProvider('', '', {
-        wireApi: 'responses',
-        provider: 'ark',
-      })
-      freeModeEnabled.value = true
-    } else if (provider === 'cursor') {
-      await setCustomProvider('', '', {
-        wireApi: 'responses',
-        provider: 'cursor',
-      })
-      freeModeEnabled.value = true
-    } else if (provider !== 'custom') {
+    } else {
       await setCustomProvider('', '', {
         wireApi: 'responses',
         provider,
-      })
-      freeModeEnabled.value = true
-    } else {
-      await setCustomProvider(customEndpointUrl.value.trim(), customEndpointKey.value.trim(), {
-        wireApi: customEndpointWireApi.value,
       })
       freeModeEnabled.value = true
     }
@@ -4238,6 +4039,12 @@ async function onProviderChange(provider: string): Promise<void> {
   freeModeLoading.value = true
   try {
     const normalizedProvider = normalizeProviderSelection(provider)
+    if (!isAvailableProvider(normalizedProvider)) {
+      setSelectedProviderForComposerContext(composerThreadContextId.value, 'codex')
+      providerError.value = ''
+      await applySelectedProviderState({ explicitProviderChange: true })
+      return
+    }
     setSelectedProviderForComposerContext(composerThreadContextId.value, normalizedProvider)
     await applySelectedProviderState({ explicitProviderChange: true })
   } catch (err) {
@@ -4247,93 +4054,10 @@ async function onProviderChange(provider: string): Promise<void> {
   }
 }
 
-async function saveCustomEndpoint(): Promise<void> {
-  if (freeModeCustomKeySaving.value) return
-  const url = customEndpointUrl.value.trim()
-  if (!url) return
-  freeModeCustomKeySaving.value = true
-  try {
-    providerError.value = ''
-    setSelectedProvider('custom')
-    await applySelectedProviderState()
-  } catch (err) {
-    providerError.value = err instanceof Error ? err.message : 'Failed to save custom endpoint'
-  } finally {
-    freeModeCustomKeySaving.value = false
-  }
-}
-
-async function setOpenRouterWireApi(nextWireApi: 'responses' | 'chat'): Promise<void> {
-  if (freeModeCustomKeySaving.value || freeModeLoading.value) return
-  if (openRouterWireApi.value === nextWireApi) return
-  const previousWireApi = openRouterWireApi.value
-  openRouterWireApi.value = nextWireApi
-  freeModeCustomKeySaving.value = true
-  try {
-    providerError.value = ''
-    setSelectedProvider('openrouter')
-    await applySelectedProviderState()
-  } catch (err) {
-    openRouterWireApi.value = previousWireApi
-    providerError.value = err instanceof Error ? err.message : 'Failed to save OpenRouter API format'
-  } finally {
-    freeModeCustomKeySaving.value = false
-  }
-}
-
-async function saveOpencodeZen(): Promise<void> {
-  if (freeModeCustomKeySaving.value) return
-  const key = opencodeZenKey.value.trim()
-  if (!key) return
-  freeModeCustomKeySaving.value = true
-  try {
-    providerError.value = ''
-    setSelectedProvider('opencode-zen')
-    await applySelectedProviderState()
-  } catch (err) {
-    providerError.value = err instanceof Error ? err.message : 'Failed to save OpenCode Zen config'
-  } finally {
-    freeModeCustomKeySaving.value = false
-  }
-}
-
-async function saveFreeModeCustomKey(): Promise<void> {
-  if (freeModeCustomKeySaving.value) return
-  freeModeCustomKeySaving.value = true
-  try {
-    const key = freeModeCustomKey.value.trim()
-    await setFreeModeCustomKey(key)
-    freeModeCustomKey.value = ''
-    await loadFreeModeStatus()
-    await refreshAll({ includeSelectedThreadMessages: false })
-  } catch {
-    // Silently fail
-  } finally {
-    freeModeCustomKeySaving.value = false
-  }
-}
-
-async function clearFreeModeCustomKey(): Promise<void> {
-  if (freeModeCustomKeySaving.value) return
-  freeModeCustomKeySaving.value = true
-  try {
-    await setFreeModeCustomKey('')
-    freeModeCustomKey.value = ''
-    await loadFreeModeStatus()
-    await refreshAll({ includeSelectedThreadMessages: false })
-  } catch {
-    // Silently fail
-  } finally {
-    freeModeCustomKeySaving.value = false
-  }
-}
-
 async function loadFreeModeStatus(): Promise<void> {
   try {
     const status = await getFreeModeStatus()
     freeModeEnabled.value = status.enabled
-    freeModeHasCustomKey.value = status.customKey ?? false
-    freeModeCustomKeyMasked.value = status.maskedKey ?? null
     dynamicProviderOptions.value = Array.isArray(status.providers)
       ? status.providers
         .map((provider) => ({
@@ -4342,13 +4066,8 @@ async function loadFreeModeStatus(): Promise<void> {
         }))
         .filter((provider) => provider.value.length > 0)
       : []
-    if (status.provider === 'custom') {
-      customEndpointUrl.value = status.customBaseUrl ?? ''
-      customEndpointWireApi.value = status.wireApi === 'chat' ? 'chat' : 'responses'
-    } else if (status.provider === 'openrouter') {
-      openRouterWireApi.value = status.wireApi === 'chat' ? 'chat' : 'responses'
-    }
-    if (status.enabled && status.provider && status.provider !== 'openrouter' && status.provider !== 'custom' && status.provider !== 'opencode-zen') {
+    providerOptionsLoaded.value = true
+    if (status.enabled && status.provider && isAvailableProvider(normalizeProviderSelection(status.provider ?? ''))) {
       setSelectedProvider(normalizeProviderSelection(status.provider))
     }
   } catch {
@@ -4471,6 +4190,7 @@ function onSelectCollaborationMode(mode: 'default' | 'plan'): void {
 async function initialize(): Promise<void> {
   await router.isReady()
   await refreshMoonBridgeModelIds().catch(() => {})
+  await loadFreeModeStatus()
 
   if (route.name === 'thread' && routeThreadId.value) {
     primeSelectedThread(routeThreadId.value)

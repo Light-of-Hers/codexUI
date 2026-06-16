@@ -2977,7 +2977,7 @@ Toggle "Free mode" in settings to use free OpenRouter models without an OpenAI A
 #### Rollback/Cleanup
 - Rename any test threads back to original names if desired.
 
-### Feature: Provider dropdown in settings (replaces free mode toggle)
+### Feature: Provider dropdown in settings
 
 #### Prerequisites
 - App is running from this repository (`pnpm run dev`).
@@ -2987,23 +2987,17 @@ Toggle "Free mode" in settings to use free OpenRouter models without an OpenAI A
 2. Verify the settings panel is scrollable when content overflows.
 3. Verify the Accounts section does NOT have its own scrollbar — it flows naturally within the settings panel scroll.
 4. Locate the **Provider** dropdown (default: "Codex").
-5. Change provider to **OpenRouter**.
-6. Verify a "Get API key" link appears next to the OpenRouter API key label, pointing to `https://openrouter.ai/keys`.
-7. Verify the API key input field is shown with placeholder `sk-or-v1-... (optional, uses free keys if empty)`.
-8. Optionally enter an OpenRouter API key and click Set.
-9. Change provider to **Custom endpoint**.
-10. Verify URL and API key input fields appear.
-11. Enter a valid endpoint URL and click Save.
-12. Change provider back to **Codex**.
-13. Verify the config is reset and no provider-specific fields are shown.
+5. With no user-level dynamic providers configured, verify the dropdown contains only **Codex**.
+6. Add a user-level `[model_providers.example]` and matching `[codex_ui.providers.example]` entry.
+7. Refresh the browser and verify the dropdown contains **Codex** plus the configured provider label.
+8. Select the configured provider, then change provider back to **Codex**.
+9. Verify no provider-specific key or endpoint fields are shown in settings.
 
 #### Expected Results
-- Provider dropdown shows three options: Codex, OpenRouter, Custom endpoint.
-- Selecting OpenRouter enables free mode with community keys (or custom key if provided).
-- Selecting Custom endpoint allows setting a custom API base URL and bearer token.
+- Provider dropdown shows Codex plus providers read from user `config.toml`.
+- Built-in OpenRouter, OpenCode Zen, and Custom endpoint options are not shown unless configured in `config.toml`.
 - Selecting Codex disables external provider mode and uses the default Codex backend.
 - Settings panel scrolls as a whole; accounts section has no independent scrollbar.
-- OpenRouter option includes a "Get API key" link to openrouter.ai/keys.
 
 #### Rollback/Cleanup
 - Switch provider back to Codex to restore default behavior.
@@ -6503,6 +6497,7 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Expected Results
 - Custom provider IDs appear in the Provider select without editing frontend source.
+- Built-in external providers do not appear unless declared in user `config.toml`.
 - `model_catalog_json` drives the UI model list and is injected into Codex startup args.
 - `executable` switches runtime launch to the configured command.
 - Existing Moon, Ark, and Cursor selections still work when no `codex_ui` override is configured.

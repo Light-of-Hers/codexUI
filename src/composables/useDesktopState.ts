@@ -189,15 +189,6 @@ export function normalizeProviderId(value: unknown): ProviderId {
   if (normalized === 'openai') {
     return 'codex'
   }
-  if (normalized === 'openrouter' || normalized === 'openrouter-free') {
-    return 'openrouter'
-  }
-  if (normalized === 'opencode-zen') {
-    return 'opencode-zen'
-  }
-  if (normalized === 'custom' || normalized === 'custom-endpoint') {
-    return 'custom'
-  }
   if (normalized === 'moon') {
     return 'moon'
   }
@@ -216,9 +207,6 @@ function normalizeStoredProviderId(value: unknown): StoredProviderId {
   const normalized = raw.toLowerCase()
   if (normalized === 'codex') return 'codex'
   if (normalized === 'openai') return 'openai'
-  if (normalized === 'openrouter' || normalized === 'openrouter-free') return 'openrouter'
-  if (normalized === 'opencode-zen') return 'opencode-zen'
-  if (normalized === 'custom' || normalized === 'custom-endpoint') return 'custom'
   if (normalized === 'moon') return 'moon'
   if (normalized === 'ark') return 'ark'
   if (normalized === 'cursor') return 'cursor'
@@ -289,12 +277,6 @@ export function inferProviderFromModel(modelId: string, moonBridgeModels: string
 }
 
 function toRpcModelProviderId(providerId: ProviderId): string {
-  if (providerId === 'openrouter') return 'openrouter-free'
-  if (providerId === 'opencode-zen') return 'opencode-zen'
-  if (providerId === 'custom') return 'custom-endpoint'
-  if (providerId === 'moon') return 'moon'
-  if (providerId === 'ark') return 'ark'
-  if (providerId === 'cursor') return 'cursor'
   if (providerId === 'codex') return ''
   return providerId
 }
