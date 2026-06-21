@@ -5344,6 +5344,9 @@ export function useDesktopState() {
 
       const currentExists = flatThreads.some((thread) => thread.id === selectedThreadId.value)
 
+      if (!currentExists && selectedThreadId.value && hasLoadedAllThreadPages) {
+        setSelectedThreadId('')
+      }
       if (!currentExists && !selectedThreadId.value) {
         setSelectedThreadId(flatThreads[0]?.id ?? '')
       }

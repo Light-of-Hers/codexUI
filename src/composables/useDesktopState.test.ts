@@ -605,6 +605,40 @@ describe('Codex CLI availability', () => {
   })
 })
 
+describe('thread selection persistence', () => {
+  it('replaces a stored missing selected thread after the complete thread list loads', async () => {
+    installTestWindow({
+      'codex-web-local.selected-thread-id.v1': 'missing-thread',
+    })
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({
+      groups: [{ projectName: 'project', threads: [thread('thread-a', '/tmp/project')] }],
+      nextCursor: null,
+    })
+
+    const state = useDesktopState()
+    await state.refreshAll({ includeSelectedThreadMessages: false, refreshAncillary: false })
+
+    expect(state.selectedThreadId.value).toBe('thread-a')
+    expect(window.localStorage.getItem('codex-web-local.selected-thread-id.v1')).toBe('thread-a')
+  })
+
+  it('keeps a stored missing selected thread while thread pagination is incomplete', async () => {
+    installTestWindow({
+      'codex-web-local.selected-thread-id.v1': 'older-thread',
+    })
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({
+      groups: [{ projectName: 'project', threads: [thread('thread-a', '/tmp/project')] }],
+      nextCursor: 'next-page',
+    })
+
+    const state = useDesktopState()
+    await state.refreshAll({ includeSelectedThreadMessages: false, refreshAncillary: false })
+
+    expect(state.selectedThreadId.value).toBe('older-thread')
+    expect(window.localStorage.getItem('codex-web-local.selected-thread-id.v1')).toBe('older-thread')
+  })
+})
+
 describe('goal slash commands', () => {
   const activeGoal = {
     threadId: 'thread-a',

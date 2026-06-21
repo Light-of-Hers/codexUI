@@ -6513,6 +6513,34 @@ Markdown files opened through the local editor expose a preview button that rend
 - Restore the original `config.toml` or remove the temporary `CODEX_HOME`.
 - Stop any wrapper process started during manual verification.
 
+### Feature: Missing persisted thread selection fallback
+
+#### Prerequisites
+- App server is running from this repository.
+- Browser devtools Application or Storage panel is available for editing localStorage.
+- At least one local thread exists in the sidebar.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Run `pnpm exec vitest run src/composables/useDesktopState.test.ts -t "thread selection persistence"`.
+2. In light theme, set `codex-web-local.selected-thread-id.v1` in localStorage to a thread id that does not exist.
+3. Reload the app after the full sidebar thread list can load.
+4. Confirm the app selects the first available thread and updates `codex-web-local.selected-thread-id.v1` to that thread id.
+5. Repeat steps 2-4 in dark theme.
+6. For a paginated thread list that has not loaded all pages yet, repeat the reload with a missing stored thread id.
+
+#### Expected Results
+- Once all thread pages are loaded, a missing persisted selected thread is replaced by the first available thread.
+- While thread pagination is incomplete, the missing persisted selected thread is preserved so an older thread can still be selected when later pages load.
+- Sidebar selection remains readable in both light and dark themes.
+
+#### Performance Audit
+- The selection fallback only scans the already-loaded flat thread list once during the existing refresh path.
+- The change adds no extra thread API calls, filesystem reads, or pagination requests.
+
+#### Rollback/Cleanup
+- Restore or remove the edited `codex-web-local.selected-thread-id.v1` localStorage value after manual verification.
+
 ### Feature: Cursor CLI first turn no-rollout recovery
 
 #### Prerequisites
