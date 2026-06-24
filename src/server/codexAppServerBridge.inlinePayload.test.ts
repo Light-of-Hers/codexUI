@@ -2869,23 +2869,23 @@ describe('thread message search', () => {
     },
   }
 
-  it('returns structured per-message matches with snippets', () => {
+  it('returns structured per-message matches with newest matches first', () => {
     const result = searchThreadMessagesInPayload('thread-search', 'alpha', payload, 10)
 
     expect(result.totalMatches).toBe(4)
     expect(result.truncated).toBe(false)
     expect(result.results.map((row) => row.messageId)).toEqual([
-      'user-item',
-      'user-item',
       'cmd-item',
       'cmd-item',
+      'user-item',
+      'user-item',
     ])
     expect(result.results[0]).toMatchObject({
-      turnId: 'turn-user',
-      turnIndex: 4,
-      role: 'user',
-      messageType: 'userMessage',
-      occurrenceIndex: 0,
+      turnId: 'turn-command',
+      turnIndex: 5,
+      role: 'system',
+      messageType: 'commandExecution',
+      occurrenceIndex: 1,
     })
     expect(result.results[0]?.snippet.slice(result.results[0].snippetMatchStart, result.results[0].snippetMatchEnd).toLowerCase()).toBe('alpha')
   })
@@ -2896,6 +2896,10 @@ describe('thread message search', () => {
     expect(result.totalMatches).toBe(4)
     expect(result.truncated).toBe(true)
     expect(result.results).toHaveLength(2)
+    expect(result.results.map((row) => row.messageId)).toEqual([
+      'cmd-item',
+      'cmd-item',
+    ])
   })
 })
 

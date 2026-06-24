@@ -5,6 +5,11 @@ export type ThreadSearchUiResult = ThreadMessageSearchResult & {
   source: 'backend' | 'live'
 }
 
+export type ThreadSearchUiResultEntry = {
+  result: ThreadSearchUiResult
+  order: number
+}
+
 const THREAD_SEARCH_SNIPPET_CONTEXT = 72
 
 function appendThreadSearchPart(parts: string[], seen: Set<string>, value: unknown): void {
@@ -111,4 +116,17 @@ export function buildLiveThreadSearchResults(
     }
   }
   return results
+}
+
+export function compareThreadSearchResultEntriesByRecency(
+  left: ThreadSearchUiResultEntry,
+  right: ThreadSearchUiResultEntry,
+): number {
+  const leftTurn = left.result.turnIndex >= 0 ? left.result.turnIndex : Number.POSITIVE_INFINITY
+  const rightTurn = right.result.turnIndex >= 0 ? right.result.turnIndex : Number.POSITIVE_INFINITY
+  if (leftTurn !== rightTurn) return leftTurn > rightTurn ? -1 : 1
+  if (left.result.messageId === right.result.messageId && left.result.occurrenceIndex !== right.result.occurrenceIndex) {
+    return right.result.occurrenceIndex - left.result.occurrenceIndex
+  }
+  return left.order - right.order
 }

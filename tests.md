@@ -6747,6 +6747,7 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Expected Results
 - The header search control opens only on thread routes and remains independent from sidebar thread filtering.
 - Visible-message searches show a count and scroll to the matching message with a short highlight.
+- Results are ordered newest-first so the initial selection is the latest matching message in the conversation.
 - Older persisted matches are found through backend search and revealed through a bounded turn window.
 - Live-only matches are included without duplicating persisted backend results.
 - Enter moves to the next result and Shift+Enter moves to the previous result.

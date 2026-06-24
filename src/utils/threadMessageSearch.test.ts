@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type { UiMessage } from '../types/codex'
-import { buildLiveThreadSearchResults, buildUiMessageSearchText, isLiveOnlySearchCandidate } from './threadMessageSearch'
+import {
+  buildLiveThreadSearchResults,
+  buildUiMessageSearchText,
+  compareThreadSearchResultEntriesByRecency,
+  isLiveOnlySearchCandidate,
+  type ThreadSearchUiResult,
+  type ThreadSearchUiResultEntry,
+} from './threadMessageSearch'
 
 describe('thread message search frontend helpers', () => {
   it('builds searchable text from live command details', () => {
@@ -70,5 +77,47 @@ describe('thread message search frontend helpers', () => {
       turnId: 'turn-2',
       turnIndex: 2,
     })
+  })
+
+  it('sorts search results with the most recent conversation match first', () => {
+    const baseResult: ThreadSearchUiResult = {
+      id: 'base',
+      turnId: 'turn-1',
+      turnIndex: 1,
+      messageId: 'message-1',
+      role: 'assistant',
+      messageType: 'agentMessage',
+      occurrenceIndex: 0,
+      snippet: 'alpha',
+      snippetMatchStart: 0,
+      snippetMatchEnd: 5,
+      source: 'backend',
+    }
+    const entries: ThreadSearchUiResultEntry[] = [
+      {
+        result: { ...baseResult, id: 'old', turnId: 'turn-1', turnIndex: 1, messageId: 'old-message' },
+        order: 0,
+      },
+      {
+        result: { ...baseResult, id: 'new-first-hit', turnId: 'turn-3', turnIndex: 3, messageId: 'new-message', occurrenceIndex: 0 },
+        order: 1,
+      },
+      {
+        result: { ...baseResult, id: 'new-last-hit', turnId: 'turn-3', turnIndex: 3, messageId: 'new-message', occurrenceIndex: 1 },
+        order: 2,
+      },
+      {
+        result: { ...baseResult, id: 'live-unknown-turn', turnId: '', turnIndex: -1, messageId: 'live-message', source: 'live' },
+        order: 3,
+      },
+    ]
+    const results = entries.sort(compareThreadSearchResultEntriesByRecency)
+
+    expect(results.map((entry) => entry.result.id)).toEqual([
+      'live-unknown-turn',
+      'new-last-hit',
+      'new-first-hit',
+      'old',
+    ])
   })
 })

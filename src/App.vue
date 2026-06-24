@@ -1107,7 +1107,7 @@ import type { ComposerDraftPayload, ThreadComposerExposed } from './components/c
 import type { GitCommitOption, LocalDirectoryEntry, TelegramStatus, ThreadMessageSearchResult, ThreadTerminalQuickCommand, WorktreeBranchOption } from './api/codexGateway'
 import { getFreeModeStatus, setFreeMode, setCustomProvider } from './api/codexGateway'
 import { getPathLeafName, getPathParent, isProjectlessChatPath, normalizePathForUi } from './pathUtils.js'
-import { buildLiveThreadSearchResults, type ThreadSearchUiResult } from './utils/threadMessageSearch'
+import { buildLiveThreadSearchResults, compareThreadSearchResultEntriesByRecency, type ThreadSearchUiResult } from './utils/threadMessageSearch'
 
 const ThreadConversation = defineAsyncComponent(() => import('./components/content/ThreadConversation.vue'))
 const ThreadTerminalPanel = defineAsyncComponent(() => import('./components/content/ThreadTerminalPanel.vue'))
@@ -1625,14 +1625,7 @@ const threadSearchResults = computed<ThreadSearchUiResult[]>(() => {
   const live = buildLiveThreadSearchResults(threadSearchQuery.value, backendMessageIds, filteredMessages.value)
   return [...backend, ...live]
     .map((result, order) => ({ result, order }))
-    .sort((left, right) => {
-      const leftTurn = left.result.turnIndex >= 0 ? left.result.turnIndex : Number.POSITIVE_INFINITY
-      const rightTurn = right.result.turnIndex >= 0 ? right.result.turnIndex : Number.POSITIVE_INFINITY
-      if (leftTurn !== rightTurn) return leftTurn - rightTurn
-      if (left.result.messageId !== right.result.messageId) return left.order - right.order
-      if (left.result.occurrenceIndex !== right.result.occurrenceIndex) return left.result.occurrenceIndex - right.result.occurrenceIndex
-      return left.order - right.order
-    })
+    .sort(compareThreadSearchResultEntriesByRecency)
     .map((entry) => entry.result)
 })
 

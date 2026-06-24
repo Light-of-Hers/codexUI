@@ -170,6 +170,11 @@ export type ThreadMessageSearchResult = {
   snippetMatchEnd: number
 }
 
+type RankedThreadMessageSearchResult = ThreadMessageSearchResult & {
+  rowOrder: number
+  matchStart: number
+}
+
 type ThreadMessageSearchResponse = {
   threadId: string
   query: string
@@ -1918,10 +1923,12 @@ export function searchThreadMessagesInPayload(
   }
 
   const lowerQuery = normalizedQuery.toLowerCase()
-  const results: ThreadMessageSearchResult[] = []
+  const matches: RankedThreadMessageSearchResult[] = []
   let totalMatches = 0
 
-  for (const row of extractThreadMessageSearchRows(threadReadPayload)) {
+  const rows = extractThreadMessageSearchRows(threadReadPayload)
+  for (let rowOrder = 0; rowOrder < rows.length; rowOrder += 1) {
+    const row = rows[rowOrder]
     const lowerText = row.text.toLowerCase()
     let occurrenceIndex = 0
     let offset = 0
@@ -1931,27 +1938,39 @@ export function searchThreadMessagesInPayload(
       const matchEnd = matchStart + lowerQuery.length
       const { snippet, snippetMatchStart, snippetMatchEnd } = buildSearchSnippet(row.text, matchStart, matchEnd)
       totalMatches += 1
-      if (results.length < cappedLimit) {
-        const turnIndex = typeof row.message.turnIndex === 'number' ? row.message.turnIndex : -1
-        const turnId = row.message.turnId?.trim() ?? ''
-        const messageType = row.message.messageType ?? ''
-        results.push({
-          id: `${row.message.id}:${occurrenceIndex}:${matchStart}`,
-          turnId,
-          turnIndex,
-          messageId: row.message.id,
-          role: row.message.role,
-          messageType,
-          occurrenceIndex,
-          snippet,
-          snippetMatchStart,
-          snippetMatchEnd,
-        })
-      }
+      const turnIndex = typeof row.message.turnIndex === 'number' ? row.message.turnIndex : -1
+      const turnId = row.message.turnId?.trim() ?? ''
+      const messageType = row.message.messageType ?? ''
+      matches.push({
+        id: `${row.message.id}:${occurrenceIndex}:${matchStart}`,
+        turnId,
+        turnIndex,
+        messageId: row.message.id,
+        role: row.message.role,
+        messageType,
+        occurrenceIndex,
+        snippet,
+        snippetMatchStart,
+        snippetMatchEnd,
+        rowOrder,
+        matchStart,
+      })
       occurrenceIndex += 1
       offset = matchEnd > matchStart ? matchEnd : matchStart + 1
     }
   }
+
+  const results = matches
+    .sort((left, right) => {
+      const leftTurn = left.turnIndex >= 0 ? left.turnIndex : Number.POSITIVE_INFINITY
+      const rightTurn = right.turnIndex >= 0 ? right.turnIndex : Number.POSITIVE_INFINITY
+      if (leftTurn !== rightTurn) return leftTurn > rightTurn ? -1 : 1
+      if (left.rowOrder !== right.rowOrder) return right.rowOrder - left.rowOrder
+      if (left.occurrenceIndex !== right.occurrenceIndex) return right.occurrenceIndex - left.occurrenceIndex
+      return right.matchStart - left.matchStart
+    })
+    .slice(0, cappedLimit)
+    .map(({ rowOrder: _rowOrder, matchStart: _matchStart, ...result }) => result)
 
   return {
     threadId: normalizedThreadId,
