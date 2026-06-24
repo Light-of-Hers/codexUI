@@ -1614,6 +1614,7 @@ const isThreadSearchNavigating = ref(false)
 const threadSearchError = ref('')
 let threadSearchDebounceTimer: number | null = null
 let threadSearchRequestToken = 0
+let threadSearchLoadingToken = 0
 
 const threadSearchResults = computed<ThreadSearchUiResult[]>(() => {
   const backend = threadSearchBackendResults.value.map((result) => ({
@@ -1700,10 +1701,14 @@ async function revealActiveThreadSearchResult(): Promise<void> {
 
 async function runThreadSearchNow(): Promise<void> {
   const token = ++threadSearchRequestToken
+  threadSearchLoadingToken = token
   const threadId = selectedThreadId.value
   const query = threadSearchQuery.value.trim()
   if (!isThreadSearchOpen.value || !threadId || !query) {
-    isThreadSearchLoading.value = false
+    if (threadSearchLoadingToken === token) {
+      threadSearchLoadingToken = 0
+      isThreadSearchLoading.value = false
+    }
     clearThreadSearchResults()
     return
   }
@@ -1724,7 +1729,8 @@ async function runThreadSearchNow(): Promise<void> {
     clearThreadSearchResults()
     threadSearchError.value = error instanceof Error ? error.message : t('Failed to search thread messages')
   } finally {
-    if (token === threadSearchRequestToken) {
+    if (threadSearchLoadingToken === token) {
+      threadSearchLoadingToken = 0
       isThreadSearchLoading.value = false
     }
   }
@@ -1756,6 +1762,7 @@ function openThreadSearch(): void {
 function closeThreadSearch(): void {
   isThreadSearchOpen.value = false
   threadSearchRequestToken += 1
+  threadSearchLoadingToken = 0
   if (threadSearchDebounceTimer !== null) {
     window.clearTimeout(threadSearchDebounceTimer)
     threadSearchDebounceTimer = null
@@ -2261,10 +2268,14 @@ watch(
   () => {
     if (!isThreadSearchOpen.value || threadSearchQuery.value.trim().length === 0 || selectedThreadId.value.length === 0) {
       threadSearchRequestToken += 1
+      threadSearchLoadingToken = 0
       isThreadSearchLoading.value = false
       clearThreadSearchResults()
       return
     }
+    threadSearchRequestToken += 1
+    threadSearchLoadingToken = threadSearchRequestToken
+    isThreadSearchLoading.value = true
     scheduleThreadSearch()
   },
 )
@@ -5069,39 +5080,39 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
   @apply hidden max-w-44 truncate text-[11px] leading-5 text-zinc-500 lg:inline;
 }
 
-:global(:root.dark) .thread-search[data-open='true'],
-:global(.dark) .thread-search[data-open='true'] {
+:root.dark .thread-search[data-open='true'],
+.dark .thread-search[data-open='true'] {
   @apply border-zinc-700 bg-zinc-900 shadow-none;
 }
 
-:global(:root.dark) .thread-search-toggle,
-:global(:root.dark) .thread-search-nav,
-:global(:root.dark) .thread-search-close,
-:global(.dark) .thread-search-toggle,
-:global(.dark) .thread-search-nav,
-:global(.dark) .thread-search-close {
+:root.dark .thread-search-toggle,
+:root.dark .thread-search-nav,
+:root.dark .thread-search-close,
+.dark .thread-search-toggle,
+.dark .thread-search-nav,
+.dark .thread-search-close {
   @apply border-zinc-700 bg-zinc-900 text-zinc-300 hover:bg-zinc-800 hover:text-zinc-50 disabled:hover:bg-zinc-900 disabled:hover:text-zinc-300;
 }
 
-:global(:root.dark) .thread-search-input,
-:global(.dark) .thread-search-input {
+:root.dark .thread-search-input,
+.dark .thread-search-input {
   @apply text-zinc-100 placeholder:text-zinc-500;
 }
 
-:global(:root.dark) .thread-search-count,
-:global(.dark) .thread-search-count {
+:root.dark .thread-search-count,
+.dark .thread-search-count {
   @apply bg-zinc-800 text-zinc-300;
 }
 
-:global(:root.dark) .thread-search-count.is-error,
-:global(.dark) .thread-search-count.is-error {
+:root.dark .thread-search-count.is-error,
+.dark .thread-search-count.is-error {
   @apply bg-rose-950 text-rose-200;
 }
 
-:global(:root.dark) .thread-search-snippet,
-:global(:root.dark) .thread-search-icon,
-:global(.dark) .thread-search-snippet,
-:global(.dark) .thread-search-icon {
+:root.dark .thread-search-snippet,
+:root.dark .thread-search-icon,
+.dark .thread-search-snippet,
+.dark .thread-search-icon {
   @apply text-zinc-400;
 }
 
