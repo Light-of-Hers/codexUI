@@ -26,6 +26,8 @@
         class="conversation-item"
         :data-role="message.role"
         :data-message-type="message.messageType || ''"
+        :data-message-id="message.id"
+        :data-search-highlighted="activeSearchHighlightMessageId === message.id ? 'true' : 'false'"
       >
         <div v-if="isCommandMessage(message)" class="message-row" data-role="system">
           <div class="message-stack" data-role="system">
@@ -1615,6 +1617,7 @@ const toolQuestionAnswers = ref<Record<string, string>>({})
 const toolQuestionOtherAnswers = ref<Record<string, string>>({})
 const mcpElicitationAnswers = ref<Record<string, string | number | boolean | string[]>>({})
 const autoFollowOutput = ref(true)
+const activeSearchHighlightMessageId = ref('')
 const BOTTOM_THRESHOLD_PX = 16
 function normalizeLineRange(line: number | null, endLine: number | null = line): { startLine: number; endLine: number } | null {
   if (!Number.isFinite(line ?? NaN) || !Number.isFinite(endLine ?? NaN)) return null
@@ -1686,6 +1689,7 @@ let bottomLockFrame = 0
 let bottomLockFramesLeft = 0
 let copiedMessageResetTimer: ReturnType<typeof setTimeout> | null = null
 let copiedCodeBlockResetTimer: ReturnType<typeof setTimeout> | null = null
+let searchHighlightResetTimer: ReturnType<typeof setTimeout> | null = null
 let conversationScrollPromise: Promise<void> | null = null
 const trackedPendingImages = new WeakSet<HTMLImageElement>()
 const highlightJsModule = ref<HighlightJsModule | null>(null)
@@ -1737,9 +1741,10 @@ const LOAD_MORE_CHUNK = 30
 const LOAD_MORE_SCROLL_THRESHOLD_PX = 200
 
 const renderWindowStart = ref(0)
+const renderWindowEnd = ref<number | null>(null)
 const isLoadingMore = ref(false)
 
-const visibleMessages = computed(() => props.messages.slice(renderWindowStart.value))
+const visibleMessages = computed(() => props.messages.slice(renderWindowStart.value, renderWindowEnd.value ?? undefined))
 const hasMoreAbove = computed(() => renderWindowStart.value > 0 || props.hasMorePersistedAbove === true)
 const latestPendingRequest = computed(() => {
   const rows = props.pendingRequests
@@ -4930,8 +4935,80 @@ function onPendingImageSettled(): void {
 
 function jumpToLatest(): void {
   autoFollowOutput.value = true
+  renderWindowEnd.value = null
+  renderWindowStart.value = Math.max(0, props.messages.length - RENDER_WINDOW_SIZE)
   enforceBottomState()
   scheduleBottomLock(4)
+}
+
+function setRenderWindowAroundMessage(messageIndex: number): void {
+  const messageCount = props.messages.length
+  if (messageCount <= RENDER_WINDOW_SIZE) {
+    renderWindowStart.value = 0
+    renderWindowEnd.value = null
+    return
+  }
+
+  const targetIndex = Math.max(0, Math.min(messageCount - 1, messageIndex))
+  let start = Math.max(0, targetIndex - Math.floor(RENDER_WINDOW_SIZE / 3))
+  let end = Math.min(messageCount, start + RENDER_WINDOW_SIZE)
+  if (end - start < RENDER_WINDOW_SIZE) {
+    start = Math.max(0, end - RENDER_WINDOW_SIZE)
+  }
+  renderWindowStart.value = start
+  renderWindowEnd.value = end
+}
+
+function resolveRevealMessageId(messageId: string): string {
+  if (hiddenGroupedCommandIds.value.has(messageId)) {
+    for (const [latestId, commands] of Object.entries(groupedCommandsByLatestId.value)) {
+      if (commands.some((message) => message.id === messageId)) return latestId
+    }
+  }
+  if (hiddenGroupedToolCallIds.value.has(messageId)) {
+    for (const [latestId, calls] of Object.entries(groupedToolCallsByLatestId.value)) {
+      if (calls.some((message) => message.id === messageId)) return latestId
+    }
+  }
+  if (hiddenFileChangeMessageIds.value.has(messageId)) {
+    for (const [anchorId, summary] of Object.entries(anchoredFileChangeSummaryByAnchorId.value)) {
+      if (summary.sourceMessageIds.includes(messageId)) return anchorId
+    }
+    for (const [visibleId, summary] of Object.entries(standaloneFileChangeSummaryByMessageId.value)) {
+      if (summary.sourceMessageIds.includes(messageId)) return visibleId
+    }
+  }
+  return messageId
+}
+
+async function revealMessage(messageId: string): Promise<boolean> {
+  const targetId = resolveRevealMessageId(messageId.trim())
+  if (!targetId) return false
+  const messageIndex = props.messages.findIndex((message) => message.id === targetId)
+  if (messageIndex < 0) return false
+
+  autoFollowOutput.value = false
+  setRenderWindowAroundMessage(messageIndex)
+  await nextTick()
+
+  const container = conversationListRef.value
+  if (!container) return false
+  const selector = `[data-message-id="${CSS.escape(targetId)}"]`
+  const item = container.querySelector<HTMLElement>(selector)
+  if (!item) return false
+
+  item.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  activeSearchHighlightMessageId.value = targetId
+  if (searchHighlightResetTimer) {
+    clearTimeout(searchHighlightResetTimer)
+  }
+  searchHighlightResetTimer = setTimeout(() => {
+    if (activeSearchHighlightMessageId.value === targetId) {
+      activeSearchHighlightMessageId.value = ''
+    }
+    searchHighlightResetTimer = null
+  }, 1600)
+  return true
 }
 
 async function loadMoreAbove(): Promise<void> {
@@ -4945,6 +5022,7 @@ async function loadMoreAbove(): Promise<void> {
   const prevScrollTop = container.scrollTop
 
   try {
+    renderWindowEnd.value = null
     if (renderWindowStart.value > 0) {
       renderWindowStart.value = Math.max(0, renderWindowStart.value - LOAD_MORE_CHUNK)
     } else if (props.hasMorePersistedAbove === true) {
@@ -4964,6 +5042,7 @@ async function loadMoreAbove(): Promise<void> {
 
 defineExpose({
   jumpToLatest,
+  revealMessage,
 })
 
 function bindPendingImageHandlers(): void {
@@ -5078,9 +5157,16 @@ watch(
     // Scrolled up: only clamp downward so renderWindowStart never exceeds the list length
     //   (prevents visibleMessages from becoming empty after a rollback).
     if (autoFollowOutput.value) {
+      renderWindowEnd.value = null
       renderWindowStart.value = Math.max(0, next.length - RENDER_WINDOW_SIZE)
     } else {
       renderWindowStart.value = Math.min(renderWindowStart.value, Math.max(0, next.length - 1))
+      if (renderWindowEnd.value !== null) {
+        renderWindowEnd.value = Math.max(
+          renderWindowStart.value + 1,
+          Math.min(renderWindowEnd.value, next.length),
+        )
+      }
     }
 
     await scheduleConversationScroll()
@@ -5141,6 +5227,7 @@ watch(
   () => props.isLoading,
   async (loading) => {
     if (loading) return
+    renderWindowEnd.value = null
     renderWindowStart.value = Math.max(0, props.messages.length - RENDER_WINDOW_SIZE)
     await scheduleConversationScroll()
   },
@@ -5156,6 +5243,7 @@ watch(
     isLoadingMore.value = false
     expandedResponseSourceIds.value = new Set()
     // Apply immediately for cached threads where isLoading never toggles.
+    renderWindowEnd.value = null
     renderWindowStart.value = Math.max(0, props.messages.length - RENDER_WINDOW_SIZE)
     await scheduleConversationScroll()
   },
@@ -5165,7 +5253,7 @@ watch(
 function onConversationScroll(): void {
   const container = conversationListRef.value
   if (!container || props.isLoading) return
-  autoFollowOutput.value = isAtBottom(container)
+  autoFollowOutput.value = renderWindowEnd.value === null && isAtBottom(container)
   if (hasMoreAbove.value && !isLoadingMore.value && container.scrollTop < LOAD_MORE_SCROLL_THRESHOLD_PX) {
     void loadMoreAbove()
   }
@@ -5202,6 +5290,10 @@ onBeforeUnmount(() => {
   if (copiedCodeBlockResetTimer) {
     clearTimeout(copiedCodeBlockResetTimer)
     copiedCodeBlockResetTimer = null
+  }
+  if (searchHighlightResetTimer) {
+    clearTimeout(searchHighlightResetTimer)
+    searchHighlightResetTimer = null
   }
   if (fileLinkPickerSearchDebounceTimer) {
     clearTimeout(fileLinkPickerSearchDebounceTimer)
@@ -5249,6 +5341,19 @@ onBeforeUnmount(() => {
 
 .conversation-item {
   @apply m-0 w-full min-w-0 flex;
+}
+
+.conversation-item[data-search-highlighted='true'] {
+  animation: conversation-search-highlight 1600ms ease-out;
+}
+
+@keyframes conversation-search-highlight {
+  0% {
+    background-color: rgb(250 204 21 / 0.32);
+  }
+  100% {
+    background-color: transparent;
+  }
 }
 
 .conversation-item-request {

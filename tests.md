@@ -6721,3 +6721,43 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - No persistent cleanup is required.
+
+### Feature: Current thread conversation search
+
+#### Prerequisites
+- App server is running from this repository.
+- A thread exists with visible recent messages and older messages that require loading or direct navigation.
+- The thread includes at least one unique search term in an older persisted turn.
+- A thread can run a prompt long enough to produce live assistant output, or an existing in-progress test thread is available.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Run `pnpm exec vitest run src/utils/threadMessageSearch.test.ts src/api/codexGateway.test.ts src/server/codexAppServerBridge.inlinePayload.test.ts -t "thread message search|searchThreadMessages"`.
+2. Run `pnpm run build:frontend`.
+3. Open the target thread in light theme.
+4. Click the search icon in the content header.
+5. Search for text in a currently visible message.
+6. Press Enter and Shift+Enter to move between results.
+7. Search for the unique older-message term that is not currently rendered.
+8. Confirm the app navigates to the older message without manually pressing "Load earlier messages".
+9. Start a turn that streams assistant text, search for text from the live output, and confirm the live result can be selected.
+10. Search for text that does not exist.
+11. Switch to dark theme and repeat steps 4-10.
+
+#### Expected Results
+- The header search control opens only on thread routes and remains independent from sidebar thread filtering.
+- Visible-message searches show a count and scroll to the matching message with a short highlight.
+- Older persisted matches are found through backend search and revealed through a bounded turn window.
+- Live-only matches are included without duplicating persisted backend results.
+- Enter moves to the next result and Shift+Enter moves to the previous result.
+- No-result and error states are shown inline in the header search control.
+- Light and dark theme search controls, snippets, navigation buttons, and highlighted messages remain readable.
+
+#### Performance Audit
+- Typing is debounced before calling `/codex-api/thread-message-search`.
+- Backend search scans only the current thread and caps returned results.
+- Jumping to older results calls `/codex-api/thread-turn-window` for a bounded window around the target turn instead of walking older pages.
+- Conversation rendering remains windowed; reveal expands only enough to include the selected message.
+
+#### Rollback/Cleanup
+- Stop any disposable live test turn if it is still running, then close the header search control.

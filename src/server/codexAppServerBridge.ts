@@ -65,9 +65,10 @@ import {
   resolveCodexCursorCommand,
   resolveCodexMoonCommand,
 } from '../commandResolution.js'
-import type { CollaborationModeKind, ReasoningEffort } from '../types/codex.js'
+import type { CollaborationModeKind, ReasoningEffort, UiFileChange, UiMessage } from '../types/codex.js'
 import { isAbsoluteLikePath } from '../pathUtils.js'
 import { searchComposerPaths } from './composerFileSearch.js'
+import { normalizeThreadMessagesV2 } from '../api/normalizers/v2.js'
 
 type JsonRpcCall = {
   jsonrpc: '2.0'
@@ -154,6 +155,32 @@ type ThreadSearchDocument = {
 
 type ThreadSearchIndex = {
   docsById: Map<string, ThreadSearchDocument>
+}
+
+export type ThreadMessageSearchResult = {
+  id: string
+  turnId: string
+  turnIndex: number
+  messageId: string
+  role: 'user' | 'assistant' | 'system'
+  messageType: string
+  occurrenceIndex: number
+  snippet: string
+  snippetMatchStart: number
+  snippetMatchEnd: number
+}
+
+type ThreadMessageSearchResponse = {
+  threadId: string
+  query: string
+  totalMatches: number
+  truncated: boolean
+  results: ThreadMessageSearchResult[]
+}
+
+type ThreadMessageSearchRow = {
+  message: UiMessage
+  text: string
 }
 
 type ProviderModelsResponse = {
@@ -261,6 +288,9 @@ const THREAD_TURN_PAGE_READ_CACHE_TTL_MS = 30_000
 const THREAD_METHODS_WITH_TURNS = new Set(['thread/read', 'thread/resume', 'thread/fork', 'thread/rollback'])
 const THREAD_METHODS_WITH_THREAD_SNAPSHOT = new Set([...THREAD_METHODS_WITH_TURNS, 'thread/start'])
 const THREAD_SEARCH_FULL_TEXT_THREAD_LIMIT = 100
+const THREAD_MESSAGE_SEARCH_DEFAULT_LIMIT = 100
+const THREAD_MESSAGE_SEARCH_MAX_LIMIT = 500
+const THREAD_MESSAGE_SEARCH_SNIPPET_CONTEXT = 72
 const CURSOR_CONTEXT_AUTO_COMPACT_COOLDOWN_MS = 60_000
 const PROJECTLESS_THREAD_DIRECTORY_MAX_ATTEMPTS = 100
 const PROJECTLESS_THREAD_SLUG_MAX_LENGTH = 80
@@ -1763,42 +1793,192 @@ async function readProviderBackedModelIds(appServer: AppServerProcess): Promise<
   }
 }
 
-function extractThreadMessageText(threadReadPayload: unknown): string {
+function readThreadTurnStartIndex(threadReadPayload: unknown): number {
   const payload = asRecord(threadReadPayload)
-  const thread = asRecord(payload?.thread)
-  const turns = Array.isArray(thread?.turns) ? thread.turns : []
-  const parts: string[] = []
+  const raw = payload?.threadTurnStartIndex
+  return Math.max(0, Math.floor(typeof raw === 'number' && Number.isFinite(raw) ? raw : 0))
+}
 
-  for (const turn of turns) {
-    const turnRecord = asRecord(turn)
-    const items = Array.isArray(turnRecord?.items) ? turnRecord.items : []
-    for (const item of items) {
-      const itemRecord = asRecord(item)
-      const type = typeof itemRecord?.type === 'string' ? itemRecord.type : ''
-      if (type === 'agentMessage' && typeof itemRecord?.text === 'string' && itemRecord.text.trim().length > 0) {
-        parts.push(itemRecord.text.trim())
-        continue
-      }
-      if (type === 'userMessage') {
-        const content = Array.isArray(itemRecord?.content) ? itemRecord.content : []
-        for (const block of content) {
-          const blockRecord = asRecord(block)
-          if (blockRecord?.type === 'text' && typeof blockRecord.text === 'string' && blockRecord.text.trim().length > 0) {
-            parts.push(blockRecord.text.trim())
-          }
-        }
-        continue
-      }
-      if (type === 'commandExecution') {
-        const command = typeof itemRecord?.command === 'string' ? itemRecord.command.trim() : ''
-        const output = typeof itemRecord?.aggregatedOutput === 'string' ? itemRecord.aggregatedOutput.trim() : ''
-        if (command) parts.push(command)
-        if (output) parts.push(output)
-      }
-    }
+function appendUniqueSearchPart(parts: string[], seen: Set<string>, value: unknown): void {
+  const text = typeof value === 'string' ? value.trim() : ''
+  if (!text || seen.has(text)) return
+  seen.add(text)
+  parts.push(text)
+}
+
+function fileChangeSearchText(change: UiFileChange): string {
+  return [
+    change.operation,
+    change.path,
+    change.movedToPath ?? '',
+    change.diff ?? '',
+    Number.isFinite(change.addedLineCount) ? `+${change.addedLineCount}` : '',
+    Number.isFinite(change.removedLineCount) ? `-${change.removedLineCount}` : '',
+  ].filter(Boolean).join('\n')
+}
+
+function messageSearchText(message: UiMessage): string {
+  const parts: string[] = []
+  const seen = new Set<string>()
+  appendUniqueSearchPart(parts, seen, message.text)
+  appendUniqueSearchPart(parts, seen, message.rawPayload)
+
+  const command = message.commandExecution
+  if (command) {
+    appendUniqueSearchPart(parts, seen, command.command)
+    appendUniqueSearchPart(parts, seen, command.cwd ?? '')
+    appendUniqueSearchPart(parts, seen, command.aggregatedOutput)
+    appendUniqueSearchPart(parts, seen, command.exitCode === null ? '' : `exit ${command.exitCode}`)
+    appendUniqueSearchPart(parts, seen, command.status)
+  }
+
+  const toolCall = message.toolCall
+  if (toolCall) {
+    appendUniqueSearchPart(parts, seen, toolCall.title)
+    appendUniqueSearchPart(parts, seen, toolCall.name)
+    appendUniqueSearchPart(parts, seen, toolCall.status)
+    appendUniqueSearchPart(parts, seen, toolCall.server ?? '')
+    appendUniqueSearchPart(parts, seen, toolCall.meta.join('\n'))
+    appendUniqueSearchPart(parts, seen, toolCall.progress)
+    appendUniqueSearchPart(parts, seen, toolCall.input)
+    appendUniqueSearchPart(parts, seen, toolCall.output)
+    appendUniqueSearchPart(parts, seen, toolCall.error)
+  }
+
+  for (const attachment of message.fileAttachments ?? []) {
+    appendUniqueSearchPart(parts, seen, `${attachment.label}\n${attachment.path}`)
+  }
+  for (const skill of message.skills ?? []) {
+    appendUniqueSearchPart(parts, seen, `${skill.name}\n${skill.path}`)
+  }
+  for (const change of message.fileChanges ?? []) {
+    appendUniqueSearchPart(parts, seen, fileChangeSearchText(change))
   }
 
   return parts.join('\n').trim()
+}
+
+export function extractThreadMessageSearchRows(threadReadPayload: unknown): ThreadMessageSearchRow[] {
+  const messages = normalizeThreadMessagesV2(
+    threadReadPayload as Parameters<typeof normalizeThreadMessagesV2>[0],
+    readThreadTurnStartIndex(threadReadPayload),
+  )
+  return messages
+    .map((message) => ({ message, text: messageSearchText(message) }))
+    .filter((row) => row.text.length > 0)
+}
+
+function extractThreadMessageText(threadReadPayload: unknown): string {
+  return extractThreadMessageSearchRows(threadReadPayload)
+    .map((row) => row.text)
+    .filter(Boolean)
+    .join('\n')
+    .trim()
+}
+
+function buildSearchSnippet(text: string, matchStart: number, matchEnd: number): {
+  snippet: string
+  snippetMatchStart: number
+  snippetMatchEnd: number
+} {
+  const rawStart = Math.max(0, matchStart - THREAD_MESSAGE_SEARCH_SNIPPET_CONTEXT)
+  const rawEnd = Math.min(text.length, matchEnd + THREAD_MESSAGE_SEARCH_SNIPPET_CONTEXT)
+  const prefix = rawStart > 0 ? '...' : ''
+  const suffix = rawEnd < text.length ? '...' : ''
+  const rawSnippet = `${prefix}${text.slice(rawStart, rawEnd)}${suffix}`
+  const snippet = rawSnippet.replace(/[\r\n\t]/gu, ' ')
+  const snippetMatchStart = prefix.length + matchStart - rawStart
+  const snippetMatchEnd = prefix.length + matchEnd - rawStart
+  return { snippet, snippetMatchStart, snippetMatchEnd }
+}
+
+function normalizeBoundedInteger(value: number, fallback: number, min: number, max: number): number {
+  const next = Math.floor(value)
+  if (!Number.isFinite(next)) return fallback
+  return Math.max(min, Math.min(max, next))
+}
+
+export function searchThreadMessagesInPayload(
+  threadId: string,
+  query: string,
+  threadReadPayload: unknown,
+  limit = THREAD_MESSAGE_SEARCH_DEFAULT_LIMIT,
+): ThreadMessageSearchResponse {
+  const normalizedThreadId = threadId.trim()
+  const normalizedQuery = query.trim()
+  const cappedLimit = normalizeBoundedInteger(limit, THREAD_MESSAGE_SEARCH_DEFAULT_LIMIT, 1, THREAD_MESSAGE_SEARCH_MAX_LIMIT)
+  if (!normalizedThreadId || !normalizedQuery) {
+    return {
+      threadId: normalizedThreadId,
+      query: normalizedQuery,
+      totalMatches: 0,
+      truncated: false,
+      results: [],
+    }
+  }
+
+  const lowerQuery = normalizedQuery.toLowerCase()
+  const results: ThreadMessageSearchResult[] = []
+  let totalMatches = 0
+
+  for (const row of extractThreadMessageSearchRows(threadReadPayload)) {
+    const lowerText = row.text.toLowerCase()
+    let occurrenceIndex = 0
+    let offset = 0
+    while (offset <= lowerText.length) {
+      const matchStart = lowerText.indexOf(lowerQuery, offset)
+      if (matchStart < 0) break
+      const matchEnd = matchStart + lowerQuery.length
+      const { snippet, snippetMatchStart, snippetMatchEnd } = buildSearchSnippet(row.text, matchStart, matchEnd)
+      totalMatches += 1
+      if (results.length < cappedLimit) {
+        const turnIndex = typeof row.message.turnIndex === 'number' ? row.message.turnIndex : -1
+        const turnId = row.message.turnId?.trim() ?? ''
+        const messageType = row.message.messageType ?? ''
+        results.push({
+          id: `${row.message.id}:${occurrenceIndex}:${matchStart}`,
+          turnId,
+          turnIndex,
+          messageId: row.message.id,
+          role: row.message.role,
+          messageType,
+          occurrenceIndex,
+          snippet,
+          snippetMatchStart,
+          snippetMatchEnd,
+        })
+      }
+      occurrenceIndex += 1
+      offset = matchEnd > matchStart ? matchEnd : matchStart + 1
+    }
+  }
+
+  return {
+    threadId: normalizedThreadId,
+    query: normalizedQuery,
+    totalMatches,
+    truncated: totalMatches > results.length,
+    results,
+  }
+}
+
+export function getThreadTurnWindowBounds(
+  turns: unknown[],
+  centerTurnId: string,
+  before: number,
+  after: number,
+): { centerIndex: number; startIndex: number; endIndex: number } | null {
+  const normalizedCenterTurnId = centerTurnId.trim()
+  if (!normalizedCenterTurnId) return null
+  const centerIndex = turns.findIndex((turn) => asRecord(turn)?.id === normalizedCenterTurnId)
+  if (centerIndex < 0) return null
+  const safeBefore = normalizeBoundedInteger(before, 8, 0, 50)
+  const safeAfter = normalizeBoundedInteger(after, 8, 0, 50)
+  return {
+    centerIndex,
+    startIndex: Math.max(0, centerIndex - safeBefore),
+    endIndex: Math.min(turns.length, centerIndex + safeAfter + 1),
+  }
 }
 
 function readNonEmptyString(value: unknown): string {
@@ -7539,6 +7719,76 @@ function getSharedBridgeState(): SharedBridgeState {
   return created
 }
 
+type PreparedThreadReadResult = {
+  record: Record<string, unknown>
+  thread: Record<string, unknown>
+  turns: unknown[]
+}
+
+type ThreadTurnSliceResponse = {
+  result: unknown
+  startTurnIndex: number
+  hasMoreOlder: boolean
+  hasMoreNewer: boolean
+}
+
+async function readPreparedThreadReadResult(appServer: AppServerProcess, threadId: string): Promise<PreparedThreadReadResult> {
+  const threadReadResult = await appServer.readThreadForTurnPage(threadId)
+  const recoveredThreadReadResult = await mergeRecoveredTurnItemsIntoThreadResultFromSession(appServer, threadReadResult)
+  const enrichedThreadReadResult = await mergeSessionModelStateIntoThreadResult(recoveredThreadReadResult)
+  const record = asRecord(enrichedThreadReadResult)
+  const thread = asRecord(record?.thread)
+  if (!record || !thread) {
+    throw new Error('thread/read returned an invalid thread response')
+  }
+
+  return {
+    record,
+    thread,
+    turns: Array.isArray(thread.turns) ? thread.turns : [],
+  }
+}
+
+async function finalizeThreadReadResult(record: Record<string, unknown>, thread: Record<string, unknown>, turns: unknown[], startTurnIndex: number): Promise<unknown> {
+  const pagedResult = {
+    ...record,
+    threadTurnStartIndex: startTurnIndex,
+    thread: {
+      ...thread,
+      turns,
+    },
+  }
+  const sanitized = await sanitizeThreadTurnsInlinePayloads('thread/read', pagedResult)
+  return mergeSessionSkillInputsIntoThreadResult(sanitized)
+}
+
+async function readThreadTurnSlice(
+  appServer: AppServerProcess,
+  threadId: string,
+  startIndex: number,
+  endIndex: number,
+  prepared?: PreparedThreadReadResult,
+): Promise<ThreadTurnSliceResponse> {
+  const { record, thread, turns } = prepared ?? await readPreparedThreadReadResult(appServer, threadId)
+  const rawStart = Math.floor(startIndex)
+  const rawEnd = Math.floor(endIndex)
+  const safeStart = Number.isFinite(rawStart) ? Math.max(0, Math.min(turns.length, rawStart)) : 0
+  const safeEnd = Number.isFinite(rawEnd) ? Math.max(safeStart, Math.min(turns.length, rawEnd)) : safeStart
+  const result = await finalizeThreadReadResult(record, thread, turns.slice(safeStart, safeEnd), safeStart)
+
+  return {
+    result,
+    startTurnIndex: safeStart,
+    hasMoreOlder: safeStart > 0,
+    hasMoreNewer: safeEnd < turns.length,
+  }
+}
+
+async function readFullSearchableThreadResult(appServer: AppServerProcess, threadId: string): Promise<unknown> {
+  const { record, thread, turns } = await readPreparedThreadReadResult(appServer, threadId)
+  return finalizeThreadReadResult(record, thread, turns, readThreadTurnStartIndex(record))
+}
+
 async function loadAllThreadsForSearch(appServer: AppServerProcess): Promise<ThreadSearchDocument[]> {
   const threads: Array<{ id: string; title: string; preview: string }> = []
   let cursor: string | null = null
@@ -8280,30 +8530,16 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
             return
           }
 
-          const threadReadResult = await appServer.readThreadForTurnPage(threadId)
-          const recoveredThreadReadResult = await mergeRecoveredTurnItemsIntoThreadResultFromSession(appServer, threadReadResult)
-          const enrichedThreadReadResult = await mergeSessionModelStateIntoThreadResult(recoveredThreadReadResult)
-          const record = asRecord(enrichedThreadReadResult)
-          const thread = asRecord(record?.thread)
-          if (!record || !thread) {
-            setJson(res, 502, { error: 'thread/read returned an invalid thread response' })
-            return
-          }
-
-          const turns = Array.isArray(thread.turns) ? thread.turns : []
+          const prepared = await readPreparedThreadReadResult(appServer, threadId)
+          const { turns } = prepared
           const beforeIndex = beforeTurnId
             ? turns.findIndex((turn) => asRecord(turn)?.id === beforeTurnId)
             : turns.length
           if (beforeTurnId && beforeIndex < 0) {
+            const emptyPage = await readThreadTurnSlice(appServer, threadId, 0, 0, prepared)
             setJson(res, 200, {
-              result: {
-                ...record,
-                thread: {
-                  ...thread,
-                  turns: [],
-                },
-              },
-              startTurnIndex: 0,
+              result: emptyPage.result,
+              startTurnIndex: emptyPage.startTurnIndex,
               hasMoreOlder: false,
             })
             return
@@ -8311,24 +8547,87 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 
           const endIndex = beforeIndex
           const startIndex = Math.max(0, endIndex - limit)
-          const pageTurns = turns.slice(startIndex, endIndex)
-          const pagedResult = {
-            ...record,
-            thread: {
-              ...thread,
-              turns: pageTurns,
-            },
-          }
-          const sanitized = await sanitizeThreadTurnsInlinePayloads('thread/read', pagedResult)
-          const result = await mergeSessionSkillInputsIntoThreadResult(sanitized)
+          const page = await readThreadTurnSlice(appServer, threadId, startIndex, endIndex, prepared)
 
           setJson(res, 200, {
-            result,
-            startTurnIndex: startIndex,
-            hasMoreOlder: startIndex > 0,
+            result: page.result,
+            startTurnIndex: page.startTurnIndex,
+            hasMoreOlder: page.hasMoreOlder,
           })
         } catch (error) {
           setJson(res, 500, { error: getErrorMessage(error, 'Failed to load earlier thread messages') })
+        }
+        return
+      }
+
+      if (req.method === 'GET' && url.pathname === '/codex-api/thread-turn-window') {
+        try {
+          const threadId = url.searchParams.get('threadId')?.trim() ?? ''
+          const centerTurnId = url.searchParams.get('centerTurnId')?.trim() ?? ''
+          const beforeRaw = url.searchParams.get('before')?.trim() ?? '8'
+          const afterRaw = url.searchParams.get('after')?.trim() ?? '8'
+          const before = Math.max(0, Math.min(50, Number.parseInt(beforeRaw, 10) || 8))
+          const after = Math.max(0, Math.min(50, Number.parseInt(afterRaw, 10) || 8))
+          if (!threadId) {
+            setJson(res, 400, { error: 'Missing threadId' })
+            return
+          }
+          if (!centerTurnId) {
+            setJson(res, 400, { error: 'Missing centerTurnId' })
+            return
+          }
+
+          const prepared = await readPreparedThreadReadResult(appServer, threadId)
+          const { turns } = prepared
+          const bounds = getThreadTurnWindowBounds(turns, centerTurnId, before, after)
+          if (!bounds) {
+            setJson(res, 404, { error: 'centerTurnId was not found in thread' })
+            return
+          }
+
+          const page = await readThreadTurnSlice(appServer, threadId, bounds.startIndex, bounds.endIndex, prepared)
+          setJson(res, 200, {
+            result: page.result,
+            startTurnIndex: page.startTurnIndex,
+            hasMoreOlder: page.hasMoreOlder,
+            hasMoreNewer: page.hasMoreNewer,
+          })
+        } catch (error) {
+          setJson(res, 500, { error: getErrorMessage(error, 'Failed to load thread message window') })
+        }
+        return
+      }
+
+      if (req.method === 'POST' && url.pathname === '/codex-api/thread-message-search') {
+        try {
+          const payload = asRecord(await readJsonBody(req))
+          const threadId = typeof payload?.threadId === 'string' ? payload.threadId.trim() : ''
+          const query = typeof payload?.query === 'string' ? payload.query.trim() : ''
+          const limitRaw = typeof payload?.limit === 'number' ? payload.limit : THREAD_MESSAGE_SEARCH_DEFAULT_LIMIT
+          const limit = normalizeBoundedInteger(limitRaw, THREAD_MESSAGE_SEARCH_DEFAULT_LIMIT, 1, THREAD_MESSAGE_SEARCH_MAX_LIMIT)
+          if (!threadId) {
+            setJson(res, 400, { error: 'Missing threadId' })
+            return
+          }
+          if (!query) {
+            setJson(res, 200, {
+              data: {
+                threadId,
+                query: '',
+                totalMatches: 0,
+                truncated: false,
+                results: [],
+              },
+            })
+            return
+          }
+
+          const threadReadResult = await readFullSearchableThreadResult(appServer, threadId)
+          setJson(res, 200, {
+            data: searchThreadMessagesInPayload(threadId, query, threadReadResult, limit),
+          })
+        } catch (error) {
+          setJson(res, 500, { error: getErrorMessage(error, 'Failed to search thread messages') })
         }
         return
       }

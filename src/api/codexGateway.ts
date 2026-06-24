@@ -388,6 +388,27 @@ export type ThreadSearchResult = {
   indexedThreadCount: number
 }
 
+export type ThreadMessageSearchResult = {
+  id: string
+  turnId: string
+  turnIndex: number
+  messageId: string
+  role: 'user' | 'assistant' | 'system'
+  messageType: string
+  occurrenceIndex: number
+  snippet: string
+  snippetMatchStart: number
+  snippetMatchEnd: number
+}
+
+export type ThreadMessageSearchResponse = {
+  threadId: string
+  query: string
+  totalMatches: number
+  truncated: boolean
+  results: ThreadMessageSearchResult[]
+}
+
 export type TelegramStatus = {
   configured: boolean
   active: boolean
@@ -818,6 +839,7 @@ export type ThreadTurnPage = {
   inProgress: boolean
   activeTurnId: string
   hasMoreOlder: boolean
+  hasMoreNewer?: boolean
   startTurnIndex: number
   turnIndexByTurnId: ThreadTurnIndexById
 }
@@ -901,6 +923,41 @@ async function getOlderThreadMessagesV2(threadId: string, beforeTurnId: string, 
     inProgress: readThreadInProgressFromResponse(payload.result),
     activeTurnId: readActiveTurnIdFromResponse(payload.result),
     hasMoreOlder: payload.hasMoreOlder === true,
+    hasMoreNewer: false,
+    startTurnIndex,
+    turnIndexByTurnId: buildTurnIndexByTurnId(payload.result, startTurnIndex),
+  }
+}
+
+async function getThreadTurnWindowV2(threadId: string, centerTurnId: string, before = 8, after = 8): Promise<ThreadTurnPage> {
+  const params = new URLSearchParams({
+    threadId,
+    centerTurnId,
+    before: String(before),
+    after: String(after),
+  })
+  const response = await fetch(`/codex-api/thread-turn-window?${params.toString()}`)
+  const payload = await response.json().catch(() => null) as {
+    result?: ThreadReadResponse
+    hasMoreOlder?: unknown
+    hasMoreNewer?: unknown
+    startTurnIndex?: unknown
+    error?: string
+  } | null
+  if (!response.ok) {
+    throw new Error(getErrorMessageFromPayload(payload, `Thread turn window request failed with ${response.status}`))
+  }
+  if (!payload?.result) {
+    throw new Error('Thread turn window response did not include a thread result')
+  }
+  const startTurnIndex = Math.max(0, Math.floor(typeof payload.startTurnIndex === 'number' ? payload.startTurnIndex : 0))
+
+  return {
+    messages: normalizeThreadMessagesV2(payload.result, startTurnIndex),
+    inProgress: readThreadInProgressFromResponse(payload.result),
+    activeTurnId: readActiveTurnIdFromResponse(payload.result),
+    hasMoreOlder: payload.hasMoreOlder === true,
+    hasMoreNewer: payload.hasMoreNewer === true,
     startTurnIndex,
     turnIndexByTurnId: buildTurnIndexByTurnId(payload.result, startTurnIndex),
   }
@@ -964,6 +1021,14 @@ export async function getOlderThreadMessages(threadId: string, beforeTurnId: str
     return await getOlderThreadMessagesV2(threadId, beforeTurnId, limit)
   } catch (error) {
     throw normalizeCodexApiError(error, `Failed to load earlier messages for thread ${threadId}`, 'thread/read')
+  }
+}
+
+export async function getThreadTurnWindow(threadId: string, centerTurnId: string, before?: number, after?: number): Promise<ThreadTurnPage> {
+  try {
+    return await getThreadTurnWindowV2(threadId, centerTurnId, before, after)
+  } catch (error) {
+    throw normalizeCodexApiError(error, `Failed to load message window for thread ${threadId}`, 'thread/read')
   }
 }
 
@@ -3612,6 +3677,41 @@ export async function searchThreads(
     throw new Error(payload.error || 'Failed to search threads')
   }
   return payload.data ?? { threadIds: [], indexedThreadCount: 0 }
+}
+
+export async function searchThreadMessages(
+  threadId: string,
+  query: string,
+  limit = 100,
+): Promise<ThreadMessageSearchResponse> {
+  const normalizedThreadId = threadId.trim()
+  const normalizedQuery = query.trim()
+  if (!normalizedThreadId || !normalizedQuery) {
+    return {
+      threadId: normalizedThreadId,
+      query: normalizedQuery,
+      totalMatches: 0,
+      truncated: false,
+      results: [],
+    }
+  }
+
+  const response = await fetch('/codex-api/thread-message-search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ threadId: normalizedThreadId, query: normalizedQuery, limit }),
+  })
+  const payload = (await response.json().catch(() => null)) as { data?: ThreadMessageSearchResponse; error?: string } | null
+  if (!response.ok) {
+    throw new Error(getErrorMessageFromPayload(payload, 'Failed to search thread messages'))
+  }
+  return payload?.data ?? {
+    threadId: normalizedThreadId,
+    query: normalizedQuery,
+    totalMatches: 0,
+    truncated: false,
+    results: [],
+  }
 }
 
 export async function configureTelegramBot(

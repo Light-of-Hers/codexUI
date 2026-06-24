@@ -15,6 +15,7 @@ import {
   getSkillsList,
   getThreadDetail,
   getOlderThreadMessages,
+  getThreadTurnWindow,
   getBackgroundThreadListLimit,
   getThreadGoal,
   interruptThreadTurn,
@@ -980,6 +981,22 @@ function mergeMessages(
   const merged = [...mergedFromPrevious, ...appended]
 
   return areMessageArraysEqual(previous, merged) ? previous : merged
+}
+
+function sortMessagesByThreadPosition(messages: UiMessage[]): UiMessage[] {
+  const indexed = messages.map((message, index) => ({ message, index }))
+  indexed.sort((left, right) => {
+    const leftTurn = typeof left.message.turnIndex === 'number' && Number.isFinite(left.message.turnIndex)
+      ? left.message.turnIndex
+      : Number.POSITIVE_INFINITY
+    const rightTurn = typeof right.message.turnIndex === 'number' && Number.isFinite(right.message.turnIndex)
+      ? right.message.turnIndex
+      : Number.POSITIVE_INFINITY
+    if (leftTurn !== rightTurn) return leftTurn - rightTurn
+    return left.index - right.index
+  })
+  const sorted = indexed.map((entry) => entry.message)
+  return areMessageArraysEqual(messages, sorted) ? messages : sorted
 }
 
 function areUiFileChangesEqual(first?: UiFileChange[], second?: UiFileChange[]): boolean {
@@ -5727,6 +5744,33 @@ export function useDesktopState() {
     }
   }
 
+  async function loadThreadMessageWindow(threadId: string, centerTurnId: string): Promise<void> {
+    const normalizedThreadId = threadId.trim()
+    const normalizedCenterTurnId = centerTurnId.trim()
+    if (!normalizedThreadId || !normalizedCenterTurnId) return
+
+    try {
+      const page = await getThreadTurnWindow(normalizedThreadId, normalizedCenterTurnId)
+      const previousPersisted = persistedMessagesByThreadId.value[normalizedThreadId] ?? []
+      const mergedMessages = sortMessagesByThreadPosition(
+        mergeMessages(previousPersisted, page.messages, { preserveMissing: true }),
+      )
+      setPersistedMessagesForThread(normalizedThreadId, mergedMessages)
+      replaceTurnIndexLookupForThread(normalizedThreadId, {
+        ...(turnIndexByTurnIdByThreadId.value[normalizedThreadId] ?? {}),
+        ...page.turnIndexByTurnId,
+      })
+      rebindLiveFileChangeTurnIndices(normalizedThreadId)
+      hasMoreOlderMessagesByThreadId.value = {
+        ...hasMoreOlderMessagesByThreadId.value,
+        [normalizedThreadId]: page.hasMoreOlder,
+      }
+    } catch (loadError) {
+      error.value = loadError instanceof Error ? loadError.message : 'Failed to load message window'
+      throw loadError
+    }
+  }
+
   async function ensureThreadMessagesLoaded(threadId: string, options: { silent?: boolean } = {}): Promise<void> {
     if (!threadId) return
     if (loadedMessagesByThreadId.value[threadId] === true) return
@@ -7195,6 +7239,7 @@ export function useDesktopState() {
     selectThread,
     loadMessages,
     loadOlderMessages,
+    loadThreadMessageWindow,
     ensureThreadMessagesLoaded,
     setThreadTerminalOpen,
     toggleSelectedThreadTerminal,

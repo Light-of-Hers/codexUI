@@ -415,6 +415,71 @@
             </span>
           </template>
           <template #actions>
+            <div v-if="canShowThreadSearch" class="thread-search" :data-open="isThreadSearchOpen ? 'true' : 'false'">
+              <template v-if="isThreadSearchOpen">
+                <IconTablerSearch class="thread-search-icon" />
+                <input
+                  ref="threadSearchInputRef"
+                  v-model="threadSearchQuery"
+                  class="thread-search-input"
+                  type="search"
+                  autocomplete="off"
+                  spellcheck="false"
+                  :placeholder="t('Search conversation')"
+                  :aria-label="t('Search conversation')"
+                  @keydown="onThreadSearchKeydown"
+                />
+                <span
+                  class="thread-search-count"
+                  :class="{ 'is-error': threadSearchError.length > 0 }"
+                  :title="threadSearchError || threadSearchActiveSnippet || threadSearchTotalLabel"
+                >
+                  {{ threadSearchError || threadSearchTotalLabel }}
+                </span>
+                <span v-if="threadSearchActiveSnippet && !threadSearchError" class="thread-search-snippet" :title="threadSearchActiveSnippet">
+                  {{ threadSearchActiveSnippet }}
+                </span>
+                <button
+                  class="thread-search-nav"
+                  type="button"
+                  :disabled="threadSearchResults.length === 0 || isThreadSearchLoading || isThreadSearchNavigating"
+                  :aria-label="t('Previous result')"
+                  :title="t('Previous result')"
+                  @click="moveThreadSearchResult(-1)"
+                >
+                  <IconTablerChevronLeft class="thread-search-nav-icon" />
+                </button>
+                <button
+                  class="thread-search-nav"
+                  type="button"
+                  :disabled="threadSearchResults.length === 0 || isThreadSearchLoading || isThreadSearchNavigating"
+                  :aria-label="t('Next result')"
+                  :title="t('Next result')"
+                  @click="moveThreadSearchResult(1)"
+                >
+                  <IconTablerChevronRight class="thread-search-nav-icon" />
+                </button>
+                <button
+                  class="thread-search-close"
+                  type="button"
+                  :aria-label="t('Close search')"
+                  :title="t('Close search')"
+                  @click="closeThreadSearch"
+                >
+                  <IconTablerX class="thread-search-close-icon" />
+                </button>
+              </template>
+              <button
+                v-else
+                class="thread-search-toggle"
+                type="button"
+                :aria-label="t('Search conversation')"
+                :title="t('Search conversation')"
+                @click="openThreadSearch"
+              >
+                <IconTablerSearch class="thread-search-toggle-icon" />
+              </button>
+            </div>
             <ComposerDropdown
               v-if="canShowTerminalToggle"
               class="content-header-terminal-command"
@@ -993,6 +1058,8 @@ import ThreadComposer from './components/content/ThreadComposer.vue'
 import ComposerDropdown from './components/content/ComposerDropdown.vue'
 import SidebarThreadControls from './components/sidebar/SidebarThreadControls.vue'
 import IconTablerBolt from './components/icons/IconTablerBolt.vue'
+import IconTablerChevronLeft from './components/icons/IconTablerChevronLeft.vue'
+import IconTablerChevronRight from './components/icons/IconTablerChevronRight.vue'
 import IconTablerCopy from './components/icons/IconTablerCopy.vue'
 import IconTablerSearch from './components/icons/IconTablerSearch.vue'
 import IconTablerSettings from './components/icons/IconTablerSettings.vue'
@@ -1031,14 +1098,16 @@ import {
   refreshAccountsFromAuth,
   resetGitBranchToCommit,
   startCodexLogin,
+  searchThreadMessages,
   searchThreads,
   switchAccount,
 } from './api/codexGateway'
 import type { ReasoningEffort, SpeedMode, UiAccountEntry, UiRateLimitWindow, UiServerRequest, UiServerRequestReply, UiThreadAutomation, UiThreadTokenUsage } from './types/codex'
 import type { ComposerDraftPayload, ThreadComposerExposed } from './components/content/ThreadComposer.vue'
-import type { GitCommitOption, LocalDirectoryEntry, TelegramStatus, ThreadTerminalQuickCommand, WorktreeBranchOption } from './api/codexGateway'
+import type { GitCommitOption, LocalDirectoryEntry, TelegramStatus, ThreadMessageSearchResult, ThreadTerminalQuickCommand, WorktreeBranchOption } from './api/codexGateway'
 import { getFreeModeStatus, setFreeMode, setCustomProvider } from './api/codexGateway'
 import { getPathLeafName, getPathParent, isProjectlessChatPath, normalizePathForUi } from './pathUtils.js'
+import { buildLiveThreadSearchResults, type ThreadSearchUiResult } from './utils/threadMessageSearch'
 
 const ThreadConversation = defineAsyncComponent(() => import('./components/content/ThreadConversation.vue'))
 const ThreadTerminalPanel = defineAsyncComponent(() => import('./components/content/ThreadTerminalPanel.vue'))
@@ -1259,6 +1328,7 @@ const {
   loadMessages,
   ensureThreadMessagesLoaded,
   loadOlderMessages,
+  loadThreadMessageWindow,
   setThreadTerminalOpen,
   toggleSelectedThreadTerminal,
   archiveThreadById,
@@ -1331,7 +1401,8 @@ function prepareFeedbackLink(event: MouseEvent, message?: string): void {
 }
 const homeThreadComposerRef = ref<ThreadComposerExposed | null>(null)
 const threadComposerRef = ref<ThreadComposerExposed | null>(null)
-const threadConversationRef = ref<{ jumpToLatest: () => void } | null>(null)
+const threadConversationRef = ref<{ jumpToLatest: () => void; revealMessage: (messageId: string) => Promise<boolean> } | null>(null)
+const threadSearchInputRef = ref<HTMLInputElement | null>(null)
 const homeTerminalPanelRef = ref<ThreadTerminalPanelExposed | null>(null)
 const threadTerminalPanelRef = ref<ThreadTerminalPanelExposed | null>(null)
 const homeTerminalOpen = ref(false)
@@ -1529,6 +1600,191 @@ const filteredMessages = computed(() =>
     return true
   }),
 )
+
+const THREAD_SEARCH_DEBOUNCE_MS = 180
+const THREAD_SEARCH_LIMIT = 100
+const isThreadSearchOpen = ref(false)
+const threadSearchQuery = ref('')
+const threadSearchBackendResults = ref<ThreadMessageSearchResult[]>([])
+const threadSearchBackendTotalMatches = ref(0)
+const isThreadSearchTruncated = ref(false)
+const threadSearchActiveIndex = ref(-1)
+const isThreadSearchLoading = ref(false)
+const isThreadSearchNavigating = ref(false)
+const threadSearchError = ref('')
+let threadSearchDebounceTimer: number | null = null
+let threadSearchRequestToken = 0
+
+const threadSearchResults = computed<ThreadSearchUiResult[]>(() => {
+  const backend = threadSearchBackendResults.value.map((result) => ({
+    ...result,
+    source: 'backend' as const,
+  }))
+  const backendMessageIds = new Set(backend.map((result) => result.messageId))
+  const live = buildLiveThreadSearchResults(threadSearchQuery.value, backendMessageIds, filteredMessages.value)
+  return [...backend, ...live]
+    .map((result, order) => ({ result, order }))
+    .sort((left, right) => {
+      const leftTurn = left.result.turnIndex >= 0 ? left.result.turnIndex : Number.POSITIVE_INFINITY
+      const rightTurn = right.result.turnIndex >= 0 ? right.result.turnIndex : Number.POSITIVE_INFINITY
+      if (leftTurn !== rightTurn) return leftTurn - rightTurn
+      if (left.result.messageId !== right.result.messageId) return left.order - right.order
+      if (left.result.occurrenceIndex !== right.result.occurrenceIndex) return left.result.occurrenceIndex - right.result.occurrenceIndex
+      return left.order - right.order
+    })
+    .map((entry) => entry.result)
+})
+
+const threadSearchTotalLabel = computed(() => {
+  const total = threadSearchBackendTotalMatches.value + threadSearchResults.value.filter((result) => result.source === 'live').length
+  if (threadSearchQuery.value.trim().length === 0) return ''
+  if (isThreadSearchLoading.value) return t('Searching...')
+  if (total === 0) return t('No results')
+  const current = threadSearchActiveIndex.value >= 0 ? threadSearchActiveIndex.value + 1 : 0
+  return `${current}/${total}${isThreadSearchTruncated.value ? '+' : ''}`
+})
+
+const activeThreadSearchResult = computed(() => threadSearchResults.value[threadSearchActiveIndex.value] ?? null)
+const threadSearchActiveSnippet = computed(() => activeThreadSearchResult.value?.snippet ?? '')
+
+const canShowThreadSearch = computed(() => (
+  route.name === 'thread' &&
+  selectedThreadId.value.length > 0 &&
+  !isReviewPaneOpen.value
+))
+
+function clearThreadSearchResults(): void {
+  threadSearchBackendResults.value = []
+  threadSearchBackendTotalMatches.value = 0
+  isThreadSearchTruncated.value = false
+  threadSearchActiveIndex.value = -1
+  threadSearchError.value = ''
+}
+
+async function revealThreadSearchResult(result: ThreadSearchUiResult, retryOnStale = true): Promise<void> {
+  const threadId = selectedThreadId.value
+  if (!threadId || !result.messageId) return
+  isThreadSearchNavigating.value = true
+  threadSearchError.value = ''
+  try {
+    const hasLoadedMessage = () => filteredMessages.value.some((message) => message.id === result.messageId)
+    if (!hasLoadedMessage() && result.turnId.trim().length > 0) {
+      await loadThreadMessageWindow(threadId, result.turnId)
+      await nextTick()
+    }
+
+    if (!hasLoadedMessage() && retryOnStale) {
+      await loadMessages(threadId, { silent: true })
+      if (result.turnId.trim().length > 0) {
+        await loadThreadMessageWindow(threadId, result.turnId)
+      }
+      await nextTick()
+    }
+
+    const revealed = await threadConversationRef.value?.revealMessage(result.messageId)
+    if (!revealed) {
+      threadSearchError.value = t('Result is no longer available')
+    }
+  } catch (error) {
+    threadSearchError.value = error instanceof Error ? error.message : t('Failed to reveal search result')
+  } finally {
+    isThreadSearchNavigating.value = false
+  }
+}
+
+async function revealActiveThreadSearchResult(): Promise<void> {
+  const result = threadSearchResults.value[threadSearchActiveIndex.value]
+  if (!result) return
+  await revealThreadSearchResult(result)
+}
+
+async function runThreadSearchNow(): Promise<void> {
+  const token = ++threadSearchRequestToken
+  const threadId = selectedThreadId.value
+  const query = threadSearchQuery.value.trim()
+  if (!isThreadSearchOpen.value || !threadId || !query) {
+    isThreadSearchLoading.value = false
+    clearThreadSearchResults()
+    return
+  }
+
+  isThreadSearchLoading.value = true
+  threadSearchError.value = ''
+  try {
+    const response = await searchThreadMessages(threadId, query, THREAD_SEARCH_LIMIT)
+    if (token !== threadSearchRequestToken) return
+    threadSearchBackendResults.value = response.results
+    threadSearchBackendTotalMatches.value = response.totalMatches
+    isThreadSearchTruncated.value = response.truncated
+    threadSearchActiveIndex.value = threadSearchResults.value.length > 0 ? 0 : -1
+    await nextTick()
+    await revealActiveThreadSearchResult()
+  } catch (error) {
+    if (token !== threadSearchRequestToken) return
+    clearThreadSearchResults()
+    threadSearchError.value = error instanceof Error ? error.message : t('Failed to search thread messages')
+  } finally {
+    if (token === threadSearchRequestToken) {
+      isThreadSearchLoading.value = false
+    }
+  }
+}
+
+function scheduleThreadSearch(): void {
+  if (threadSearchDebounceTimer !== null) {
+    window.clearTimeout(threadSearchDebounceTimer)
+    threadSearchDebounceTimer = null
+  }
+  threadSearchDebounceTimer = window.setTimeout(() => {
+    threadSearchDebounceTimer = null
+    void runThreadSearchNow()
+  }, THREAD_SEARCH_DEBOUNCE_MS)
+}
+
+function openThreadSearch(): void {
+  if (!canShowThreadSearch.value) return
+  isThreadSearchOpen.value = true
+  nextTick(() => {
+    threadSearchInputRef.value?.focus()
+    threadSearchInputRef.value?.select()
+  })
+  if (threadSearchQuery.value.trim().length > 0) {
+    scheduleThreadSearch()
+  }
+}
+
+function closeThreadSearch(): void {
+  isThreadSearchOpen.value = false
+  threadSearchRequestToken += 1
+  if (threadSearchDebounceTimer !== null) {
+    window.clearTimeout(threadSearchDebounceTimer)
+    threadSearchDebounceTimer = null
+  }
+  isThreadSearchLoading.value = false
+  isThreadSearchNavigating.value = false
+  clearThreadSearchResults()
+}
+
+async function moveThreadSearchResult(direction: 1 | -1): Promise<void> {
+  const count = threadSearchResults.value.length
+  if (count === 0) return
+  const current = threadSearchActiveIndex.value >= 0 ? threadSearchActiveIndex.value : 0
+  threadSearchActiveIndex.value = (current + direction + count) % count
+  await nextTick()
+  await revealActiveThreadSearchResult()
+}
+
+function onThreadSearchKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    closeThreadSearch()
+    return
+  }
+  if (event.key !== 'Enter') return
+  event.preventDefault()
+  void moveThreadSearchResult(event.shiftKey ? -1 : 1)
+}
+
 const latestUserTurnId = computed(() => {
   for (let index = messages.value.length - 1; index >= 0; index -= 1) {
     const message = messages.value[index]
@@ -2000,6 +2256,35 @@ watch(visibleFeedbackErrors, (values, oldValues) => {
   })
 })
 
+watch(
+  [isThreadSearchOpen, threadSearchQuery, selectedThreadId],
+  () => {
+    if (!isThreadSearchOpen.value || threadSearchQuery.value.trim().length === 0 || selectedThreadId.value.length === 0) {
+      threadSearchRequestToken += 1
+      isThreadSearchLoading.value = false
+      clearThreadSearchResults()
+      return
+    }
+    scheduleThreadSearch()
+  },
+)
+
+watch(canShowThreadSearch, (canShow) => {
+  if (!canShow && isThreadSearchOpen.value) {
+    closeThreadSearch()
+  }
+})
+
+watch(threadSearchResults, (results) => {
+  if (results.length === 0) {
+    threadSearchActiveIndex.value = -1
+    return
+  }
+  if (threadSearchActiveIndex.value < 0 || threadSearchActiveIndex.value >= results.length) {
+    threadSearchActiveIndex.value = 0
+  }
+})
+
 onUnmounted(() => {
   document.removeEventListener('pointerdown', onDocumentPointerDown)
   window.removeEventListener('keydown', onWindowKeyDown)
@@ -2017,6 +2302,10 @@ onUnmounted(() => {
   if (threadSearchTimer) {
     clearTimeout(threadSearchTimer)
     threadSearchTimer = null
+  }
+  if (threadSearchDebounceTimer !== null) {
+    window.clearTimeout(threadSearchDebounceTimer)
+    threadSearchDebounceTimer = null
   }
   if (copiedThreadSessionIdResetTimer) {
     clearTimeout(copiedThreadSessionIdResetTimer)
@@ -4736,6 +5025,84 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 
 .content-thread-terminal-panel {
   @apply w-full;
+}
+
+.thread-search {
+  @apply flex min-w-0 shrink items-center justify-end gap-1;
+}
+
+.thread-search[data-open='true'] {
+  @apply rounded-full border border-zinc-200 bg-white px-2 py-1 shadow-sm;
+  max-width: min(34rem, calc(100vw - 1rem));
+}
+
+.thread-search-toggle,
+.thread-search-nav,
+.thread-search-close {
+  @apply inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-600 transition hover:bg-zinc-50 hover:text-zinc-950 disabled:cursor-default disabled:opacity-45 disabled:hover:bg-white disabled:hover:text-zinc-600;
+}
+
+.thread-search-toggle-icon,
+.thread-search-nav-icon,
+.thread-search-close-icon,
+.thread-search-icon {
+  @apply h-4 w-4;
+}
+
+.thread-search-icon {
+  @apply shrink-0 text-zinc-500;
+}
+
+.thread-search-input {
+  @apply h-7 min-w-24 w-40 border-none bg-transparent px-1 text-xs text-zinc-900 outline-none placeholder:text-zinc-400 sm:w-56;
+}
+
+.thread-search-count {
+  @apply shrink-0 whitespace-nowrap rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-medium text-zinc-600;
+}
+
+.thread-search-count.is-error {
+  @apply bg-rose-50 text-rose-700;
+}
+
+.thread-search-snippet {
+  @apply hidden max-w-44 truncate text-[11px] leading-5 text-zinc-500 lg:inline;
+}
+
+:global(:root.dark) .thread-search[data-open='true'],
+:global(.dark) .thread-search[data-open='true'] {
+  @apply border-zinc-700 bg-zinc-900 shadow-none;
+}
+
+:global(:root.dark) .thread-search-toggle,
+:global(:root.dark) .thread-search-nav,
+:global(:root.dark) .thread-search-close,
+:global(.dark) .thread-search-toggle,
+:global(.dark) .thread-search-nav,
+:global(.dark) .thread-search-close {
+  @apply border-zinc-700 bg-zinc-900 text-zinc-300 hover:bg-zinc-800 hover:text-zinc-50 disabled:hover:bg-zinc-900 disabled:hover:text-zinc-300;
+}
+
+:global(:root.dark) .thread-search-input,
+:global(.dark) .thread-search-input {
+  @apply text-zinc-100 placeholder:text-zinc-500;
+}
+
+:global(:root.dark) .thread-search-count,
+:global(.dark) .thread-search-count {
+  @apply bg-zinc-800 text-zinc-300;
+}
+
+:global(:root.dark) .thread-search-count.is-error,
+:global(.dark) .thread-search-count.is-error {
+  @apply bg-rose-950 text-rose-200;
+}
+
+:global(:root.dark) .thread-search-snippet,
+:global(:root.dark) .thread-search-icon,
+:global(.dark) .thread-search-snippet,
+:global(.dark) .thread-search-icon {
+  @apply text-zinc-400;
 }
 
 .content-header-terminal-command {

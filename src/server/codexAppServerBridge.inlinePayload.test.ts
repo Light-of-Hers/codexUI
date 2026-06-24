@@ -9,6 +9,7 @@ import {
   buildAppServerConfigForState,
   buildSessionModelState,
   createCodexBridgeMiddleware,
+  getThreadTurnWindowBounds,
   mergeExplicitModelStateIntoThreadResult,
   mergeRecoveredTurnItemsIntoThreadResult,
   mergeSessionModelStateIntoThreadResult,
@@ -17,6 +18,7 @@ import {
   persistTurnStartModelProviderInCollaborationMode,
   rewriteOpenAiThreadModelProvider,
   sanitizeThreadTurnsInlinePayloads,
+  searchThreadMessagesInPayload,
   shouldAutoContinueInterruptedThreadFromThreadRead,
   toAutomationApiRecord,
 } from './codexAppServerBridge'
@@ -2829,5 +2831,100 @@ describe('automation TOML handling', () => {
 
     expect(automation).toBeTruthy()
     expect(toAutomationApiRecord(automation as NonNullable<typeof automation>)).not.toHaveProperty('extraTomlLines')
+  })
+})
+
+describe('thread message search', () => {
+  const payload = {
+    threadTurnStartIndex: 4,
+    thread: {
+      id: 'thread-search',
+      turns: [
+        {
+          id: 'turn-user',
+          items: [
+            {
+              id: 'user-item',
+              type: 'userMessage',
+              content: [
+                { type: 'text', text: 'Please inspect alpha and Alpha again.' },
+              ],
+            },
+          ],
+        },
+        {
+          id: 'turn-command',
+          items: [
+            {
+              id: 'cmd-item',
+              type: 'commandExecution',
+              command: 'rg alpha',
+              aggregatedOutput: 'alpha result from output',
+              status: 'completed',
+              exitCode: 0,
+            },
+          ],
+        },
+      ],
+    },
+  }
+
+  it('returns structured per-message matches with snippets', () => {
+    const result = searchThreadMessagesInPayload('thread-search', 'alpha', payload, 10)
+
+    expect(result.totalMatches).toBe(4)
+    expect(result.truncated).toBe(false)
+    expect(result.results.map((row) => row.messageId)).toEqual([
+      'user-item',
+      'user-item',
+      'cmd-item',
+      'cmd-item',
+    ])
+    expect(result.results[0]).toMatchObject({
+      turnId: 'turn-user',
+      turnIndex: 4,
+      role: 'user',
+      messageType: 'userMessage',
+      occurrenceIndex: 0,
+    })
+    expect(result.results[0]?.snippet.slice(result.results[0].snippetMatchStart, result.results[0].snippetMatchEnd).toLowerCase()).toBe('alpha')
+  })
+
+  it('reports truncation while counting all matches', () => {
+    const result = searchThreadMessagesInPayload('thread-search', 'alpha', payload, 2)
+
+    expect(result.totalMatches).toBe(4)
+    expect(result.truncated).toBe(true)
+    expect(result.results).toHaveLength(2)
+  })
+})
+
+describe('thread turn window bounds', () => {
+  const turns = [
+    { id: 'turn-0' },
+    { id: 'turn-1' },
+    { id: 'turn-2' },
+    { id: 'turn-3' },
+    { id: 'turn-4' },
+  ]
+
+  it('slices around the requested center turn', () => {
+    expect(getThreadTurnWindowBounds(turns, 'turn-2', 1, 2)).toEqual({
+      centerIndex: 2,
+      startIndex: 1,
+      endIndex: 5,
+    })
+  })
+
+  it('clamps at the start of the thread', () => {
+    expect(getThreadTurnWindowBounds(turns, 'turn-0', 8, 1)).toEqual({
+      centerIndex: 0,
+      startIndex: 0,
+      endIndex: 2,
+    })
+  })
+
+  it('returns null when the center turn is missing', () => {
+    expect(getThreadTurnWindowBounds(turns, 'missing-turn', 1, 1)).toBeNull()
   })
 })

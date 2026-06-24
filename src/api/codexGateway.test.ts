@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { clearThreadGoal, forkThread, getAvailableModelIds, getCurrentModelConfig, getThreadGoal, getThreadQueueState, listDirectoryComposioConnectors, resumeThread, searchComposerFiles, searchFileLinkPaths, setThreadGoal, setThreadQueueState, startThread, startThreadTurn, steerThreadTurn } from './codexGateway'
+import { clearThreadGoal, forkThread, getAvailableModelIds, getCurrentModelConfig, getThreadGoal, getThreadQueueState, listDirectoryComposioConnectors, resumeThread, searchComposerFiles, searchFileLinkPaths, searchThreadMessages, setThreadGoal, setThreadQueueState, startThread, startThreadTurn, steerThreadTurn } from './codexGateway'
 
 function mockRpcFetch(): { requests: Array<{ method: string, params: Record<string, unknown> }> } {
   const requests: Array<{ method: string, params: Record<string, unknown> }> = []
@@ -557,5 +557,75 @@ describe('searchFileLinkPaths', () => {
         isSymlink: false,
       },
     ])
+  })
+})
+
+describe('searchThreadMessages', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('returns an empty result without a request for empty input', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(searchThreadMessages('thread-1', '   ')).resolves.toEqual({
+      threadId: 'thread-1',
+      query: '',
+      totalMatches: 0,
+      truncated: false,
+      results: [],
+    })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('posts to the thread message search endpoint', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      data: {
+        threadId: 'thread-1',
+        query: 'alpha',
+        totalMatches: 1,
+        truncated: false,
+        results: [
+          {
+            id: 'result-1',
+            turnId: 'turn-1',
+            turnIndex: 0,
+            messageId: 'message-1',
+            role: 'assistant',
+            messageType: 'agentMessage',
+            occurrenceIndex: 0,
+            snippet: 'alpha',
+            snippetMatchStart: 0,
+            snippetMatchEnd: 5,
+          },
+        ],
+      },
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await searchThreadMessages('thread-1', ' alpha ', 25)
+
+    expect(fetchMock).toHaveBeenCalledWith('/codex-api/thread-message-search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ threadId: 'thread-1', query: 'alpha', limit: 25 }),
+    })
+    expect(result.totalMatches).toBe(1)
+    expect(result.results[0]?.messageId).toBe('message-1')
+  })
+
+  it('throws a user-facing error when the endpoint fails', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      error: 'Search unavailable',
+    }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    })))
+
+    await expect(searchThreadMessages('thread-1', 'alpha')).rejects.toThrow('Search unavailable')
   })
 })
