@@ -386,6 +386,51 @@ describe('provider model discovery', () => {
     })).resolves.toEqual(['ark-code-latest', 'deepseek-v4-pro'])
     expect(requests).toEqual([{ url: '/codex-api/provider-models', body: undefined }])
   })
+
+  it('falls back to model/list when a required provider has no exclusive model list', async () => {
+    const requests: Array<{ url: string; body?: unknown }> = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const body = typeof init?.body === 'string' ? JSON.parse(init.body) as unknown : undefined
+      requests.push({ url, body })
+
+      if (url.endsWith('/codex-api/provider-models')) {
+        return new Response(JSON.stringify({
+          data: [],
+          exclusive: false,
+          source: 'codex-ui-default',
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+
+      if (url.endsWith('/codex-api/rpc')) {
+        return new Response(JSON.stringify({
+          result: {
+            data: [
+              { id: 'gpt-5.5' },
+              { id: 'gpt-5.5-high' },
+            ],
+          },
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+
+      throw new Error(`unexpected request: ${url}`)
+    }))
+
+    await expect(getAvailableModelIds({
+      includeProviderModels: true,
+      requireProviderModels: true,
+    })).resolves.toEqual(['gpt-5.5', 'gpt-5.5-high'])
+    expect(requests).toEqual([
+      { url: '/codex-api/provider-models', body: undefined },
+      { url: '/codex-api/rpc', body: { method: 'model/list', params: {} } },
+    ])
+  })
 })
 
 describe('listDirectoryComposioConnectors', () => {

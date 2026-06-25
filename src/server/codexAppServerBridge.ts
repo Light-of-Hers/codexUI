@@ -1553,6 +1553,10 @@ function orderProviderModels(modelIds: string[], preferredModel: string | null |
   return [preferred, ...modelIds.filter((modelId) => modelId !== preferred)]
 }
 
+function providerModelsUseCodexDefaultList(models: ProviderModelsResponse): boolean {
+  return models.source === 'codex-ui-default'
+}
+
 function codexUiProviderModelsCacheKey(
   descriptor: CodexUiProviderDescriptor,
   preferredModel: string | null | undefined,
@@ -1637,6 +1641,9 @@ async function readProviderBackedModelIds(appServer: AppServerProcess): Promise<
   const codexUiProvider = readCodexUiProviderDescriptor(providerId)
   if (codexUiProvider) {
     const dynamicModels = await readCodexUiProviderModelIds(codexUiProvider, readNonEmptyString(config?.model))
+    if (providerModelsUseCodexDefaultList(dynamicModels)) {
+      return { data: [], providerId: dynamicModels.providerId, source: dynamicModels.source }
+    }
     if (dynamicModels.data.length > 0) {
       return dynamicModels
     }
@@ -8527,6 +8534,15 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
             const activeDescriptor = fmState.provider ? readCodexUiProviderDescriptor(fmState.provider) : null
             if (activeDescriptor && (!isWrapperProvider(fmState.provider) || activeDescriptor.hasUiConfig)) {
               const dynamicModels = await readCodexUiProviderModelIds(activeDescriptor, fmState.model)
+              if (providerModelsUseCodexDefaultList(dynamicModels)) {
+                setJson(res, 200, {
+                  data: [],
+                  exclusive: false,
+                  providerId: activeDescriptor.id,
+                  source: dynamicModels.source,
+                })
+                return
+              }
               setJson(res, 200, {
                 data: dynamicModels.data,
                 exclusive: true,

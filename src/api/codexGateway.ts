@@ -2241,9 +2241,13 @@ async function fetchProviderModelIds(): Promise<ProviderModelIdsResult> {
 }
 
 export async function getAvailableModelIds(options: { includeProviderModels?: boolean; requireProviderModels?: boolean } = {}): Promise<string[]> {
+  let preloadedProviderModels: ProviderModelIdsResult | null = null
   if (options.includeProviderModels !== false && options.requireProviderModels) {
     const providerModels = await fetchProviderModelIds()
-    return providerModels.sawProviderModels ? providerModels.ids : []
+    if (providerModels.sawProviderModels && (providerModels.exclusive || providerModels.ids.length > 0)) {
+      return providerModels.ids
+    }
+    preloadedProviderModels = providerModels.sawProviderModels ? providerModels : null
   }
 
   const payload = await callRpc<ModelListResponse>('model/list', {})
@@ -2258,7 +2262,7 @@ export async function getAvailableModelIds(options: { includeProviderModels?: bo
     return ids
   }
 
-  const providerModels = await fetchProviderModelIds()
+  const providerModels = preloadedProviderModels ?? await fetchProviderModelIds()
   if (providerModels.sawProviderModels) {
     if (providerModels.exclusive) {
       return providerModels.ids
