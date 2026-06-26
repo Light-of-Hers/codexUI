@@ -19,6 +19,31 @@ This file tracks manual regression and feature verification steps.
 #### Rollback/Cleanup
 - <cleanup action, if any>
 
+### Feature: Active turn running-state reconciliation
+
+#### Prerequisites
+- App server is running from this repository.
+- A thread exists where Codex can run a slow enough task to observe the active turn state.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Open the thread in light theme and send a prompt that keeps the agent running for several seconds.
+2. While the turn is running, confirm the composer shows the stop button when the draft is empty.
+3. Confirm the same thread shows the circular running indicator in the sidebar.
+4. Confirm the live overlay shows `Thinking` or the current activity label before assistant text is persisted.
+5. Type a short follow-up while the turn is running and send it with the busy-send mode set to `Steer`.
+6. Confirm the UI remains in the running state after the follow-up is sent.
+7. Repeat the same flow in dark theme.
+
+#### Expected Results
+- If `thread/read` briefly lags behind `turn/start`, the UI keeps the thread marked as running instead of reverting to idle.
+- If a later detail refresh discovers an active turn while the local state was idle, the composer stop button, sidebar running indicator, and `Thinking` overlay all appear.
+- The follow-up prompt is sent as a steer message without hiding the active-turn controls.
+- Light and dark theme controls remain readable.
+
+#### Rollback/Cleanup
+- Stop the test turn if it is still running.
+
 ### Feature: Historical session command rendering
 
 #### Prerequisites

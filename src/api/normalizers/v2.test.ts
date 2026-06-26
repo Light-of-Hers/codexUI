@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeThreadGroupsV2, normalizeThreadMessagesV2 } from './v2'
+import {
+  normalizeThreadGroupsV2,
+  normalizeThreadMessagesV2,
+  readActiveTurnIdFromResponse,
+  readThreadInProgressFromResponse,
+} from './v2'
 import type { ThreadListResponse, ThreadReadResponse } from '../appServerDtos'
 
 function threadReadResponseWithContent(content: ThreadReadResponse['thread']['turns'][number]['items'][number][]): ThreadReadResponse {
@@ -50,6 +55,61 @@ describe('normalizeThreadGroupsV2', () => {
 
     expect(groups).toHaveLength(1)
     expect(groups[0]?.threads[0]?.modelProvider).toBe('moon')
+  })
+
+  it('uses thread status objects as a running-state fallback', () => {
+    const payload: ThreadListResponse = {
+      data: [
+        {
+          id: 'thread-running',
+          preview: 'Running session',
+          modelProvider: 'openai',
+          createdAt: 1710000000,
+          updatedAt: 1710000300,
+          path: null,
+          cwd: '/tmp/project',
+          cliVersion: '0.130.0',
+          source: 'appServer',
+          gitInfo: null,
+          status: { type: 'running', turnId: 'turn-active' },
+          turns: [],
+        } as ThreadListResponse['data'][number],
+      ],
+      nextCursor: null,
+    }
+
+    const groups = normalizeThreadGroupsV2(payload)
+
+    expect(groups[0]?.threads[0]?.inProgress).toBe(true)
+  })
+})
+
+describe('thread active turn normalization', () => {
+  it('reads active turn state from thread status objects', () => {
+    const payload = {
+      thread: {
+        id: 'thread-1',
+        preview: 'Running session',
+        modelProvider: 'openai',
+        createdAt: 1,
+        updatedAt: 2,
+        path: null,
+        cwd: '/tmp/project',
+        cliVersion: 'test',
+        source: 'appServer',
+        gitInfo: null,
+        status: { type: 'active', turnId: 'turn-active' },
+        turns: [{
+          id: 'turn-old',
+          status: 'completed',
+          error: null,
+          items: [],
+        }],
+      },
+    } as ThreadReadResponse
+
+    expect(readThreadInProgressFromResponse(payload)).toBe(true)
+    expect(readActiveTurnIdFromResponse(payload)).toBe('turn-active')
   })
 })
 

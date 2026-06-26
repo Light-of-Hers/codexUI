@@ -96,6 +96,14 @@ function installTestWindow(initialStorage: Record<string, string> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  gatewayMocks.getThreadDetail.mockReset()
+  gatewayMocks.getThreadDetail.mockResolvedValue({
+    messages: [],
+    inProgress: false,
+    activeTurnId: '',
+    hasMoreOlder: false,
+    turnIndexByTurnId: {},
+  })
   gatewayMocks.getThreadQueueState.mockResolvedValue({})
   gatewayMocks.getThreadTitleCache.mockResolvedValue({ titles: {} })
   gatewayMocks.getWorkspaceRootsState.mockRejectedValue(new Error('no workspace roots state'))
@@ -1638,6 +1646,110 @@ describe('session composer model state', () => {
         scenario.targetRpcProvider,
       )
     }
+  })
+})
+
+describe('active turn state reconciliation', () => {
+  async function flushAsyncTasks(times = 6): Promise<void> {
+    for (let index = 0; index < times; index += 1) {
+      await Promise.resolve()
+    }
+  }
+
+  async function waitForAsyncCondition(predicate: () => boolean): Promise<void> {
+    for (let index = 0; index < 30; index += 1) {
+      if (predicate()) return
+      await Promise.resolve()
+    }
+    throw new Error('Timed out waiting for async state reconciliation')
+  }
+
+  function activeTurnDetail(activeTurnId: string, inProgress = true) {
+    return {
+      messages: [],
+      inProgress,
+      activeTurnId,
+      hasMoreOlder: false,
+      turnIndexByTurnId: activeTurnId ? { [activeTurnId]: 0 } : {},
+    }
+  }
+
+  function staleThreadDetail() {
+    return {
+      messages: [],
+      inProgress: false,
+      activeTurnId: '',
+      hasMoreOlder: false,
+      turnIndexByTurnId: {},
+    }
+  }
+
+  async function createThreadHarness() {
+    installTestWindow()
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true })) as never)
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({
+      groups: [{ projectName: 'project', threads: [thread('thread-a', '/tmp/project')] }],
+      nextCursor: null,
+    })
+    gatewayMocks.resumeThread.mockResolvedValue({
+      model: '',
+      modelProvider: '',
+      reasoningEffort: '',
+      messages: [],
+      inProgress: false,
+      activeTurnId: '',
+      hasMoreOlder: false,
+      turnIndexByTurnId: {},
+    })
+
+    const state = useDesktopState()
+    await state.refreshAll({ includeSelectedThreadMessages: false, refreshAncillary: false })
+    expect(state.selectedThreadId.value).toBe('thread-a')
+    return state
+  }
+
+  it('restores running UI state when the send recheck finds an active turn', async () => {
+    const state = await createThreadHarness()
+    gatewayMocks.getThreadDetail.mockResolvedValue(activeTurnDetail('turn-active'))
+    gatewayMocks.steerThreadTurn.mockResolvedValue('turn-active')
+
+    await state.sendMessageToSelectedThread('steer the current work')
+    await waitForAsyncCondition(() =>
+      gatewayMocks.steerThreadTurn.mock.calls.length > 0 &&
+      gatewayMocks.resumeThread.mock.calls.length >= 2,
+    )
+    await flushAsyncTasks()
+
+    expect(state.selectedThread.value?.inProgress).toBe(true)
+    expect(state.projectGroups.value[0]?.threads[0]?.inProgress).toBe(true)
+    expect(state.selectedLiveOverlay.value?.activityLabel).toBe('Thinking')
+    expect(gatewayMocks.steerThreadTurn).toHaveBeenCalled()
+    expect(gatewayMocks.startThreadTurn).not.toHaveBeenCalled()
+  })
+
+  it('keeps a just-started turn running when the first thread read has not caught up', async () => {
+    const state = await createThreadHarness()
+    gatewayMocks.getThreadDetail
+      .mockResolvedValueOnce(staleThreadDetail())
+      .mockResolvedValueOnce(staleThreadDetail())
+    gatewayMocks.startThreadTurn.mockResolvedValue('turn-new')
+
+    await state.sendMessageToSelectedThread('start a slow task')
+
+    expect(gatewayMocks.startThreadTurn).toHaveBeenCalledWith(
+      'thread-a',
+      'start a slow task',
+      [],
+      undefined,
+      undefined,
+      undefined,
+      [],
+      'default',
+      undefined,
+    )
+    expect(state.selectedThread.value?.inProgress).toBe(true)
+    expect(state.projectGroups.value[0]?.threads[0]?.inProgress).toBe(true)
+    expect(state.selectedLiveOverlay.value?.activityLabel).toBe('Thinking')
   })
 })
 

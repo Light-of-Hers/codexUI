@@ -723,14 +723,34 @@ function toThreadTitle(summary: Thread): string {
   return named.length > 0 ? named : 'Untitled thread'
 }
 
+function isInProgressStatus(value: unknown): boolean {
+  if (value === 'inProgress' || value === 'in_progress' || value === 'running' || value === 'active') return true
+  const record = asRecord(value)
+  const type = readString(record?.type)
+  return type === 'inProgress' || type === 'in_progress' || type === 'running' || type === 'active'
+}
+
+function readStatusTurnId(value: unknown): string {
+  const record = asRecord(value)
+  if (!record) return ''
+  return (
+    readString(record.turnId) ||
+    readString(record.turn_id) ||
+    readString(record.activeTurnId) ||
+    readString(record.active_turn_id) ||
+    readString(record.currentTurnId) ||
+    readString(record.current_turn_id)
+  ).trim()
+}
+
 function isTurnInProgress(turn: Turn | null | undefined): boolean {
-  return turn?.status === 'inProgress'
+  return isInProgressStatus(turn?.status)
 }
 
 function readThreadInProgress(summary: Thread): boolean {
   const rawSummary = summary as Record<string, unknown>
   if (rawSummary.inProgress === true) return true
-  if (rawSummary.status === 'inProgress' || rawSummary.turnStatus === 'inProgress') return true
+  if (isInProgressStatus(rawSummary.status) || isInProgressStatus(rawSummary.turnStatus)) return true
 
   const turns = Array.isArray(summary.turns) ? summary.turns : []
   const lastTurn = turns.at(-1)
@@ -813,11 +833,18 @@ export function normalizeThreadMessagesV2(payload: ThreadReadResponse, baseTurnI
 }
 
 export function readThreadInProgressFromResponse(payload: ThreadReadResponse): boolean {
+  if (readThreadInProgress(payload.thread)) return true
   const turns = Array.isArray(payload.thread.turns) ? payload.thread.turns : []
   return isTurnInProgress(turns.at(-1))
 }
 
 export function readActiveTurnIdFromResponse(payload: ThreadReadResponse): string {
+  const rawThread = payload.thread as unknown as Record<string, unknown>
+  if (isInProgressStatus(rawThread.status)) {
+    const statusTurnId = readStatusTurnId(rawThread.status)
+    if (statusTurnId) return statusTurnId
+  }
+
   const turns = Array.isArray(payload.thread.turns) ? payload.thread.turns : []
   for (let index = turns.length - 1; index >= 0; index -= 1) {
     const turn = turns[index]

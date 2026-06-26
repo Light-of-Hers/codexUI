@@ -3112,6 +3112,76 @@ export function useDesktopState() {
     clearInterruptPersistenceGate(threadId)
   }
 
+  function ensureActiveTurnActivity(threadId: string): void {
+    if (!threadId) return
+    if (turnActivityByThreadId.value[threadId]) return
+    setTurnActivityForThread(threadId, {
+      label: 'Thinking',
+      details: [],
+    })
+  }
+
+  function setActiveTurnForThread(threadId: string, turnId: string): void {
+    const normalizedTurnId = turnId.trim()
+    if (!threadId || !normalizedTurnId) return
+    if (activeTurnIdByThreadId.value[threadId] !== normalizedTurnId) {
+      activeTurnIdByThreadId.value = {
+        ...activeTurnIdByThreadId.value,
+        [threadId]: normalizedTurnId,
+      }
+    }
+    maybeUnblockInterruptForActiveTurn(threadId, normalizedTurnId)
+    ensureActiveTurnActivity(threadId)
+    setThreadInProgress(threadId, true)
+  }
+
+  function clearActiveTurnForThread(threadId: string): void {
+    if (!threadId) return
+    if (activeTurnIdByThreadId.value[threadId]) {
+      activeTurnIdByThreadId.value = omitKey(activeTurnIdByThreadId.value, threadId)
+    }
+    if (activeTurnProviderIdByThreadId.value[threadId]) {
+      activeTurnProviderIdByThreadId.value = omitKey(activeTurnProviderIdByThreadId.value, threadId)
+    }
+    setThreadInProgress(threadId, false)
+  }
+
+  function applyThreadDetailActiveTurnState(
+    threadId: string,
+    detail: { inProgress: boolean; activeTurnId: string; turnIndexByTurnId: Record<string, number> },
+  ): { activeTurnId: string; inProgress: boolean } {
+    if (!threadId) return { activeTurnId: '', inProgress: false }
+
+    const activeTurnId = detail.activeTurnId.trim()
+    if (activeTurnId) {
+      setActiveTurnForThread(threadId, activeTurnId)
+      return { activeTurnId, inProgress: true }
+    }
+
+    if (detail.inProgress) {
+      const cachedTurnId = activeTurnIdByThreadId.value[threadId]?.trim() ?? ''
+      if (cachedTurnId) {
+        setActiveTurnForThread(threadId, cachedTurnId)
+        return { activeTurnId: cachedTurnId, inProgress: true }
+      }
+      ensureActiveTurnActivity(threadId)
+      setThreadInProgress(threadId, true)
+      return { activeTurnId: '', inProgress: true }
+    }
+
+    const cachedTurnId = activeTurnIdByThreadId.value[threadId]?.trim() ?? ''
+    const detailHasCachedTurn = Boolean(cachedTurnId && detail.turnIndexByTurnId[cachedTurnId] !== undefined)
+    if (cachedTurnId && !detailHasCachedTurn) {
+      // thread/read can briefly lag behind turn/start. Preserve the local active
+      // turn until a later read includes that turn as completed or interrupted.
+      setActiveTurnForThread(threadId, cachedTurnId)
+      return { activeTurnId: cachedTurnId, inProgress: true }
+    }
+
+    clearActiveTurnForThread(threadId)
+    return { activeTurnId: '', inProgress: false }
+  }
+
   function markServerListedThreads(serverThreadIds: Set<string>): void {
     const pendingThreadIds = Object.keys(interruptBlockedUntilPersistedByThreadId.value)
     if (pendingThreadIds.length === 0) return
@@ -4716,16 +4786,11 @@ export function useDesktopState() {
     if (startedTurn) {
       pendingTurnStartsById.set(startedTurn.turnId, startedTurn)
       setTurnIndexForThread(startedTurn.threadId, startedTurn.turnId, inferNextTurnIndex(startedTurn.threadId))
-      activeTurnIdByThreadId.value = {
-        ...activeTurnIdByThreadId.value,
-        [startedTurn.threadId]: startedTurn.turnId,
-      }
-      maybeUnblockInterruptForActiveTurn(startedTurn.threadId, startedTurn.turnId)
+      setActiveTurnForThread(startedTurn.threadId, startedTurn.turnId)
       clearLivePlansForThread(startedTurn.threadId)
       clearLiveFileChangesForThread(startedTurn.threadId)
       setTurnSummaryForThread(startedTurn.threadId, null)
       setTurnErrorForThread(startedTurn.threadId, null)
-      setThreadInProgress(startedTurn.threadId, true)
       scheduleQueueStateRefresh(startedTurn.threadId)
       if (eventUnreadByThreadId.value[startedTurn.threadId]) {
         eventUnreadByThreadId.value = omitKey(eventUnreadByThreadId.value, startedTurn.threadId)
@@ -5424,6 +5489,11 @@ export function useDesktopState() {
         markThreadMessagesPersisted(threadId, nextMessages)
         replaceTurnIndexLookupForThread(threadId, turnIndexByTurnId)
         rebindLiveFileChangeTurnIndices(threadId)
+        const appliedTurnState = applyThreadDetailActiveTurnState(threadId, {
+          inProgress,
+          activeTurnId,
+          turnIndexByTurnId,
+        })
         const previousPersisted = persistedMessagesByThreadId.value[threadId] ?? []
         const mergedMessages = mergeMessages(previousPersisted, nextMessages, {
           preserveMissing: options.silent === true,
@@ -5431,7 +5501,7 @@ export function useDesktopState() {
         setPersistedMessagesForThread(threadId, mergedMessages)
 
         const previousLiveAgent = liveAgentMessagesByThreadId.value[threadId] ?? []
-        if (inProgress) {
+        if (appliedTurnState.inProgress) {
           const nextLiveAgent = removeRedundantLiveAgentMessages(previousLiveAgent, nextMessages)
           setLiveAgentMessagesForThread(threadId, nextLiveAgent)
         } else {
@@ -5456,17 +5526,7 @@ export function useDesktopState() {
           ...hasMoreOlderMessagesByThreadId.value,
           [threadId]: detail.hasMoreOlder === true,
         }
-        setThreadInProgress(threadId, inProgress)
-        if (activeTurnId) {
-          activeTurnIdByThreadId.value = {
-            ...activeTurnIdByThreadId.value,
-            [threadId]: activeTurnId,
-          }
-        } else if (activeTurnIdByThreadId.value[threadId]) {
-          activeTurnIdByThreadId.value = omitKey(activeTurnIdByThreadId.value, threadId)
-          activeTurnProviderIdByThreadId.value = omitKey(activeTurnProviderIdByThreadId.value, threadId)
-        }
-        if (!inProgress) {
+        if (!appliedTurnState.inProgress) {
           clearCompletedTurnLiveState(threadId)
         }
         markThreadAsRead(threadId)
@@ -6117,34 +6177,20 @@ export function useDesktopState() {
 
   async function resolveActiveTurnIdForThread(threadId: string): Promise<string> {
     const cachedTurnId = activeTurnIdByThreadId.value[threadId]
-    if (cachedTurnId) return cachedTurnId
-
-    const { activeTurnId } = await getThreadDetail(threadId)
-    if (activeTurnId) {
-      activeTurnIdByThreadId.value = {
-        ...activeTurnIdByThreadId.value,
-        [threadId]: activeTurnId,
-      }
-      maybeUnblockInterruptForActiveTurn(threadId, activeTurnId)
+    if (cachedTurnId && inProgressById.value[threadId] === true) {
+      ensureActiveTurnActivity(threadId)
+      return cachedTurnId
     }
-    return activeTurnId
+
+    const detail = await getThreadDetail(threadId)
+    return applyThreadDetailActiveTurnState(threadId, detail).activeTurnId
   }
 
   async function refreshActiveTurnStateForThread(threadId: string): Promise<{ activeTurnId: string; inProgress: boolean; refreshed: boolean }> {
     try {
-      const { activeTurnId, inProgress } = await getThreadDetail(threadId)
-      if (activeTurnId) {
-        activeTurnIdByThreadId.value = {
-          ...activeTurnIdByThreadId.value,
-          [threadId]: activeTurnId,
-        }
-        maybeUnblockInterruptForActiveTurn(threadId, activeTurnId)
-      } else if (activeTurnIdByThreadId.value[threadId]) {
-        activeTurnIdByThreadId.value = omitKey(activeTurnIdByThreadId.value, threadId)
-        activeTurnProviderIdByThreadId.value = omitKey(activeTurnProviderIdByThreadId.value, threadId)
-      }
-      setThreadInProgress(threadId, inProgress)
-      return { activeTurnId, inProgress, refreshed: true }
+      const detail = await getThreadDetail(threadId)
+      const appliedTurnState = applyThreadDetailActiveTurnState(threadId, detail)
+      return { ...appliedTurnState, refreshed: true }
     } catch {
       return {
         activeTurnId: activeTurnIdByThreadId.value[threadId] ?? '',
@@ -6179,10 +6225,7 @@ export function useDesktopState() {
         ? refreshed.activeTurnId
         : readConflictingActiveTurnId(errorMessage, turnId)
       if (retryTurnId && retryTurnId !== turnId) {
-        activeTurnIdByThreadId.value = {
-          ...activeTurnIdByThreadId.value,
-          [threadId]: retryTurnId,
-        }
+        setActiveTurnForThread(threadId, retryTurnId)
         if (modelProvider) {
           await interruptThreadTurn(threadId, retryTurnId, modelProvider)
         } else {
@@ -6245,17 +6288,13 @@ export function useDesktopState() {
     )
 
     if (steeredTurnId) {
-      activeTurnIdByThreadId.value = {
-        ...activeTurnIdByThreadId.value,
-        [threadId]: steeredTurnId,
-      }
+      setActiveTurnForThread(threadId, steeredTurnId)
       if (activeTurnProviderId) {
         activeTurnProviderIdByThreadId.value = {
           ...activeTurnProviderIdByThreadId.value,
           [threadId]: activeTurnProviderId,
         }
       }
-      maybeUnblockInterruptForActiveTurn(threadId, steeredTurnId)
     }
 
     markThreadResumed(threadId, activeTurnProviderId)
@@ -6359,17 +6398,13 @@ export function useDesktopState() {
       }
 
       if (startedTurnId) {
-        activeTurnIdByThreadId.value = {
-          ...activeTurnIdByThreadId.value,
-          [threadId]: startedTurnId,
-        }
+        setActiveTurnForThread(threadId, startedTurnId)
         if (modelProviderId) {
           activeTurnProviderIdByThreadId.value = {
             ...activeTurnProviderIdByThreadId.value,
             [threadId]: modelProviderId,
           }
         }
-        maybeUnblockInterruptForActiveTurn(threadId, startedTurnId)
       }
 
       markThreadResumed(threadId, modelProviderId)
@@ -6718,6 +6753,7 @@ export function useDesktopState() {
 
       const shouldRefreshActiveThread =
         hasVersionChange ||
+        (isActiveDirty && isInProgress) ||
         (isInProgress && loadedMessagesByThreadId.value[activeThreadId] !== true) ||
         (isActiveDirty && loadedMessagesByThreadId.value[activeThreadId] !== true) ||
         (shouldRefreshThreads && loadedMessagesByThreadId.value[activeThreadId] !== true)
