@@ -1832,11 +1832,17 @@ describe('turn interruption', () => {
 })
 
 describe('live turn rendering', () => {
-  function createLiveStateHarness(): {
+  async function createLiveStateHarness(): Promise<{
     state: ReturnType<typeof useDesktopState>
     notify: (notification: RpcNotification) => void
-  } {
+  }> {
     installTestWindow()
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true })) as never)
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({
+      groups: [{ projectName: 'project', threads: [thread('thread-a', '/tmp/project')] }],
+      nextCursor: null,
+    })
+    gatewayMocks.getPendingServerRequests.mockResolvedValue([])
     let notify: ((notification: RpcNotification) => void) | null = null
     gatewayMocks.subscribeCodexNotifications.mockImplementation((handler: (notification: RpcNotification) => void) => {
       notify = handler
@@ -1845,6 +1851,7 @@ describe('live turn rendering', () => {
 
     const state = useDesktopState()
     state.primeSelectedThread('thread-a')
+    await state.refreshAll({ includeSelectedThreadMessages: false, refreshAncillary: false })
     state.startPolling()
 
     if (!notify) {
@@ -1862,8 +1869,8 @@ describe('live turn rendering', () => {
     }
   }
 
-  it('keeps live command output visible after turn completion until persisted messages refresh', () => {
-    const { state, notify } = createLiveStateHarness()
+  it('keeps live command output visible after turn completion until persisted messages refresh', async () => {
+    const { state, notify } = await createLiveStateHarness()
 
     notify(notification('turn/started', {
       threadId: 'thread-a',
@@ -1895,8 +1902,8 @@ describe('live turn rendering', () => {
     expect(commandMessages[0].commandExecution?.aggregatedOutput).toBe('running\n')
   })
 
-  it('keeps accumulated live reasoning when assistant text starts streaming', () => {
-    const { state, notify } = createLiveStateHarness()
+  it('keeps accumulated live reasoning when assistant text starts streaming', async () => {
+    const { state, notify } = await createLiveStateHarness()
 
     notify(notification('turn/started', {
       threadId: 'thread-a',
@@ -1925,6 +1932,42 @@ describe('live turn rendering', () => {
 
     expect(state.selectedLiveOverlay.value?.reasoningText).toBe('checking context')
     expect(state.messages.value.map((message) => message.text)).toEqual(['I found the issue.'])
+  })
+
+  it('marks a thread running from status-change notifications without a turn-start event', async () => {
+    const { state, notify } = await createLiveStateHarness()
+    gatewayMocks.interruptThreadTurn.mockResolvedValueOnce(undefined)
+
+    notify(notification('thread/status/changed', {
+      threadId: 'thread-a',
+      status: { type: 'running', turnId: 'turn-1' },
+    }))
+
+    expect(state.selectedThread.value?.inProgress).toBe(true)
+    expect(state.projectGroups.value[0]?.threads[0]?.inProgress).toBe(true)
+    expect(state.selectedLiveOverlay.value?.activityLabel).toBe('Thinking')
+
+    await state.interruptSelectedThreadTurn()
+
+    expect(gatewayMocks.interruptThreadTurn).toHaveBeenCalledWith('thread-a', 'turn-1')
+    expect(state.selectedThread.value?.inProgress).toBe(false)
+  })
+
+  it('clears running state from terminal status-change notifications', async () => {
+    const { state, notify } = await createLiveStateHarness()
+
+    notify(notification('thread/status/changed', {
+      status: { type: 'running', threadId: 'thread-a', turnId: 'turn-1' },
+    }))
+    expect(state.selectedThread.value?.inProgress).toBe(true)
+    expect(state.selectedLiveOverlay.value?.activityLabel).toBe('Thinking')
+
+    notify(notification('thread/status/changed', {
+      status: { type: 'interrupted', threadId: 'thread-a', turnId: 'turn-1' },
+    }))
+
+    expect(state.selectedThread.value?.inProgress).toBe(false)
+    expect(state.selectedLiveOverlay.value).toBeNull()
   })
 })
 

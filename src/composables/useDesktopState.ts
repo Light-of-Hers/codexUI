@@ -4181,6 +4181,84 @@ export function useDesktopState() {
     return null
   }
 
+  function readStatusType(value: unknown): string {
+    if (typeof value === 'string') return value.trim().toLowerCase()
+    const record = asRecord(value)
+    return readString(record?.type).trim().toLowerCase()
+  }
+
+  function isRunningStatusType(value: string): boolean {
+    return value === 'inprogress' || value === 'in_progress' || value === 'running' || value === 'active'
+  }
+
+  function isIdleStatusType(value: string): boolean {
+    return value === 'idle' || value === 'completed' || value === 'interrupted' || value === 'failed'
+  }
+
+  function readStatusChangeTurnId(params: Record<string, unknown>): string {
+    const status = asRecord(params.status)
+    const thread = asRecord(params.thread)
+    const threadStatus = asRecord(thread?.status)
+    return (
+      readString(params.turnId) ||
+      readString(params.turn_id) ||
+      readString(params.activeTurnId) ||
+      readString(params.active_turn_id) ||
+      readString(params.currentTurnId) ||
+      readString(params.current_turn_id) ||
+      readString(status?.turnId) ||
+      readString(status?.turn_id) ||
+      readString(status?.activeTurnId) ||
+      readString(status?.active_turn_id) ||
+      readString(status?.currentTurnId) ||
+      readString(status?.current_turn_id) ||
+      readString(threadStatus?.turnId) ||
+      readString(threadStatus?.turn_id) ||
+      readString(threadStatus?.activeTurnId) ||
+      readString(threadStatus?.active_turn_id) ||
+      readString(threadStatus?.currentTurnId) ||
+      readString(threadStatus?.current_turn_id)
+    ).trim()
+  }
+
+  function readStatusChangeThreadId(notification: RpcNotification, params: Record<string, unknown>): string {
+    const threadId = extractThreadIdFromNotification(notification)
+    if (threadId) return threadId
+
+    const status = asRecord(params.status)
+    const threadStatus = asRecord(params.threadStatus) ?? asRecord(params.thread_status)
+    return (
+      readString(status?.threadId) ||
+      readString(status?.thread_id) ||
+      readString(threadStatus?.threadId) ||
+      readString(threadStatus?.thread_id)
+    ).trim()
+  }
+
+  function readThreadStatusChange(notification: RpcNotification): { threadId: string; statusType: string; turnId: string } | null {
+    if (notification.method !== 'thread/status/changed') return null
+    const params = asRecord(notification.params)
+    if (!params) return null
+    const threadId = readStatusChangeThreadId(notification, params)
+    if (!threadId) return null
+
+    const thread = asRecord(params.thread)
+    const statusType = (
+      readStatusType(params.status) ||
+      readStatusType(params.threadStatus) ||
+      readStatusType(params.thread_status) ||
+      readStatusType(thread?.status) ||
+      (params.inProgress === true ? 'inprogress' : '')
+    )
+    if (!statusType) return null
+
+    return {
+      threadId,
+      statusType,
+      turnId: readStatusChangeTurnId(params),
+    }
+  }
+
   function readTurnStartedInfo(notification: RpcNotification): TurnStartedInfo | null {
     if (notification.method !== 'turn/started') {
       return null
@@ -4763,6 +4841,27 @@ export function useDesktopState() {
     if (notification.method === 'account/rateLimits/updated') {
       setCodexRateLimit(pickCodexRateLimitSnapshot(notification.params))
       return
+    }
+
+    const statusChange = readThreadStatusChange(notification)
+    if (statusChange) {
+      if (isRunningStatusType(statusChange.statusType)) {
+        if (statusChange.turnId) {
+          setActiveTurnForThread(statusChange.threadId, statusChange.turnId)
+        } else {
+          ensureActiveTurnActivity(statusChange.threadId)
+          setThreadInProgress(statusChange.threadId, true)
+        }
+        if (eventUnreadByThreadId.value[statusChange.threadId]) {
+          eventUnreadByThreadId.value = omitKey(eventUnreadByThreadId.value, statusChange.threadId)
+        }
+      } else if (isIdleStatusType(statusChange.statusType)) {
+        clearActiveTurnForThread(statusChange.threadId)
+        setTurnActivityForThread(statusChange.threadId, null)
+        setTurnErrorForThread(statusChange.threadId, null)
+        pendingThreadMessageRefresh.add(statusChange.threadId)
+        pendingThreadsRefresh = true
+      }
     }
 
     const tokenUsageUpdate = readThreadTokenUsageUpdate(notification)
