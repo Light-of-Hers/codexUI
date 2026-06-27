@@ -1707,6 +1707,23 @@ describe('active turn state reconciliation', () => {
     }
   }
 
+  function persistedUserTurnDetail(turnId: string) {
+    return {
+      messages: [{
+        id: 'user-1',
+        role: 'user' as const,
+        text: 'start a slow task',
+        messageType: 'userMessage',
+        turnId,
+        turnIndex: 0,
+      }],
+      inProgress: false,
+      activeTurnId: '',
+      hasMoreOlder: false,
+      turnIndexByTurnId: { [turnId]: 0 },
+    }
+  }
+
   async function createThreadHarness() {
     installTestWindow()
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true })) as never)
@@ -1770,6 +1787,20 @@ describe('active turn state reconciliation', () => {
       'default',
       undefined,
     )
+    expect(state.selectedThread.value?.inProgress).toBe(true)
+    expect(state.projectGroups.value[0]?.threads[0]?.inProgress).toBe(true)
+    expect(state.selectedLiveOverlay.value?.activityLabel).toBe('Thinking')
+  })
+
+  it('keeps a just-started turn running when thread read only contains the user turn', async () => {
+    const state = await createThreadHarness()
+    gatewayMocks.getThreadDetail
+      .mockResolvedValueOnce(staleThreadDetail())
+      .mockResolvedValueOnce(persistedUserTurnDetail('turn-new'))
+    gatewayMocks.startThreadTurn.mockResolvedValue('turn-new')
+
+    await state.sendMessageToSelectedThread('start a slow task')
+
     expect(state.selectedThread.value?.inProgress).toBe(true)
     expect(state.projectGroups.value[0]?.threads[0]?.inProgress).toBe(true)
     expect(state.selectedLiveOverlay.value?.activityLabel).toBe('Thinking')
@@ -2007,6 +2038,26 @@ describe('live turn rendering', () => {
 
     expect(state.selectedLiveOverlay.value?.reasoningText).toBe('checking context')
     expect(state.messages.value.map((message) => message.text)).toEqual(['I found the issue.'])
+  })
+
+  it('marks a thread running from live agent output even without a turn-start event', async () => {
+    const { state, notify } = await createLiveStateHarness()
+    gatewayMocks.interruptThreadTurn.mockResolvedValueOnce(undefined)
+
+    notify(notification('item/agentMessage/delta', {
+      threadId: 'thread-a',
+      turnId: 'turn-1',
+      itemId: 'agent-1',
+      delta: 'Still working.',
+    }))
+
+    expect(state.selectedThread.value?.inProgress).toBe(true)
+    expect(state.projectGroups.value[0]?.threads[0]?.inProgress).toBe(true)
+    expect(state.selectedLiveOverlay.value?.activityLabel).toBe('Writing response')
+
+    await state.interruptSelectedThreadTurn()
+
+    expect(gatewayMocks.interruptThreadTurn).toHaveBeenCalledWith('thread-a', 'turn-1')
   })
 
   it('marks a thread running from status-change notifications without a turn-start event', async () => {

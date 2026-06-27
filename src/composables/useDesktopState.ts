@@ -3151,9 +3151,14 @@ export function useDesktopState() {
     setThreadInProgress(threadId, false)
   }
 
+  function hasPersistedAssistantResultForTurn(messages: UiMessage[] | undefined, turnId: string): boolean {
+    if (!turnId || !messages) return false
+    return messages.some((message) => message.turnId === turnId && message.role === 'assistant')
+  }
+
   function applyThreadDetailActiveTurnState(
     threadId: string,
-    detail: { inProgress: boolean; activeTurnId: string; turnIndexByTurnId: Record<string, number> },
+    detail: { messages?: UiMessage[]; inProgress: boolean; activeTurnId: string; turnIndexByTurnId: Record<string, number> },
   ): { activeTurnId: string; inProgress: boolean } {
     if (!threadId) return { activeTurnId: '', inProgress: false }
 
@@ -3179,6 +3184,12 @@ export function useDesktopState() {
     if (cachedTurnId && !detailHasCachedTurn) {
       // thread/read can briefly lag behind turn/start. Preserve the local active
       // turn until a later read includes that turn as completed or interrupted.
+      setActiveTurnForThread(threadId, cachedTurnId)
+      return { activeTurnId: cachedTurnId, inProgress: true }
+    }
+    if (cachedTurnId && detailHasCachedTurn && !hasPersistedAssistantResultForTurn(detail.messages, cachedTurnId)) {
+      // thread/read may include the freshly submitted user turn before the app-server
+      // reports activeTurnId/inProgress. A user-only persisted turn is not terminal.
       setActiveTurnForThread(threadId, cachedTurnId)
       return { activeTurnId: cachedTurnId, inProgress: true }
     }
@@ -4226,6 +4237,24 @@ export function useDesktopState() {
     ).trim()
   }
 
+  function readNotificationTurnId(notification: RpcNotification): string {
+    const params = asRecord(notification.params)
+    if (!params) return ''
+    const turn = asRecord(params.turn)
+    const item = asRecord(params.item)
+    return (
+      readString(params.turnId) ||
+      readString(params.turn_id) ||
+      readString(params.activeTurnId) ||
+      readString(params.active_turn_id) ||
+      readString(turn?.id) ||
+      readString(turn?.turnId) ||
+      readString(turn?.turn_id) ||
+      readString(item?.turnId) ||
+      readString(item?.turn_id)
+    ).trim()
+  }
+
   function readStatusChangeThreadId(notification: RpcNotification, params: Record<string, unknown>): string {
     const threadId = extractThreadIdFromNotification(notification)
     if (threadId) return threadId
@@ -4878,6 +4907,12 @@ export function useDesktopState() {
     const turnActivity = readTurnActivity(notification)
     if (turnActivity) {
       setTurnActivityForThread(turnActivity.threadId, turnActivity.activity)
+      const turnId = readNotificationTurnId(notification)
+      if (turnId) {
+        setActiveTurnForThread(turnActivity.threadId, turnId)
+      } else {
+        setThreadInProgress(turnActivity.threadId, true)
+      }
     }
 
     const notificationThreadId = extractThreadIdFromNotification(notification)
@@ -5594,6 +5629,7 @@ export function useDesktopState() {
         replaceTurnIndexLookupForThread(threadId, turnIndexByTurnId)
         rebindLiveFileChangeTurnIndices(threadId)
         const appliedTurnState = applyThreadDetailActiveTurnState(threadId, {
+          messages: nextMessages,
           inProgress,
           activeTurnId,
           turnIndexByTurnId,
