@@ -1854,6 +1854,7 @@ export function useDesktopState() {
   let shouldAutoScrollOnNextAgentEvent = false
   const pendingTurnStartsById = new Map<string, TurnStartedInfo>()
   const fallbackRetryInFlightThreadIds = new Set<string>()
+  let preserveUnlistedSelectedThread = false
 
 
   const allThreads = computed(() => flattenThreads(projectGroups.value))
@@ -5512,8 +5513,8 @@ export function useDesktopState() {
 
       const currentExists = flatThreads.some((thread) => thread.id === selectedThreadId.value)
 
-      if (!currentExists && selectedThreadId.value && hasLoadedAllThreadPages) {
-        setSelectedThreadId('')
+      if (!currentExists && selectedThreadId.value && hasLoadedAllThreadPages && !preserveUnlistedSelectedThread) {
+        setSelectedThreadId(flatThreads[0]?.id ?? '')
       }
       if (!currentExists && !selectedThreadId.value) {
         setSelectedThreadId(flatThreads[0]?.id ?? '')
@@ -7087,6 +7088,7 @@ export function useDesktopState() {
   }
 
   function primeSelectedThread(threadId: string): void {
+    preserveUnlistedSelectedThread = threadId.trim().length > 0
     setSelectedThreadId(threadId)
   }
 

@@ -1313,6 +1313,29 @@ describe('session composer model state', () => {
     expect(state.selectedReasoningEffort.value).toBe('high')
   })
 
+  it('preserves direct thread selection and reasoning effort when the thread is not listed', async () => {
+    installTestWindow({
+      'codex-web-local.selected-thread-id.v1': 'thread-a',
+      'codex-web-local.reasoning-effort-by-context.v1': JSON.stringify({
+        'thread-a': 'xhigh',
+      }),
+    })
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({
+      groups: [{ projectName: 'project', threads: [thread('thread-b', '/tmp/project')] }],
+      nextCursor: null,
+    })
+
+    const state = useDesktopState()
+    state.primeSelectedThread('thread-a')
+
+    await state.refreshAll({ includeSelectedThreadMessages: false, refreshAncillary: false })
+
+    expect(state.selectedThreadId.value).toBe('thread-a')
+    expect(state.selectedThread.value).toBeNull()
+    expect(state.readReasoningEffortForThread('thread-a')).toBe('xhigh')
+    expect(state.selectedReasoningEffort.value).toBe('xhigh')
+  })
+
   it('hydrates model, provider, and reasoning effort from resumed thread metadata', async () => {
     installTestWindow()
     gatewayMocks.resumeThread.mockResolvedValue({

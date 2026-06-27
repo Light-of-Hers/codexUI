@@ -1538,7 +1538,10 @@ const latestUserTurnId = computed(() => {
   return ''
 })
 const liveOverlay = computed(() => selectedLiveOverlay.value)
-const composerThreadContextId = computed(() => (isHomeRoute.value ? '__new-thread__' : selectedThreadId.value))
+const composerThreadContextId = computed(() => {
+  if (isHomeRoute.value) return '__new-thread__'
+  return routeThreadId.value || selectedThreadId.value
+})
 const composerSelectedModelId = computed(() => readModelIdForThread(composerThreadContextId.value))
 const providerOptions = computed(() => {
   const options: Array<{ value: string; label: string }> = [
@@ -4216,11 +4219,6 @@ async function initialize(): Promise<void> {
   await applySelectedProviderState({ refreshAncillary: false }).catch(() => {})
 }
 
-function threadExistsInSidebar(threadId: string): boolean {
-  if (!threadId) return false
-  return projectGroups.value.some((group) => group.threads.some((thread) => thread.id === threadId))
-}
-
 async function syncThreadSelectionWithRoute(): Promise<void> {
   if (isRouteSyncInProgress.value) {
     hasPendingRouteSync = true
@@ -4244,16 +4242,6 @@ async function syncThreadSelectionWithRoute(): Promise<void> {
         const threadId = routeThreadId.value
         if (!threadId) continue
 
-        if (selectedThreadId.value !== threadId) {
-          if (!threadExistsInSidebar(threadId)) {
-            if (selectedThreadId.value) {
-              await router.replace({ name: 'thread', params: { threadId: selectedThreadId.value } })
-            } else {
-              await router.replace({ name: 'home' })
-            }
-            continue
-          }
-        }
         await selectThread(threadId)
         await applySelectedProviderState().catch(() => {})
       }
