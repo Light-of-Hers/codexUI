@@ -6013,7 +6013,8 @@ export function useDesktopState() {
     })
   }
 
-  async function sendMessageToSelectedThread(
+  async function sendMessageToThread(
+    targetThreadId: string,
     text: string,
     imageUrls: string[] = [],
     skills: Array<{ name: string; path: string }> = [],
@@ -6024,7 +6025,7 @@ export function useDesktopState() {
   ): Promise<void> {
     if (isUpdatingSpeedMode.value) return
 
-    const threadId = selectedThreadId.value
+    const threadId = targetThreadId.trim()
     const nextText = text.trim()
     if (!threadId || (!nextText && imageUrls.length === 0 && fileAttachments.length === 0)) return
 
@@ -6142,6 +6143,27 @@ export function useDesktopState() {
       error.value = errorMessage
       throw unknownError
     }
+  }
+
+  async function sendMessageToSelectedThread(
+    text: string,
+    imageUrls: string[] = [],
+    skills: Array<{ name: string; path: string }> = [],
+    mode: 'steer' | 'queue' = 'steer',
+    fileAttachments: FileAttachment[] = [],
+    queueInsertIndex?: number,
+    collaborationModeOverride?: CollaborationModeKind,
+  ): Promise<void> {
+    await sendMessageToThread(
+      selectedThreadId.value,
+      text,
+      imageUrls,
+      skills,
+      mode,
+      fileAttachments,
+      queueInsertIndex,
+      collaborationModeOverride,
+    )
   }
 
   async function sendMessageToNewThread(
@@ -7144,6 +7166,7 @@ export function useDesktopState() {
     rollbackSelectedThread,
 
     sendMessageToSelectedThread,
+    sendMessageToThread,
     sendMessageToNewThread,
     interruptSelectedThreadTurn,
     selectedThreadQueuedMessages,

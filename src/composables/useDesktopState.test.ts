@@ -1774,6 +1774,58 @@ describe('active turn state reconciliation', () => {
     expect(state.projectGroups.value[0]?.threads[0]?.inProgress).toBe(true)
     expect(state.selectedLiveOverlay.value?.activityLabel).toBe('Thinking')
   })
+
+  it('can start a turn for an explicit thread even when another thread is selected', async () => {
+    installTestWindow({
+      'codex-web-local.selected-thread-id.v1': 'thread-b',
+    })
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true })) as never)
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({
+      groups: [{
+        projectName: 'project',
+        threads: [
+          thread('thread-b', '/tmp/project'),
+          thread('thread-a', '/tmp/project'),
+        ],
+      }],
+      nextCursor: null,
+    })
+    gatewayMocks.resumeThread.mockResolvedValue({
+      model: '',
+      modelProvider: '',
+      reasoningEffort: '',
+      messages: [],
+      inProgress: false,
+      activeTurnId: '',
+      hasMoreOlder: false,
+      turnIndexByTurnId: {},
+    })
+    gatewayMocks.getThreadDetail
+      .mockResolvedValueOnce(staleThreadDetail())
+      .mockResolvedValueOnce(staleThreadDetail())
+    gatewayMocks.startThreadTurn.mockResolvedValue('turn-new')
+
+    const state = useDesktopState()
+    await state.refreshAll({ includeSelectedThreadMessages: false, refreshAncillary: false })
+    expect(state.selectedThreadId.value).toBe('thread-b')
+
+    await state.sendMessageToThread('thread-a', 'start the route thread')
+
+    expect(gatewayMocks.startThreadTurn).toHaveBeenCalledWith(
+      'thread-a',
+      'start the route thread',
+      [],
+      undefined,
+      undefined,
+      undefined,
+      [],
+      'default',
+      undefined,
+    )
+    expect(state.selectedThreadId.value).toBe('thread-b')
+    expect(state.projectGroups.value[0]?.threads.find((item) => item.id === 'thread-a')?.inProgress).toBe(true)
+    expect(state.projectGroups.value[0]?.threads.find((item) => item.id === 'thread-b')?.inProgress).toBe(false)
+  })
 })
 
 describe('turn interruption', () => {

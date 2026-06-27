@@ -785,6 +785,20 @@ function normalizeReasoningEffort(value: unknown): ReasoningEffort | '' {
     : ''
 }
 
+function inferReasoningEffortFromModel(model: unknown): ReasoningEffort | '' {
+  if (typeof model !== 'string') return ''
+  const normalizedModel = model.trim().toLowerCase()
+  if (!normalizedModel) return ''
+  if (normalizedModel.includes('extra-high') || normalizedModel.includes('xhigh')) {
+    return 'xhigh'
+  }
+  return ''
+}
+
+function normalizeModelReasoningEffort(model: unknown, value: unknown): ReasoningEffort | '' {
+  return inferReasoningEffortFromModel(model) || normalizeReasoningEffort(value)
+}
+
 function normalizeSpeedMode(value: unknown): SpeedMode {
   return typeof value === 'string' && value.trim().toLowerCase() === 'fast'
     ? 'fast'
@@ -1756,10 +1770,11 @@ function normalizeThreadReasoningEffortFromPayload(payload: unknown): ReasoningE
   if (!payload || typeof payload !== 'object') return ''
   const record = payload as Record<string, unknown>
   const thread = asRecord(record.thread)
-  return normalizeReasoningEffort(record.reasoningEffort)
-    || normalizeReasoningEffort(record.reasoning_effort)
-    || normalizeReasoningEffort(thread?.reasoningEffort)
-    || normalizeReasoningEffort(thread?.reasoning_effort)
+  const model = normalizeThreadModelFromPayload(payload)
+  return normalizeModelReasoningEffort(model, record.reasoningEffort)
+    || normalizeModelReasoningEffort(model, record.reasoning_effort)
+    || normalizeModelReasoningEffort(model, thread?.reasoningEffort)
+    || normalizeModelReasoningEffort(model, thread?.reasoning_effort)
 }
 
 export type StartedThread = {
@@ -2405,7 +2420,7 @@ export async function getCurrentModelConfig(): Promise<CurrentModelConfig> {
   const payload = await callRpc<ConfigReadResponse>('config/read', {})
   const model = payload.config.model ?? ''
   const providerId = typeof payload.config.model_provider === 'string' ? payload.config.model_provider : ''
-  const reasoningEffort = normalizeReasoningEffort(payload.config.model_reasoning_effort)
+  const reasoningEffort = normalizeModelReasoningEffort(model, payload.config.model_reasoning_effort)
   const speedMode = normalizeSpeedMode(payload.config.service_tier)
   return { model, providerId, reasoningEffort, speedMode }
 }

@@ -1266,6 +1266,7 @@ const {
   renameThreadById,
   forkThreadFromTurn,
   sendMessageToSelectedThread,
+  sendMessageToThread,
   sendMessageToNewThread,
   interruptSelectedThreadTurn,
   selectedThreadQueuedMessages,
@@ -3142,11 +3143,12 @@ async function syncAfterMobileResume(): Promise<void> {
 function onSubmitThreadMessage(payload: { text: string; imageUrls: string[]; fileAttachments: Array<{ label: string; path: string; fsPath: string }>; skills: Array<{ name: string; path: string }>; mode: 'steer' | 'queue' }): void {
   const text = payload.text
   scheduleMobileConversationJumpToLatest()
+  const targetThreadId = composerThreadContextId.value.trim()
   const editingState = editingQueuedMessageState.value
   const queueInsertIndex =
     payload.mode === 'queue'
     && editingState
-    && editingState.threadId === selectedThreadId.value
+    && editingState.threadId === targetThreadId
       ? editingState.queueIndex
       : undefined
   editingQueuedMessageState.value = null
@@ -3154,7 +3156,10 @@ function onSubmitThreadMessage(payload: { text: string; imageUrls: string[]; fil
     void submitFirstMessageForNewThread(text, payload.imageUrls, payload.skills, payload.fileAttachments)
     return
   }
-  void sendMessageToSelectedThread(text, payload.imageUrls, payload.skills, payload.mode, payload.fileAttachments, queueInsertIndex)
+  if (targetThreadId && selectedThreadId.value !== targetThreadId) {
+    primeSelectedThread(targetThreadId)
+  }
+  void sendMessageToThread(targetThreadId, text, payload.imageUrls, payload.skills, payload.mode, payload.fileAttachments, queueInsertIndex)
 }
 
 function onEditQueuedMessage(messageId: string): void {

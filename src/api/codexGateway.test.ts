@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { clearThreadGoal, forkThread, getAvailableModelIds, getThreadGoal, getThreadQueueState, listDirectoryComposioConnectors, resumeThread, searchComposerFiles, searchFileLinkPaths, setThreadGoal, setThreadQueueState, startThread, startThreadTurn, steerThreadTurn } from './codexGateway'
+import { clearThreadGoal, forkThread, getAvailableModelIds, getCurrentModelConfig, getThreadGoal, getThreadQueueState, listDirectoryComposioConnectors, resumeThread, searchComposerFiles, searchFileLinkPaths, setThreadGoal, setThreadQueueState, startThread, startThreadTurn, steerThreadTurn } from './codexGateway'
 
 function mockRpcFetch(): { requests: Array<{ method: string, params: Record<string, unknown> }> } {
   const requests: Array<{ method: string, params: Record<string, unknown> }> = []
@@ -290,6 +290,42 @@ describe('thread history persistence payloads', () => {
     expect(resumedThread.model).toBe('ark-code-latest')
     expect(resumedThread.modelProvider).toBe('moon')
     expect(resumedThread.reasoningEffort).toBe('xhigh')
+  })
+
+  it('treats extra-high model variants as xhigh reasoning', async () => {
+    mockRpcFetchWithResponder((request) => {
+      if (request.method === 'thread/resume') {
+        return {
+          model: 'gpt-5.5-extra-high',
+          reasoningEffort: 'high',
+          thread: {
+            id: 'thread-1',
+            cwd: '/tmp/project',
+            preview: '',
+            turns: [],
+            createdAt: 0,
+            updatedAt: 0,
+          },
+        }
+      }
+      if (request.method === 'config/read') {
+        return {
+          config: {
+            model: 'gpt-5.5-extra-high',
+            model_provider: 'rustcat',
+            model_reasoning_effort: 'high',
+            service_tier: null,
+          },
+        }
+      }
+      return {}
+    })
+
+    const resumedThread = await resumeThread('thread-1')
+    const currentConfig = await getCurrentModelConfig()
+
+    expect(resumedThread.reasoningEffort).toBe('xhigh')
+    expect(currentConfig.reasoningEffort).toBe('xhigh')
   })
 })
 
