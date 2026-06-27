@@ -1969,6 +1969,33 @@ describe('live turn rendering', () => {
     expect(state.selectedThread.value?.inProgress).toBe(false)
     expect(state.selectedLiveOverlay.value).toBeNull()
   })
+
+  it('exposes selected running state even before the thread is listed', () => {
+    installTestWindow()
+    const notificationHandlers: Array<(notification: RpcNotification) => void> = []
+    gatewayMocks.subscribeCodexNotifications.mockImplementation((handler: (notification: RpcNotification) => void) => {
+      notificationHandlers.push(handler)
+      return vi.fn()
+    })
+
+    const state = useDesktopState()
+    state.primeSelectedThread('thread-a')
+    state.startPolling()
+
+    const emitNotification = notificationHandlers[0]
+    if (!emitNotification) {
+      throw new Error('Notification subscription was not installed')
+    }
+
+    emitNotification(notification('thread/status/changed', {
+      threadId: 'thread-a',
+      status: { type: 'running', turnId: 'turn-1' },
+    }))
+
+    expect(state.selectedThread.value).toBeNull()
+    expect(state.selectedThreadInProgress.value).toBe(true)
+    expect(state.selectedLiveOverlay.value?.activityLabel).toBe('Thinking')
+  })
 })
 
 describe('findAdjacentThreadId', () => {

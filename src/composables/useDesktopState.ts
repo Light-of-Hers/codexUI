@@ -1860,6 +1860,10 @@ export function useDesktopState() {
   const selectedThread = computed(() =>
     allThreads.value.find((thread) => thread.id === selectedThreadId.value) ?? null,
   )
+  const selectedThreadInProgress = computed(() => {
+    const threadId = selectedThreadId.value
+    return Boolean(threadId && inProgressById.value[threadId] === true)
+  })
   const selectedThreadTerminalOpen = computed(() => {
     const threadId = selectedThreadId.value
     return Boolean(threadId && terminalOpenByThreadId.value[threadId] === true)
@@ -7090,6 +7094,7 @@ export function useDesktopState() {
     projectGroups,
     projectDisplayNameById,
     selectedThread,
+    selectedThreadInProgress,
     selectedThreadTokenUsage,
     selectedThreadTerminalOpen,
     isSelectedThreadInterruptPending,

@@ -1227,6 +1227,7 @@ const {
   projectGroups,
   projectDisplayNameById,
   selectedThread,
+  selectedThreadInProgress,
   selectedThreadTokenUsage,
   selectedThreadTerminalOpen,
   selectedThreadServerRequests,
@@ -1585,7 +1586,7 @@ const isTerminalKeyboardLayoutActive = computed(() => (
   (isComposerTerminalOpen.value && isTerminalKeyboardFocusFallbackActive.value)
 ))
 const directoryCwd = computed(() => selectedThread.value?.cwd?.trim() ?? newThreadCwd.value.trim())
-const isSelectedThreadInProgress = computed(() => !isHomeRoute.value && selectedThread.value?.inProgress === true)
+const isSelectedThreadInProgress = computed(() => !isHomeRoute.value && selectedThreadInProgress.value)
 const showThreadContextBadge = computed(() => !isHomeRoute.value && !isSkillsRoute.value && !isAutomationsRoute.value && selectedThreadId.value.trim().length > 0)
 const threadSessionId = computed(() => selectedThreadId.value.trim())
 const showThreadSessionIdRow = computed(() => !isHomeRoute.value && !isSkillsRoute.value && threadSessionId.value.length > 0)

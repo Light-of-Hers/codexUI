@@ -34,13 +34,15 @@ This file tracks manual regression and feature verification steps.
 5. Type a short follow-up while the turn is running and send it with the busy-send mode set to `Steer`.
 6. Confirm the UI remains in the running state after the follow-up is sent.
 7. In a thread that only receives a running `thread/status/changed` notification before a visible `turn/started` notification, confirm the composer stop button, sidebar running indicator, and `Thinking` overlay still appear.
-8. Confirm an interrupted/completed `thread/status/changed` notification clears the running state without waiting for a later full thread refresh.
-9. Repeat the same flow in dark theme.
+8. Open a direct thread route before that thread is visible in the loaded sidebar page, send a prompt, and confirm the composer still switches from send to stop immediately.
+9. Confirm an interrupted/completed `thread/status/changed` notification clears the running state without waiting for a later full thread refresh.
+10. Repeat the same flow in dark theme.
 
 #### Expected Results
 - If `thread/read` briefly lags behind `turn/start`, the UI keeps the thread marked as running instead of reverting to idle.
 - If a later detail refresh discovers an active turn while the local state was idle, the composer stop button, sidebar running indicator, and `Thinking` overlay all appear.
 - If `turn/started` is missed but a running thread status notification arrives, the UI still marks the thread as running and uses the notification turn id for stop/steer.
+- The composer stop button is driven by the selected thread's local running state, so it appears even when the selected session has not yet been merged into the sidebar list.
 - Terminal status notifications such as interrupted, completed, and failed clear the running indicators immediately.
 - The follow-up prompt is sent as a steer message without hiding the active-turn controls.
 - Light and dark theme controls remain readable.
