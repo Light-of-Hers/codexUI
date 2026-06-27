@@ -76,6 +76,91 @@ process.stdin.on('data', (chunk) => {
   await chmod(path, 0o755)
 }
 
+async function writeThreadRoutingCommand(path: string, provider: string, logPath: string, ownsThread: boolean): Promise<void> {
+  await writeFile(path, `#!/usr/bin/env node
+const fs = require('node:fs')
+if (process.argv[2] === '--version') {
+  console.log(${JSON.stringify(`${provider} mock`)})
+  process.exit(0)
+}
+process.stdin.setEncoding('utf8')
+let buffer = ''
+function result(id, payload) {
+  process.stdout.write(JSON.stringify({ id, result: payload }) + '\\n')
+}
+function error(id, message) {
+  process.stdout.write(JSON.stringify({ id, error: { code: -32000, message } }) + '\\n')
+}
+process.stdin.on('data', (chunk) => {
+  buffer += chunk
+  let index = buffer.indexOf('\\n')
+  while (index >= 0) {
+    const line = buffer.slice(0, index).trim()
+    buffer = buffer.slice(index + 1)
+    if (line) {
+      const message = JSON.parse(line)
+      fs.appendFileSync(${JSON.stringify(logPath)}, ${JSON.stringify(provider)} + ':' + message.method + '\\n')
+      if (message.method === 'config/read') {
+        result(message.id, { config: { model_provider: ${JSON.stringify(provider)}, model: 'gpt-5.5-extra-high' } })
+      } else if (message.method === 'thread/read') {
+        if (${JSON.stringify(ownsThread)}) {
+          result(message.id, { thread: { id: 'thread-1', status: { type: 'running' }, turns: [{ id: 'turn-1', status: 'inProgress' }] } })
+        } else {
+          error(message.id, 'thread not found: thread-1')
+        }
+      } else if (message.method === 'turn/interrupt') {
+        if (${JSON.stringify(ownsThread)}) result(message.id, {})
+        else error(message.id, 'thread not found: thread-1')
+      } else {
+        result(message.id, {})
+      }
+    }
+    index = buffer.indexOf('\\n')
+  }
+})
+`, 'utf8')
+  await chmod(path, 0o755)
+}
+
+async function invokeBridgeJson(
+  middleware: ReturnType<typeof createCodexBridgeMiddleware>,
+  url: string,
+  body: unknown,
+): Promise<{ statusCode: number; payload: unknown }> {
+  const responseChunks: string[] = []
+  const response = {
+    statusCode: 0,
+    setHeader: () => undefined,
+    write: (chunk?: unknown) => {
+      if (chunk) responseChunks.push(String(chunk))
+      return true
+    },
+    end: (chunk?: unknown) => {
+      if (chunk) responseChunks.push(String(chunk))
+    },
+    once: () => response,
+  }
+  const request = Readable.from([JSON.stringify(body)]) as Readable & {
+    url: string
+    method: string
+    headers: Record<string, string>
+  }
+  request.url = url
+  request.method = 'POST'
+  request.headers = { 'content-type': 'application/json' }
+
+  await middleware(
+    request as never,
+    response as never,
+    () => { throw new Error('bridge route should handle the request') },
+  )
+
+  return {
+    statusCode: response.statusCode,
+    payload: JSON.parse(responseChunks.join('')),
+  }
+}
+
 async function writeCursorNoRolloutOnResumeCommand(path: string, logPath: string): Promise<void> {
   await writeFile(path, `#!/usr/bin/env node
 const fs = require('node:fs')
@@ -1400,6 +1485,24 @@ describe('thread session skill recovery', () => {
 })
 
 describe('backend queue scheduling', () => {
+  function queuedTurnState(text = 'queued follow-up') {
+    return {
+      'thread-queue-state': {
+        'thread-1': [{
+          id: 'queued-1',
+          text,
+          imageUrls: [],
+          skills: [],
+          fileAttachments: [],
+          collaborationMode: 'default',
+          model: 'gpt-5.5-extra-high',
+          modelProvider: 'rustcat',
+          reasoningEffort: 'xhigh',
+        }],
+      },
+    }
+  }
+
   it('reschedules a pending drain when a run-now request needs an earlier drain', async () => {
     vi.useFakeTimers()
     const processor = new BackendQueueProcessor({
@@ -1420,6 +1523,49 @@ describe('backend queue scheduling', () => {
     expect(processThreadQueue).toHaveBeenCalledTimes(1)
 
     processor.dispose()
+  })
+
+  it('does not drain queued turns while the latest persisted turn has only user input', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-queue-user-only-'))
+    vi.stubEnv('CODEX_HOME', tempDir)
+    await writeFile(join(tempDir, '.codex-global-state.json'), JSON.stringify(queuedTurnState()), 'utf8')
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = []
+    const processor = new BackendQueueProcessor({
+      onNotification: () => () => undefined,
+      async rpc(method: string, params: Record<string, unknown>): Promise<unknown> {
+        calls.push({ method, params })
+        if (method === 'thread/read') {
+          return {
+            thread: {
+              id: 'thread-1',
+              status: { type: 'idle' },
+              turns: [{
+                id: 'turn-1',
+                items: [{
+                  id: 'user-1',
+                  type: 'userMessage',
+                  content: [{ type: 'text', text: 'still being answered' }],
+                }],
+              }],
+            },
+          }
+        }
+        return {}
+      },
+    } as never)
+
+    try {
+      await processor.processThreadQueue('thread-1')
+
+      expect(calls).toEqual([
+        { method: 'thread/read', params: { threadId: 'thread-1', includeTurns: true } },
+      ])
+      const state = JSON.parse(await readFile(join(tempDir, '.codex-global-state.json'), 'utf8')) as Record<string, unknown>
+      expect(state).toEqual(queuedTurnState())
+    } finally {
+      processor.dispose()
+      await rm(tempDir, { recursive: true, force: true })
+    }
   })
 
   it('detects interrupted idle turns that were not intentionally stopped', () => {
@@ -2286,6 +2432,60 @@ describe('app-server runtime configuration', () => {
       expect(response.statusCode).toBe(200)
       expect(JSON.parse(responseChunks.join(''))).toEqual({ result: {} })
       expect(await readFile(commandLogPath, 'utf8')).toContain('cursor:turn/interrupt\n')
+    } finally {
+      middleware.dispose()
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('retries unqualified turn interrupts on a runtime that previously read the thread', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-provider-interrupt-fallback-'))
+    const commandLogPath = join(tempDir, 'commands.log')
+    const cursorCommand = join(tempDir, 'codex-cursor')
+    const moonCommand = join(tempDir, 'codex-moon')
+    await writeThreadRoutingCommand(cursorCommand, 'cursor', commandLogPath, true)
+    await writeThreadRoutingCommand(moonCommand, 'moon', commandLogPath, false)
+    await writeFile(join(tempDir, 'webui-free-mode.json'), JSON.stringify({
+      enabled: true,
+      apiKey: null,
+      model: 'gpt-5.5-extra-high',
+      provider: 'cursor',
+    }), 'utf8')
+    vi.stubEnv('CODEX_HOME', tempDir)
+    vi.stubEnv('CODEXUI_CODEX_COMMAND', cursorCommand)
+    vi.stubEnv('CODEXUI_CODEX_CURSOR_COMMAND', cursorCommand)
+    vi.stubEnv('CODEXUI_CODEX_MOON_COMMAND', moonCommand)
+
+    const middleware = createCodexBridgeMiddleware()
+
+    try {
+      const cursorProviderResponse = await invokeBridgeJson(middleware, '/codex-api/free-mode/custom-provider', {
+        provider: 'cursor',
+      })
+      expect(cursorProviderResponse.statusCode, JSON.stringify(cursorProviderResponse.payload)).toBe(200)
+
+      const readResponse = await invokeBridgeJson(middleware, '/codex-api/rpc', {
+        method: 'thread/read',
+        params: { threadId: 'thread-1', includeTurns: true },
+      })
+      expect(readResponse.statusCode, JSON.stringify(readResponse.payload)).toBe(200)
+
+      const providerResponse = await invokeBridgeJson(middleware, '/codex-api/free-mode/custom-provider', {
+        provider: 'moon',
+      })
+      expect(providerResponse.statusCode, JSON.stringify(providerResponse.payload)).toBe(200)
+
+      const interruptResponse = await invokeBridgeJson(middleware, '/codex-api/rpc', {
+        method: 'turn/interrupt',
+        params: { threadId: 'thread-1', turnId: 'turn-1' },
+      })
+
+      expect(interruptResponse.statusCode).toBe(200)
+      expect(interruptResponse.payload).toEqual({ result: {} })
+      const log = await readFile(commandLogPath, 'utf8')
+      expect(log).toContain('cursor:thread/read\n')
+      expect(log).toContain('moon:turn/interrupt\n')
+      expect(log).toContain('cursor:turn/interrupt\n')
     } finally {
       middleware.dispose()
       await rm(tempDir, { recursive: true, force: true })

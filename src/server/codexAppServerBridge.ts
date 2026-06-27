@@ -1299,6 +1299,15 @@ function isNoRolloutFoundError(error: unknown): boolean {
   return getErrorMessage(error, '').toLowerCase().includes('no rollout found')
 }
 
+function isThreadNotFoundError(error: unknown): boolean {
+  const message = getErrorMessage(error, '').toLowerCase()
+  return message.includes('thread not found') || message.includes('thread not found:')
+}
+
+function isTurnRuntimeRetryMethod(method: string): boolean {
+  return method === 'turn/steer' || method === 'turn/interrupt'
+}
+
 const warnedCodexAuthReadFailures = new Set<string>()
 
 function getErrorCode(error: unknown): string | null {
@@ -1831,6 +1840,24 @@ export async function rewriteOpenAiThreadModelProvider(
 
 function readProtocolToken(value: unknown): string {
   return readNonEmptyString(value).trim().toLowerCase()
+}
+
+function isRunningProtocolToken(value: string): boolean {
+  return value === 'inprogress' || value === 'in_progress' || value === 'running' || value === 'active'
+}
+
+function isTerminalProtocolToken(value: string): boolean {
+  return value === 'completed' || value === 'failed' || value === 'cancelled' || value === 'canceled'
+}
+
+function turnHasAssistantResult(turn: Record<string, unknown> | null): boolean {
+  const items = Array.isArray(turn?.items) ? turn.items : []
+  return items.some((item) => {
+    const itemRecord = asRecord(item)
+    const type = readProtocolToken(itemRecord?.type)
+    if (isRunningProtocolToken(readProtocolToken(itemRecord?.status))) return false
+    return type.length > 0 && type !== 'usermessage' && type !== 'reasoning'
+  })
 }
 
 type InterruptedTurnAutoContinueSnapshot = {
@@ -6696,11 +6723,20 @@ export class BackendQueueProcessor {
     if (!thread) return false
 
     const status = asRecord(thread.status)
-    const statusType = readNonEmptyString(status?.type)
-    if (statusType === 'inProgress' || statusType === 'running' || statusType === 'active') return false
+    const statusType = readProtocolToken(status?.type)
+    if (isRunningProtocolToken(statusType)) return false
 
     const turns = Array.isArray(thread.turns) ? thread.turns : []
-    return !turns.some((turn) => readNonEmptyString(asRecord(turn)?.status) === 'inProgress')
+    if (turns.some((turn) => isRunningProtocolToken(readProtocolToken(asRecord(turn)?.status)))) return false
+
+    const latestTurn = asRecord(turns.at(-1))
+    if (!latestTurn) return true
+
+    const latestStatus = readProtocolToken(latestTurn.status)
+    if (latestStatus === 'interrupted') return false
+    if (isTerminalProtocolToken(latestStatus)) return true
+
+    return turnHasAssistantResult(latestTurn)
   }
 
   private async popNextQueuedTurn(threadId: string): Promise<BackendQueuedTurn | null> {
@@ -6998,6 +7034,18 @@ class AppServerRuntimePool {
 
   getActiveRuntime(): AppServerRuntime {
     return this.getOrCreateRuntime(this.activeState)
+  }
+
+  findRuntimeWithThreadSnapshot(threadId: string, excludedRuntime?: AppServerRuntime): AppServerRuntime | null {
+    const normalizedThreadId = threadId.trim()
+    if (!normalizedThreadId) return null
+    for (const runtime of this.runtimesBySignature.values()) {
+      if (runtime === excludedRuntime) continue
+      if (runtime.appServer.getLastThreadReadSnapshot(normalizedThreadId)) {
+        return runtime
+      }
+    }
+    return null
   }
 
   getActiveAppServer(): AppServerProcess {
@@ -8061,7 +8109,8 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 	        }
 
         const rpcRuntime = getRpcRuntime(body.method, body.params ?? null)
-        const rpcAppServer = rpcRuntime.appServer
+        let effectiveRpcRuntime = rpcRuntime
+        let effectiveRpcAppServer = rpcRuntime.appServer
 
         if (body.method === 'turn/interrupt') {
           const paramsRecord = asRecord(body.params)
@@ -8074,13 +8123,31 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           }).catch(() => {})
         }
 
-        const rewrittenRpcParams = await rewriteOpenAiThreadModelProvider(rpcAppServer, body.method, body.params ?? null)
+        const rewrittenRpcParams = await rewriteOpenAiThreadModelProvider(effectiveRpcAppServer, body.method, body.params ?? null)
         const rpcParams = persistTurnStartModelProviderInCollaborationMode(body.method, rewrittenRpcParams)
         let rpcResult: unknown
         try {
-          await ensureTurnStartRuntimeThreadState(rpcAppServer, body.method, rpcParams)
-          rpcResult = await callRpcWithArchiveRecovery(rpcAppServer, body.method, rpcParams)
+          await ensureTurnStartRuntimeThreadState(effectiveRpcAppServer, body.method, rpcParams)
+          rpcResult = await callRpcWithArchiveRecovery(effectiveRpcAppServer, body.method, rpcParams)
         } catch (error) {
+          const paramsRecord = asRecord(rpcParams)
+          const threadId = readNonEmptyString(paramsRecord?.threadId)
+          const fallbackRuntime = isTurnRuntimeRetryMethod(body.method) && isThreadNotFoundError(error)
+            ? runtimePool.findRuntimeWithThreadSnapshot(threadId, effectiveRpcRuntime)
+            : null
+          if (fallbackRuntime) {
+            effectiveRpcRuntime = fallbackRuntime
+            effectiveRpcAppServer = fallbackRuntime.appServer
+            if (body.method === 'turn/interrupt') {
+              const turnId = readNonEmptyString(paramsRecord?.turnId)
+              fallbackRuntime.backendQueueProcessor.recordIntentionalInterrupt(threadId, turnId)
+            }
+            writeDebugLog('rpc-turn-runtime-fallback', 'Retrying turn RPC on runtime that has the thread snapshot', {
+              method: body.method,
+              threadId,
+            }).catch(() => {})
+            rpcResult = await callRpcWithArchiveRecovery(effectiveRpcAppServer, body.method, rpcParams)
+          } else {
 	          if (body.method === 'account/rateLimits/read' && isUnauthenticatedRateLimitError(error)) {
 	            setJson(res, 200, { result: null })
 	            return
@@ -8088,16 +8155,17 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 	          if (body.method === 'thread/read' && isEmptyThreadReadError(error)) {
 	            const params = asRecord(body.params)
 	            const threadId = typeof params?.threadId === 'string' ? params.threadId.trim() : ''
-	            const snapshot = threadId ? rpcAppServer.getLastThreadReadSnapshot(threadId) : null
+	            const snapshot = threadId ? effectiveRpcAppServer.getLastThreadReadSnapshot(threadId) : null
 	            if (snapshot) {
 	              setJson(res, 200, { result: await mergeSessionModelStateIntoThreadResult(snapshot) })
 	              return
 	            }
 	          }
 	          throw error
+          }
 	        }
         const recoveredResult = THREAD_METHODS_WITH_TURNS.has(body.method)
-          ? await mergeRecoveredTurnItemsIntoThreadResultFromSession(rpcAppServer, rpcResult)
+          ? await mergeRecoveredTurnItemsIntoThreadResultFromSession(effectiveRpcAppServer, rpcResult)
           : rpcResult
         const trimmedResult = trimThreadTurnsInRpcResult(body.method, recoveredResult)
         const sanitizedResult = await sanitizeThreadTurnsInlinePayloads(body.method, trimmedResult)
@@ -8113,11 +8181,11 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         }
 
 	        if (THREAD_METHODS_WITH_THREAD_SNAPSHOT.has(body.method)) {
-	          const rpcRecord = asRecord(result)
-	          const rpcThread = asRecord(rpcRecord?.thread)
-	          const rpcThreadId = typeof rpcThread?.id === 'string' ? rpcThread.id : ''
+          const rpcRecord = asRecord(result)
+          const rpcThread = asRecord(rpcRecord?.thread)
+          const rpcThreadId = typeof rpcThread?.id === 'string' ? rpcThread.id : ''
           if (rpcThreadId) {
-            rpcAppServer.storeThreadReadSnapshot(rpcThreadId, result)
+            effectiveRpcAppServer.storeThreadReadSnapshot(rpcThreadId, result)
           }
         }
 

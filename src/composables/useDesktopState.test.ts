@@ -1672,6 +1672,52 @@ describe('session composer model state', () => {
   })
 })
 
+describe('queued messages', () => {
+  function queuedMessage(text: string) {
+    return {
+      id: 'q-1',
+      text,
+      imageUrls: [],
+      skills: [],
+      fileAttachments: [],
+      collaborationMode: 'default' as const,
+      model: 'gpt-5.5-extra-high',
+      modelProvider: 'rustcat',
+      reasoningEffort: 'xhigh' as const,
+    }
+  }
+
+  it('refreshes persisted queue state when switching back to a thread', async () => {
+    installTestWindow({
+      'codex-web-local.selected-thread-id.v1': 'thread-a',
+    })
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({
+      groups: [{
+        projectName: 'project',
+        threads: [
+          thread('thread-a', '/tmp/project'),
+          thread('thread-b', '/tmp/project'),
+        ],
+      }],
+      nextCursor: null,
+    })
+    gatewayMocks.getThreadQueueState
+      .mockResolvedValueOnce({ 'thread-a': [queuedMessage('queued while running')] })
+      .mockResolvedValueOnce({ 'thread-a': [queuedMessage('queued while running')] })
+      .mockResolvedValueOnce({})
+
+    const state = useDesktopState()
+    await state.refreshAll({ includeSelectedThreadMessages: false, refreshAncillary: false })
+    expect(state.selectedThreadQueuedMessages.value).toHaveLength(1)
+
+    await state.selectThread('thread-b')
+    expect(state.selectedThreadQueuedMessages.value).toHaveLength(0)
+
+    await state.selectThread('thread-a')
+    expect(state.selectedThreadQueuedMessages.value).toHaveLength(0)
+  })
+})
+
 describe('active turn state reconciliation', () => {
   async function flushAsyncTasks(times = 6): Promise<void> {
     for (let index = 0; index < times; index += 1) {

@@ -5853,7 +5853,10 @@ export function useDesktopState() {
     setSelectedThreadId(threadId)
 
     try {
-      await loadMessages(threadId)
+      await Promise.all([
+        loadMessages(threadId),
+        threadId ? processQueuedMessages(threadId) : Promise.resolve(),
+      ])
       void refreshSkills()
     } catch (unknownError) {
       error.value = unknownError instanceof Error ? unknownError.message : 'Unknown application error'
