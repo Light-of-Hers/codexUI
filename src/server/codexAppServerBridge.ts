@@ -4763,6 +4763,7 @@ async function writePinnedThreadIds(threadIds: string[]): Promise<void> {
 const FIRST_LAUNCH_PLUGINS_CARD_DISMISSED_KEY = 'first-launch-plugins-card-dismissed'
 const THREAD_QUEUE_STATE_KEY = 'thread-queue-state'
 const INTENTIONAL_INTERRUPT_TURN_IDS_KEY = 'intentional-interrupt-turn-ids'
+const INTENTIONAL_INTERRUPT_THREAD_IDS_KEY = 'intentional-interrupt-thread-ids'
 const MAX_INTENTIONAL_INTERRUPT_TURN_IDS = 500
 
 type StoredQueuedMessage = {
@@ -4892,9 +4893,21 @@ async function readIntentionalInterruptTurnIds(): Promise<Set<string>> {
   }
 }
 
-async function rememberIntentionalInterruptTurnId(turnId: string): Promise<void> {
+async function readIntentionalInterruptThreadIds(): Promise<Set<string>> {
+  const statePath = getCodexGlobalStatePath()
+  try {
+    const raw = await readFile(statePath, 'utf8')
+    const payload = asRecord(JSON.parse(raw)) ?? {}
+    return new Set(normalizeIntentionalInterruptTurnIds(payload[INTENTIONAL_INTERRUPT_THREAD_IDS_KEY]))
+  } catch {
+    return new Set()
+  }
+}
+
+async function rememberIntentionalInterrupt(threadId: string, turnId: string): Promise<void> {
+  const normalizedThreadId = threadId.trim()
   const normalizedTurnId = turnId.trim()
-  if (!normalizedTurnId) return
+  if (!normalizedThreadId || !normalizedTurnId) return
 
   const statePath = getCodexGlobalStatePath()
   let payload: Record<string, unknown> = {}
@@ -4909,6 +4922,34 @@ async function rememberIntentionalInterruptTurnId(turnId: string): Promise<void>
   const nextIds = ids.filter((id) => id !== normalizedTurnId)
   nextIds.push(normalizedTurnId)
   payload[INTENTIONAL_INTERRUPT_TURN_IDS_KEY] = nextIds.slice(-MAX_INTENTIONAL_INTERRUPT_TURN_IDS)
+
+  const threadIds = normalizeIntentionalInterruptTurnIds(payload[INTENTIONAL_INTERRUPT_THREAD_IDS_KEY])
+  const nextThreadIds = threadIds.filter((id) => id !== normalizedThreadId)
+  nextThreadIds.push(normalizedThreadId)
+  payload[INTENTIONAL_INTERRUPT_THREAD_IDS_KEY] = nextThreadIds.slice(-MAX_INTENTIONAL_INTERRUPT_TURN_IDS)
+  await writeFile(statePath, JSON.stringify(payload), 'utf8')
+}
+
+async function forgetIntentionalInterruptThreadId(threadId: string): Promise<void> {
+  const normalizedThreadId = threadId.trim()
+  if (!normalizedThreadId) return
+
+  const statePath = getCodexGlobalStatePath()
+  let payload: Record<string, unknown> = {}
+  try {
+    const raw = await readFile(statePath, 'utf8')
+    payload = asRecord(JSON.parse(raw)) ?? {}
+  } catch {
+    payload = {}
+  }
+
+  const threadIds = normalizeIntentionalInterruptTurnIds(payload[INTENTIONAL_INTERRUPT_THREAD_IDS_KEY])
+  const nextThreadIds = threadIds.filter((id) => id !== normalizedThreadId)
+  if (nextThreadIds.length > 0) {
+    payload[INTENTIONAL_INTERRUPT_THREAD_IDS_KEY] = nextThreadIds
+  } else {
+    delete payload[INTENTIONAL_INTERRUPT_THREAD_IDS_KEY]
+  }
   await writeFile(statePath, JSON.stringify(payload), 'utf8')
 }
 
@@ -6371,6 +6412,7 @@ export class BackendQueueProcessor {
   private readonly queueDrainTimersByThreadId = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly interruptedTurnCheckTimersByThreadId = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly intentionalInterruptTurnIds = new Set<string>()
+  private readonly intentionalInterruptThreadIds = new Set<string>()
   private readonly autoContinueInFlightThreadIds = new Set<string>()
   private readonly autoContinuedInterruptedTurnIds = new Set<string>()
   private readonly queueDrainDueAtByThreadId = new Map<string, number>()
@@ -6378,7 +6420,7 @@ export class BackendQueueProcessor {
   private readonly cursorContextAutoCompactedTurnIds = new Set<string>()
   private readonly cursorContextAutoCompactCooldownUntilByThreadId = new Map<string, number>()
   private readonly unsubscribe: () => void
-  private intentionalInterruptTurnIdsReady: Promise<void> = Promise.resolve()
+  private intentionalInterruptStateReady: Promise<void> = Promise.resolve()
 
   constructor(
     private readonly appServer: AppServerProcess,
@@ -6398,7 +6440,7 @@ export class BackendQueueProcessor {
         }
       }
     })
-    this.intentionalInterruptTurnIdsReady = this.loadIntentionalInterruptTurnIds()
+    this.intentionalInterruptStateReady = this.loadIntentionalInterruptState()
     void this.scheduleAllQueuedThreads(1000)
   }
 
@@ -6415,6 +6457,7 @@ export class BackendQueueProcessor {
     this.interruptedTurnCheckTimersByThreadId.clear()
     this.processingThreadIds.clear()
     this.intentionalInterruptTurnIds.clear()
+    this.intentionalInterruptThreadIds.clear()
     this.autoContinueInFlightThreadIds.clear()
     this.autoContinuedInterruptedTurnIds.clear()
     this.cursorContextAutoCompactInFlightThreadIds.clear()
@@ -6427,7 +6470,15 @@ export class BackendQueueProcessor {
     const normalizedTurnId = turnId.trim()
     if (!normalizedThreadId || !normalizedTurnId) return
     this.intentionalInterruptTurnIds.add(normalizedTurnId)
-    rememberIntentionalInterruptTurnId(normalizedTurnId).catch(() => {})
+    this.intentionalInterruptThreadIds.add(normalizedThreadId)
+    rememberIntentionalInterrupt(normalizedThreadId, normalizedTurnId).catch(() => {})
+  }
+
+  clearIntentionalInterruptForThread(threadId: string): void {
+    const normalizedThreadId = threadId.trim()
+    if (!normalizedThreadId) return
+    this.intentionalInterruptThreadIds.delete(normalizedThreadId)
+    forgetIntentionalInterruptThreadId(normalizedThreadId).catch(() => {})
   }
 
   async scheduleAllQueuedThreads(delayMs = 0): Promise<void> {
@@ -6554,11 +6605,17 @@ export class BackendQueueProcessor {
     }
   }
 
-  private async loadIntentionalInterruptTurnIds(): Promise<void> {
+  private async loadIntentionalInterruptState(): Promise<void> {
     try {
-      const ids = await readIntentionalInterruptTurnIds()
-      for (const id of ids) {
+      const [turnIds, threadIds] = await Promise.all([
+        readIntentionalInterruptTurnIds(),
+        readIntentionalInterruptThreadIds(),
+      ])
+      for (const id of turnIds) {
         this.intentionalInterruptTurnIds.add(id)
+      }
+      for (const id of threadIds) {
+        this.intentionalInterruptThreadIds.add(id)
       }
     } catch {
       // Intentional stop recovery is best-effort; live turn/interrupt RPCs still mark stops.
@@ -6574,7 +6631,8 @@ export class BackendQueueProcessor {
     const normalizedCompletedTurnId = completedTurnId.trim()
     if (!normalizedThreadId) return false
     if (this.autoContinueInFlightThreadIds.has(normalizedThreadId)) return false
-    await this.intentionalInterruptTurnIdsReady
+    await this.intentionalInterruptStateReady
+    if (this.intentionalInterruptThreadIds.has(normalizedThreadId)) return false
 
     let response: unknown = null
     try {
@@ -7046,6 +7104,23 @@ class AppServerRuntimePool {
       }
     }
     return null
+  }
+
+  recordIntentionalInterrupt(threadId: string, turnId: string): void {
+    const normalizedThreadId = threadId.trim()
+    const normalizedTurnId = turnId.trim()
+    if (!normalizedThreadId || !normalizedTurnId) return
+    for (const runtime of this.runtimesBySignature.values()) {
+      runtime.backendQueueProcessor.recordIntentionalInterrupt(normalizedThreadId, normalizedTurnId)
+    }
+  }
+
+  clearIntentionalInterruptForThread(threadId: string): void {
+    const normalizedThreadId = threadId.trim()
+    if (!normalizedThreadId) return
+    for (const runtime of this.runtimesBySignature.values()) {
+      runtime.backendQueueProcessor.clearIntentionalInterruptForThread(normalizedThreadId)
+    }
   }
 
   getActiveAppServer(): AppServerProcess {
@@ -8116,11 +8191,16 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           const paramsRecord = asRecord(body.params)
           const threadId = readNonEmptyString(paramsRecord?.threadId)
           const turnId = readNonEmptyString(paramsRecord?.turnId)
-          rpcRuntime.backendQueueProcessor.recordIntentionalInterrupt(threadId, turnId)
+          runtimePool.recordIntentionalInterrupt(threadId, turnId)
           writeDebugLog('rpc-turn-interrupt', 'RPC turn/interrupt received', {
             threadId,
             turnId,
           }).catch(() => {})
+        }
+        if (body.method === 'turn/start') {
+          const paramsRecord = asRecord(body.params)
+          const threadId = readNonEmptyString(paramsRecord?.threadId)
+          runtimePool.clearIntentionalInterruptForThread(threadId)
         }
 
         const rewrittenRpcParams = await rewriteOpenAiThreadModelProvider(effectiveRpcAppServer, body.method, body.params ?? null)
@@ -8138,10 +8218,6 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           if (fallbackRuntime) {
             effectiveRpcRuntime = fallbackRuntime
             effectiveRpcAppServer = fallbackRuntime.appServer
-            if (body.method === 'turn/interrupt') {
-              const turnId = readNonEmptyString(paramsRecord?.turnId)
-              fallbackRuntime.backendQueueProcessor.recordIntentionalInterrupt(threadId, turnId)
-            }
             writeDebugLog('rpc-turn-runtime-fallback', 'Retrying turn RPC on runtime that has the thread snapshot', {
               method: body.method,
               threadId,

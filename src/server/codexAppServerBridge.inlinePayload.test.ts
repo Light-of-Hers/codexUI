@@ -1971,8 +1971,106 @@ describe('backend queue scheduling', () => {
     processor.recordIntentionalInterrupt('thread-1', 'turn-1')
     await vi.advanceTimersByTimeAsync(250)
 
+    expect(calls).toEqual([])
+
+    processor.dispose()
+  })
+
+  it('does not auto-continue an explicitly stopped thread even when the interrupted turn id differs', async () => {
+    vi.useFakeTimers()
+    vi.stubEnv('CODEX_HOME', `/tmp/codexui-auto-continue-stop-thread-${String(Date.now())}`)
+    const listeners: Array<(value: { method: string; params: unknown }) => void> = []
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = []
+    const processor = new BackendQueueProcessor({
+      onNotification(listener: (value: { method: string; params: unknown }) => void) {
+        listeners.push(listener)
+        return () => undefined
+      },
+      async rpc(method: string, params: Record<string, unknown>): Promise<unknown> {
+        calls.push({ method, params })
+        if (method === 'thread/read') {
+          return {
+            thread: {
+              id: 'thread-1',
+              status: { type: 'idle' },
+              turns: [{ id: 'turn-current', status: 'interrupted' }],
+            },
+          }
+        }
+        if (method === 'thread/resume') {
+          return { model: 'deepseek-v4-pro' }
+        }
+        return {}
+      },
+    } as never)
+
+    listeners[0]?.({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-1',
+        turn: { id: 'turn-current', status: 'interrupted' },
+      },
+    })
+
+    processor.recordIntentionalInterrupt('thread-1', 'turn-stale')
+    await vi.advanceTimersByTimeAsync(250)
+
+    expect(calls).toEqual([])
+
+    processor.dispose()
+  })
+
+  it('auto-continues interrupted turns again after an explicit stop is cleared', async () => {
+    vi.useFakeTimers()
+    vi.stubEnv('CODEX_HOME', `/tmp/codexui-auto-continue-stop-clear-${String(Date.now())}`)
+    const listeners: Array<(value: { method: string; params: unknown }) => void> = []
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = []
+    const processor = new BackendQueueProcessor({
+      onNotification(listener: (value: { method: string; params: unknown }) => void) {
+        listeners.push(listener)
+        return () => undefined
+      },
+      async rpc(method: string, params: Record<string, unknown>): Promise<unknown> {
+        calls.push({ method, params })
+        if (method === 'thread/read') {
+          return {
+            thread: {
+              id: 'thread-1',
+              status: { type: 'idle' },
+              turns: [{ id: 'turn-current', status: 'interrupted' }],
+            },
+          }
+        }
+        if (method === 'thread/resume') {
+          return { model: 'deepseek-v4-pro' }
+        }
+        return {}
+      },
+    } as never)
+
+    processor.recordIntentionalInterrupt('thread-1', 'turn-stale')
+    processor.clearIntentionalInterruptForThread('thread-1')
+    listeners[0]?.({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-1',
+        turn: { id: 'turn-current', status: 'interrupted' },
+      },
+    })
+
+    await vi.advanceTimersByTimeAsync(250)
+
     expect(calls).toEqual([
       { method: 'thread/read', params: { threadId: 'thread-1', includeTurns: true } },
+      { method: 'thread/resume', params: { threadId: 'thread-1', persistExtendedHistory: true } },
+      {
+        method: 'turn/start',
+        params: {
+          threadId: 'thread-1',
+          input: [{ type: 'text', text: 'Please continue.' }],
+          model: 'deepseek-v4-pro',
+        },
+      },
     ])
 
     processor.dispose()
