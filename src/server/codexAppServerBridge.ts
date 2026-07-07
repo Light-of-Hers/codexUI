@@ -8651,6 +8651,31 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         return
       }
 
+      if (req.method === 'GET' && url.pathname === '/codex-api/thread-message-history') {
+        try {
+          const threadId = url.searchParams.get('threadId')?.trim() ?? ''
+          if (!threadId) {
+            setJson(res, 400, { error: 'Missing threadId' })
+            return
+          }
+
+          const threadReadResult = await appServer.readThreadForTurnPage(threadId)
+          const recoveredThreadReadResult = await mergeRecoveredTurnItemsIntoThreadResultFromSession(appServer, threadReadResult)
+          const enrichedThreadReadResult = await mergeSessionModelStateIntoThreadResult(recoveredThreadReadResult)
+          const sanitized = await sanitizeThreadTurnsInlinePayloads('thread/read', enrichedThreadReadResult)
+          const result = await mergeSessionSkillInputsIntoThreadResult(sanitized)
+
+          setJson(res, 200, {
+            result,
+            startTurnIndex: 0,
+            hasMoreOlder: false,
+          })
+        } catch (error) {
+          setJson(res, 500, { error: getErrorMessage(error, 'Failed to load thread message history') })
+        }
+        return
+      }
+
       if (req.method === 'GET' && url.pathname === '/codex-api/thread-file-change-fallback') {
         const threadId = url.searchParams.get('threadId')?.trim() ?? ''
         if (!threadId) {

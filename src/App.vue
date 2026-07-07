@@ -900,12 +900,15 @@
               <template v-else>
                 <div class="content-thread">
                   <ThreadConversation ref="threadConversationRef" :messages="filteredMessages" :is-loading="isLoadingMessages"
+                    :message-navigation-messages="filteredMessageNavigationMessages"
+                    :is-message-navigation-loading="isLoadingMessageNavigation"
                     :active-thread-id="composerThreadContextId" :cwd="composerCwd"
                     :live-overlay="liveOverlay"
                     :pending-requests="selectedThreadServerRequests"
                     :has-more-persisted-above="hasMoreOlderMessages"
                     :is-loading-persisted-above="isLoadingOlderMessages"
                     :load-earlier-messages="loadOlderMessages"
+                    :ensure-message-loaded="ensureMessageLoaded"
                     @fork-thread="onForkThreadFromMessage"
                     @rollback="onRollback"
                     @implement-plan="onImplementPlan"
@@ -1312,10 +1315,12 @@ const {
   installedSkills,
   accountRateLimitSnapshots,
   messages,
+  messageNavigationMessages,
   hasMoreOlderMessages,
   isLoadingThreads,
   isThreadListFullyLoaded,
   isLoadingMessages,
+  isLoadingMessageNavigation,
   isLoadingOlderMessages,
   isSendingMessage,
   isInterruptingTurn,
@@ -1327,6 +1332,7 @@ const {
   selectThread,
   loadMessages,
   ensureThreadMessagesLoaded,
+  ensureMessageLoaded,
   loadOlderMessages,
   loadThreadMessageWindow,
   setThreadTerminalOpen,
@@ -1600,7 +1606,6 @@ const filteredMessages = computed(() =>
     return true
   }),
 )
-
 const THREAD_SEARCH_DEBOUNCE_MS = 180
 const THREAD_SEARCH_LIMIT = 100
 const isThreadSearchOpen = ref(false)
@@ -1785,6 +1790,14 @@ function onThreadSearchKeydown(event: KeyboardEvent): void {
   void moveThreadSearchResult(event.shiftKey ? -1 : 1)
 }
 
+const filteredMessageNavigationMessages = computed(() =>
+  messageNavigationMessages.value.filter((message) => {
+    const type = normalizeMessageType(message.messageType, message.role)
+    if (type === 'worked') return true
+    if (type === 'turnActivity.live' || type === 'turnError.live' || type === 'agentReasoning.live') return false
+    return true
+  }),
+)
 const latestUserTurnId = computed(() => {
   for (let index = messages.value.length - 1; index >= 0; index -= 1) {
     const message = messages.value[index]

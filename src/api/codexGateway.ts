@@ -1032,6 +1032,35 @@ export async function getThreadTurnWindow(threadId: string, centerTurnId: string
   }
 }
 
+export async function getFullThreadMessages(threadId: string): Promise<ThreadTurnPage> {
+  try {
+    const params = new URLSearchParams({ threadId })
+    const response = await fetch(`/codex-api/thread-message-history?${params.toString()}`)
+    if (!response.ok) {
+      throw new Error(`Thread history request failed with ${response.status}`)
+    }
+    const payload = await response.json() as {
+      result?: ThreadReadResponse
+      hasMoreOlder?: unknown
+      startTurnIndex?: unknown
+    }
+    if (!payload.result) {
+      throw new Error('Thread history response did not include a thread result')
+    }
+    const startTurnIndex = Math.max(0, Math.floor(typeof payload.startTurnIndex === 'number' ? payload.startTurnIndex : 0))
+    return {
+      messages: normalizeThreadMessagesV2(payload.result, startTurnIndex),
+      inProgress: readThreadInProgressFromResponse(payload.result),
+      activeTurnId: readActiveTurnIdFromResponse(payload.result),
+      hasMoreOlder: payload.hasMoreOlder === true,
+      startTurnIndex,
+      turnIndexByTurnId: buildTurnIndexByTurnId(payload.result, startTurnIndex),
+    }
+  } catch (error) {
+    throw normalizeCodexApiError(error, `Failed to load complete message history for thread ${threadId}`, 'thread/read')
+  }
+}
+
 function normalizeReviewLine(value: unknown): UiReviewLine | null {
   const record = asRecord(value)
   if (!record) return null

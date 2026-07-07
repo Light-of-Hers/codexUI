@@ -14,6 +14,7 @@ import {
   getMoonBridgeModelMetadata,
   getSkillsList,
   getThreadDetail,
+  getFullThreadMessages,
   getOlderThreadMessages,
   getThreadTurnWindow,
   getBackgroundThreadListLimit,
@@ -1718,6 +1719,9 @@ export function useDesktopState() {
   const sourceGroups = ref<UiProjectGroup[]>([])
   const selectedThreadId = ref(loadSelectedThreadId())
   const persistedMessagesByThreadId = ref<Record<string, UiMessage[]>>({})
+  const fullHistoryMessagesByThreadId = ref<Record<string, UiMessage[]>>({})
+  const loadedFullHistoryByThreadId = ref<Record<string, boolean>>({})
+  const loadingFullHistoryByThreadId = ref<Record<string, boolean>>({})
   const livePlanMessagesByThreadId = ref<Record<string, UiMessage[]>>({})
   const liveAgentMessagesByThreadId = ref<Record<string, UiMessage[]>>({})
   const liveReasoningTextByThreadId = ref<Record<string, string>>({})
@@ -1855,6 +1859,7 @@ export function useDesktopState() {
   const delayedTurnSyncTimerByThreadId = new Map<string, number>()
   let loadThreadsPromise: Promise<void> | null = null
   const loadMessagePromiseByThreadId = new Map<string, Promise<void>>()
+  const loadFullHistoryPromiseByThreadId = new Map<string, Promise<void>>()
   let refreshSkillsPromise: Promise<void> | null = null
   let rateLimitRefreshPromise: Promise<void> | null = null
   let pendingThreadsRefresh = false
@@ -1966,9 +1971,28 @@ export function useDesktopState() {
     if (!summary) return combined
     return insertTurnSummaryMessage(combined, summary)
   })
+  const messageNavigationMessages = computed<UiMessage[]>(() => {
+    const threadId = selectedThreadId.value
+    if (!threadId) return []
+
+    const fullHistory = fullHistoryMessagesByThreadId.value[threadId]
+    if (loadedFullHistoryByThreadId.value[threadId] === true && Array.isArray(fullHistory)) {
+      return fullHistory
+    }
+
+    if (hasMoreOlderMessagesByThreadId.value[threadId] === true) {
+      return []
+    }
+
+    return messages.value
+  })
   const hasMoreOlderMessages = computed(() => {
     const threadId = selectedThreadId.value
     return threadId ? hasMoreOlderMessagesByThreadId.value[threadId] === true : false
+  })
+  const isLoadingMessageNavigation = computed(() => {
+    const threadId = selectedThreadId.value
+    return threadId ? loadingFullHistoryByThreadId.value[threadId] === true : false
   })
   const isLoadingOlderMessages = computed(() => {
     const threadId = selectedThreadId.value
@@ -2414,6 +2438,7 @@ export function useDesktopState() {
       // Remove the failed user turn before replaying on fallback model to avoid duplicated user messages.
       try {
         const rolledBackMessages = await rollbackThread(threadId, 1)
+        invalidateFullHistoryForThread(threadId)
         setPersistedMessagesForThread(threadId, rolledBackMessages)
         clearLivePlansForThread(threadId)
         setLiveAgentMessagesForThread(threadId, [])
@@ -3008,6 +3033,9 @@ export function useDesktopState() {
     resumedThreadProviderIdByThreadId.value = pruneThreadStateMap(resumedThreadProviderIdByThreadId.value, activeThreadIds)
     turnIndexByTurnIdByThreadId.value = pruneThreadStateMap(turnIndexByTurnIdByThreadId.value, activeThreadIds)
     persistedMessagesByThreadId.value = pruneThreadStateMap(persistedMessagesByThreadId.value, activeThreadIds)
+    fullHistoryMessagesByThreadId.value = pruneThreadStateMap(fullHistoryMessagesByThreadId.value, activeThreadIds)
+    loadedFullHistoryByThreadId.value = pruneThreadStateMap(loadedFullHistoryByThreadId.value, activeThreadIds)
+    loadingFullHistoryByThreadId.value = pruneThreadStateMap(loadingFullHistoryByThreadId.value, activeThreadIds)
     liveAgentMessagesByThreadId.value = pruneThreadStateMap(liveAgentMessagesByThreadId.value, activeThreadIds)
     liveReasoningTextByThreadId.value = pruneThreadStateMap(liveReasoningTextByThreadId.value, activeThreadIds)
     liveCommandsByThreadId.value = pruneThreadStateMap(liveCommandsByThreadId.value, activeThreadIds)
@@ -3378,6 +3406,41 @@ export function useDesktopState() {
     setThreadTerminalOpen(threadId, !selectedThreadTerminalOpen.value)
   }
 
+  function setFullHistoryMessagesForThread(threadId: string, nextMessages: UiMessage[]): void {
+    if (!threadId) return
+    const previous = fullHistoryMessagesByThreadId.value[threadId] ?? []
+    if (loadedFullHistoryByThreadId.value[threadId] === true && areMessageArraysEqual(previous, nextMessages)) return
+    fullHistoryMessagesByThreadId.value = {
+      ...fullHistoryMessagesByThreadId.value,
+      [threadId]: nextMessages,
+    }
+    loadedFullHistoryByThreadId.value = {
+      ...loadedFullHistoryByThreadId.value,
+      [threadId]: true,
+    }
+  }
+
+  function mergePersistedMessagesIntoFullHistory(threadId: string, persistedMessages: UiMessage[]): void {
+    if (!threadId || loadedFullHistoryByThreadId.value[threadId] !== true) return
+    const previousFullHistory = fullHistoryMessagesByThreadId.value[threadId] ?? []
+    const mergedFullHistory = mergeMessages(previousFullHistory, persistedMessages, { preserveMissing: true })
+    setFullHistoryMessagesForThread(threadId, mergedFullHistory)
+  }
+
+  function invalidateFullHistoryForThread(threadId: string): void {
+    if (!threadId) return
+    if (
+      !(threadId in fullHistoryMessagesByThreadId.value) &&
+      !(threadId in loadedFullHistoryByThreadId.value) &&
+      !(threadId in loadingFullHistoryByThreadId.value)
+    ) {
+      return
+    }
+    fullHistoryMessagesByThreadId.value = omitKey(fullHistoryMessagesByThreadId.value, threadId)
+    loadedFullHistoryByThreadId.value = omitKey(loadedFullHistoryByThreadId.value, threadId)
+    loadingFullHistoryByThreadId.value = omitKey(loadingFullHistoryByThreadId.value, threadId)
+  }
+
   function setPersistedMessagesForThread(threadId: string, nextMessages: UiMessage[]): void {
     const previous = persistedMessagesByThreadId.value[threadId] ?? []
     if (areMessageArraysEqual(previous, nextMessages)) return
@@ -3385,6 +3448,7 @@ export function useDesktopState() {
       ...persistedMessagesByThreadId.value,
       [threadId]: nextMessages,
     }
+    mergePersistedMessagesIntoFullHistory(threadId, nextMessages)
   }
 
   function setLiveAgentMessagesForThread(threadId: string, nextMessages: UiMessage[]): void {
@@ -5581,6 +5645,44 @@ export function useDesktopState() {
     await loadThreadsPromise
   }
 
+  async function loadFullHistoryMessages(threadId: string, options: { force?: boolean } = {}): Promise<void> {
+    if (!threadId) return
+    if (options.force !== true && loadedFullHistoryByThreadId.value[threadId] === true) return
+
+    const existingLoad = loadFullHistoryPromiseByThreadId.get(threadId)
+    if (existingLoad) {
+      await existingLoad
+      return
+    }
+
+    loadingFullHistoryByThreadId.value = {
+      ...loadingFullHistoryByThreadId.value,
+      [threadId]: true,
+    }
+
+    const loadPromise = (async () => {
+      try {
+        const page = await getFullThreadMessages(threadId)
+        setFullHistoryMessagesForThread(threadId, page.messages)
+        replaceTurnIndexLookupForThread(threadId, {
+          ...(turnIndexByTurnIdByThreadId.value[threadId] ?? {}),
+          ...page.turnIndexByTurnId,
+        })
+        rebindLiveFileChangeTurnIndices(threadId)
+      } finally {
+        loadingFullHistoryByThreadId.value = {
+          ...loadingFullHistoryByThreadId.value,
+          [threadId]: false,
+        }
+      }
+    })().finally(() => {
+      loadFullHistoryPromiseByThreadId.delete(threadId)
+    })
+
+    loadFullHistoryPromiseByThreadId.set(threadId, loadPromise)
+    await loadPromise
+  }
+
   async function loadMessages(threadId: string, options: { silent?: boolean; force?: boolean } = {}) {
     if (!threadId) {
       return
@@ -5683,6 +5785,11 @@ export function useDesktopState() {
           ...hasMoreOlderMessagesByThreadId.value,
           [threadId]: detail.hasMoreOlder === true,
         }
+        if (detail.hasMoreOlder === true) {
+          void loadFullHistoryMessages(threadId).catch(() => {})
+        } else {
+          setFullHistoryMessagesForThread(threadId, mergedMessages)
+        }
         if (!appliedTurnState.inProgress) {
           clearCompletedTurnLiveState(threadId)
         }
@@ -5733,6 +5840,9 @@ export function useDesktopState() {
         ...hasMoreOlderMessagesByThreadId.value,
         [threadId]: page.hasMoreOlder,
       }
+      if (page.hasMoreOlder === false) {
+        setFullHistoryMessagesForThread(threadId, mergedMessages)
+      }
     } catch (loadError) {
       error.value = loadError instanceof Error ? loadError.message : 'Failed to load earlier messages'
       throw loadError
@@ -5768,6 +5878,27 @@ export function useDesktopState() {
     } catch (loadError) {
       error.value = loadError instanceof Error ? loadError.message : 'Failed to load message window'
       throw loadError
+    }
+  }
+
+  async function ensureMessageLoaded(threadId: string, messageId: string): Promise<void> {
+    const normalizedThreadId = threadId.trim()
+    const normalizedMessageId = messageId.trim()
+    if (!normalizedThreadId || !normalizedMessageId) return
+
+    const persisted = persistedMessagesByThreadId.value[normalizedThreadId] ?? []
+    if (persisted.some((message) => message.id === normalizedMessageId)) return
+
+    await loadFullHistoryMessages(normalizedThreadId)
+    const fullHistory = fullHistoryMessagesByThreadId.value[normalizedThreadId] ?? []
+    if (!fullHistory.some((message) => message.id === normalizedMessageId)) return
+
+    const latestPersisted = persistedMessagesByThreadId.value[normalizedThreadId] ?? []
+    const mergedMessages = mergeMessages(fullHistory, latestPersisted, { preserveMissing: true })
+    setPersistedMessagesForThread(normalizedThreadId, mergedMessages)
+    hasMoreOlderMessagesByThreadId.value = {
+      ...hasMoreOlderMessagesByThreadId.value,
+      [normalizedThreadId]: false,
     }
   }
 
@@ -6719,6 +6850,7 @@ export function useDesktopState() {
         await revertThreadFileChanges(threadId, turnId, threadCwd)
       }
       const nextMessages = await rollbackThread(threadId, numTurns)
+      invalidateFullHistoryForThread(threadId)
       setPersistedMessagesForThread(threadId, nextMessages)
       setLiveAgentMessagesForThread(threadId, [])
       clearLiveReasoningForThread(threadId)
@@ -7072,6 +7204,10 @@ export function useDesktopState() {
     activeReasoningItemId = ''
     shouldAutoScrollOnNextAgentEvent = false
     persistedMessagesByThreadId.value = {}
+    fullHistoryMessagesByThreadId.value = {}
+    loadedFullHistoryByThreadId.value = {}
+    loadingFullHistoryByThreadId.value = {}
+    loadFullHistoryPromiseByThreadId.clear()
     livePlanMessagesByThreadId.value = {}
     liveAgentMessagesByThreadId.value = {}
     liveReasoningTextByThreadId.value = {}
@@ -7220,10 +7356,12 @@ export function useDesktopState() {
     installedSkills,
     accountRateLimitSnapshots,
     messages,
+    messageNavigationMessages,
     hasMoreOlderMessages,
     isLoadingThreads,
     isThreadListFullyLoaded,
     isLoadingMessages,
+    isLoadingMessageNavigation,
     isLoadingOlderMessages,
     isSendingMessage,
     isInterruptingTurn,
@@ -7241,6 +7379,7 @@ export function useDesktopState() {
     loadOlderMessages,
     loadThreadMessageWindow,
     ensureThreadMessagesLoaded,
+    ensureMessageLoaded,
     setThreadTerminalOpen,
     toggleSelectedThreadTerminal,
     archiveThreadById,

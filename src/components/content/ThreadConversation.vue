@@ -24,9 +24,10 @@
       <li
         v-if="!hiddenGroupedCommandIds.has(message.id) && !hiddenGroupedToolCallIds.has(message.id) && !hiddenFileChangeMessageIds.has(message.id)"
         class="conversation-item"
+        :class="{ 'conversation-item-jump-highlight': highlightedMessageId === message.id }"
         :data-role="message.role"
-        :data-message-type="message.messageType || ''"
         :data-message-id="message.id"
+        :data-message-type="message.messageType || ''"
         :data-search-highlighted="activeSearchHighlightMessageId === message.id ? 'true' : 'false'"
       >
         <div v-if="isCommandMessage(message)" class="message-row" data-role="system">
@@ -708,8 +709,18 @@
         </div>
       </li>
       </template>
+      <li v-if="hasMoreBelow" class="conversation-load-more">
+        <button
+          type="button"
+          class="load-more-button"
+          :disabled="isLoadingMore"
+          @click="loadMoreBelow"
+        >
+          Load later messages
+        </button>
+      </li>
       <li
-        v-if="isMobile && latestPendingRequest"
+        v-if="isRenderingLatest && isMobile && latestPendingRequest"
         class="conversation-item conversation-item-request"
       >
         <ThreadPendingRequestPanel
@@ -718,7 +729,7 @@
           @respond-server-request="forwardServerRequestReply"
         />
       </li>
-      <li v-if="liveOverlay" class="conversation-item conversation-item-overlay">
+      <li v-if="isRenderingLatest && liveOverlay" class="conversation-item conversation-item-overlay">
         <div class="message-row">
           <div class="message-stack">
             <article class="live-overlay-inline" aria-live="polite">
@@ -739,6 +750,67 @@
       </li>
       <li ref="bottomAnchorRef" class="conversation-bottom-anchor" />
     </ul>
+
+    <div
+      v-if="!isLoading && (isMessageNavigationLoading || userMessageNavigationItems.length > 0)"
+      ref="messageNavigationRef"
+      class="message-nav"
+    >
+      <button
+        type="button"
+        class="message-nav-toggle"
+        :data-open="isMessageNavigationOpen ? 'true' : 'false'"
+        aria-haspopup="menu"
+        :aria-expanded="isMessageNavigationOpen"
+        title="Jump to user message"
+        @click="toggleMessageNavigation"
+      >
+        <span class="message-nav-toggle-label">User messages</span>
+        <span class="message-nav-count">{{ isMessageNavigationLoading && userMessageNavigationItems.length === 0 ? '…' : userMessageNavigationItems.length }}</span>
+        <IconTablerChevronDown class="message-nav-chevron" />
+      </button>
+
+      <div
+        v-if="isMessageNavigationOpen"
+        class="message-nav-panel"
+        role="menu"
+        aria-label="User messages"
+      >
+        <div class="message-nav-header">
+          <span>User messages</span>
+          <span>{{ isMessageNavigationLoading ? 'Loading…' : `${userMessageNavigationItems.length} total` }}</span>
+        </div>
+        <ul ref="messageNavigationListRef" class="message-nav-list" @scroll="onMessageNavigationScroll">
+          <li v-if="isMessageNavigationLoading && userMessageNavigationItems.length === 0" class="message-nav-empty">
+            Loading user messages…
+          </li>
+          <li
+            v-if="messageNavigationTopSpacerHeight > 0"
+            class="message-nav-spacer"
+            :style="{ height: `${messageNavigationTopSpacerHeight}px` }"
+            aria-hidden="true"
+          />
+          <li v-for="item in visibleUserMessageNavigationItems" :key="item.id" class="message-nav-list-item">
+            <button
+              type="button"
+              class="message-nav-item"
+              :title="item.title"
+              :aria-label="`Jump to user message ${item.ordinal}: ${item.title}`"
+              @click="jumpToUserMessage(item)"
+            >
+              <span class="message-nav-item-index">{{ item.ordinal }}</span>
+              <span class="message-nav-item-text">{{ item.preview }}</span>
+            </button>
+          </li>
+          <li
+            v-if="messageNavigationBottomSpacerHeight > 0"
+            class="message-nav-spacer"
+            :style="{ height: `${messageNavigationBottomSpacerHeight}px` }"
+            aria-hidden="true"
+          />
+        </ul>
+      </div>
+    </div>
 
     <button
       v-if="showJumpToLatestButton"
@@ -954,8 +1026,10 @@ import { useMobile } from '../../composables/useMobile'
 import { useUiLanguage } from '../../composables/useUiLanguage'
 import { getHighlightLanguageForPath, normalizeHighlightLanguage } from '../../utils/codeLanguage.js'
 import { groupConsecutiveToolCallsByLatestId } from './threadConversationGrouping'
+import { buildUserMessageNavigationItems, type UserMessageNavigationItem } from './threadMessageNavigation'
 
 import IconTablerArrowUp from '../icons/IconTablerArrowUp.vue'
+import IconTablerChevronDown from '../icons/IconTablerChevronDown.vue'
 import IconTablerCopy from '../icons/IconTablerCopy.vue'
 import IconTablerFilePencil from '../icons/IconTablerFilePencil.vue'
 import IconTablerFolderOpen from '../icons/IconTablerFolderOpen.vue'
@@ -996,6 +1070,11 @@ const fileLinkPickerLine = ref<number | null>(null)
 const fileLinkPickerEndLine = ref<number | null>(null)
 const fileLinkPickerResults = ref<FileLinkSearchSuggestion[]>([])
 const fileLinkPickerHighlightedIndex = ref(0)
+const messageNavigationRef = ref<HTMLElement | null>(null)
+const messageNavigationListRef = ref<HTMLElement | null>(null)
+const isMessageNavigationOpen = ref(false)
+const messageNavigationScrollTop = ref(0)
+const highlightedMessageId = ref('')
 let fileLinkPickerSearchToken = 0
 let fileLinkPickerSearchDebounceTimer: ReturnType<typeof setTimeout> | null = null
 const { isMobile } = useMobile()
@@ -1293,8 +1372,9 @@ function showUserAvatar(message: UiMessage, messageIndex: number): boolean {
 }
 
 const activeCommandMessageId = computed(() => {
-  for (let index = props.messages.length - 1; index >= 0; index -= 1) {
-    const message = props.messages[index]
+  const renderedMessages = visibleMessages.value
+  for (let index = renderedMessages.length - 1; index >= 0; index -= 1) {
+    const message = renderedMessages[index]
     if (message.messageType === 'commandExecution' && message.commandExecution?.status === 'inProgress') {
       return message.id
     }
@@ -1303,7 +1383,7 @@ const activeCommandMessageId = computed(() => {
 })
 
 const hasLiveAssistantText = computed(() =>
-  props.messages.some((message) =>
+  visibleMessages.value.some((message) =>
     message.role === 'assistant' &&
     message.messageType === 'agentMessage.live' &&
     message.text.trim().length > 0,
@@ -1311,21 +1391,22 @@ const hasLiveAssistantText = computed(() =>
 )
 
 const isLiveTurnRuntime = computed(() =>
-  Boolean(props.liveOverlay) || activeCommandMessageId.value.length > 0 || hasLiveAssistantText.value,
+  isRenderingLatest.value && (Boolean(props.liveOverlay) || activeCommandMessageId.value.length > 0 || hasLiveAssistantText.value),
 )
 
 const groupedCommandsByLatestId = computed<Record<string, UiMessage[]>>(() => {
   const next: Record<string, UiMessage[]> = {}
-  for (let index = 0; index < props.messages.length;) {
-    const message = props.messages[index]
+  const renderedMessages = visibleMessages.value
+  for (let index = 0; index < renderedMessages.length;) {
+    const message = renderedMessages[index]
     if (!isCommandMessage(message)) {
       index += 1
       continue
     }
 
     const block: UiMessage[] = []
-    while (index < props.messages.length && isCommandMessage(props.messages[index])) {
-      block.push(props.messages[index])
+    while (index < renderedMessages.length && isCommandMessage(renderedMessages[index])) {
+      block.push(renderedMessages[index])
       index += 1
     }
 
@@ -1346,7 +1427,7 @@ const hiddenGroupedCommandIds = computed(() => {
   return next
 })
 
-const groupedToolCallsByLatestId = computed<Record<string, UiMessage[]>>(() => groupConsecutiveToolCallsByLatestId(props.messages))
+const groupedToolCallsByLatestId = computed<Record<string, UiMessage[]>>(() => groupConsecutiveToolCallsByLatestId(visibleMessages.value))
 
 const hiddenGroupedToolCallIds = computed(() => {
   const next = new Set<string>()
@@ -1588,6 +1669,8 @@ function getCommandsForWorked(messages: UiMessage[], workedIndex: number): UiMes
 
 const props = defineProps<{
   messages: UiMessage[]
+  messageNavigationMessages?: UiMessage[]
+  isMessageNavigationLoading?: boolean
   pendingRequests: UiServerRequest[]
   liveOverlay: UiLiveOverlay | null
   isLoading: boolean
@@ -1596,6 +1679,7 @@ const props = defineProps<{
   hasMorePersistedAbove?: boolean
   isLoadingPersistedAbove?: boolean
   loadEarlierMessages?: (threadId: string) => Promise<void>
+  ensureMessageLoaded?: (threadId: string, messageId: string) => Promise<void>
 }>()
 
 const emit = defineEmits<{
@@ -1604,6 +1688,34 @@ const emit = defineEmits<{
   implementPlan: [payload: { turnId: string }]
   respondServerRequest: [payload: UiServerRequestReply]
 }>()
+
+const messageNavigationSourceMessages = computed(() => props.messageNavigationMessages ?? props.messages)
+const userMessageNavigationItems = computed(() => buildUserMessageNavigationItems(messageNavigationSourceMessages.value))
+const isMessageNavigationLoading = computed(() => props.isMessageNavigationLoading === true)
+const messageNavigationViewportRowCount = computed(() => {
+  const height = messageNavigationListRef.value?.clientHeight ?? 352
+  return Math.max(1, Math.ceil(height / MESSAGE_NAV_ITEM_HEIGHT_PX))
+})
+const visibleUserMessageNavigationRange = computed(() => {
+  const total = userMessageNavigationItems.value.length
+  if (total === 0) return { start: 0, end: 0 }
+  const firstVisible = Math.max(0, Math.min(
+    Math.floor(messageNavigationScrollTop.value / MESSAGE_NAV_ITEM_HEIGHT_PX),
+    total - 1,
+  ))
+  const start = Math.max(0, firstVisible - MESSAGE_NAV_OVERSCAN_ROWS)
+  const end = Math.min(total, firstVisible + messageNavigationViewportRowCount.value + MESSAGE_NAV_OVERSCAN_ROWS)
+  return { start, end }
+})
+const visibleUserMessageNavigationItems = computed(() => {
+  const range = visibleUserMessageNavigationRange.value
+  return userMessageNavigationItems.value.slice(range.start, range.end)
+})
+const messageNavigationTopSpacerHeight = computed(() => visibleUserMessageNavigationRange.value.start * MESSAGE_NAV_ITEM_HEIGHT_PX)
+const messageNavigationBottomSpacerHeight = computed(() => {
+  const range = visibleUserMessageNavigationRange.value
+  return Math.max(0, userMessageNavigationItems.value.length - range.end) * MESSAGE_NAV_ITEM_HEIGHT_PX
+})
 
 function forwardServerRequestReply(payload: UiServerRequestReply): void {
   emit('respondServerRequest', payload)
@@ -1619,6 +1731,10 @@ const mcpElicitationAnswers = ref<Record<string, string | number | boolean | str
 const autoFollowOutput = ref(true)
 const activeSearchHighlightMessageId = ref('')
 const BOTTOM_THRESHOLD_PX = 16
+const MESSAGE_NAV_SCROLL_OFFSET_PX = 72
+const MESSAGE_NAV_HIGHLIGHT_MS = 1600
+const MESSAGE_NAV_ITEM_HEIGHT_PX = 36
+const MESSAGE_NAV_OVERSCAN_ROWS = 8
 function normalizeLineRange(line: number | null, endLine: number | null = line): { startLine: number; endLine: number } | null {
   if (!Number.isFinite(line ?? NaN) || !Number.isFinite(endLine ?? NaN)) return null
   const startLine = Math.floor(line ?? NaN)
@@ -1690,6 +1806,7 @@ let bottomLockFramesLeft = 0
 let copiedMessageResetTimer: ReturnType<typeof setTimeout> | null = null
 let copiedCodeBlockResetTimer: ReturnType<typeof setTimeout> | null = null
 let searchHighlightResetTimer: ReturnType<typeof setTimeout> | null = null
+let highlightedMessageResetTimer: ReturnType<typeof setTimeout> | null = null
 let conversationScrollPromise: Promise<void> | null = null
 const trackedPendingImages = new WeakSet<HTMLImageElement>()
 const highlightJsModule = ref<HighlightJsModule | null>(null)
@@ -1737,19 +1854,74 @@ function setBoundedCacheEntry<K, V>(cache: Map<K, V>, key: K, value: V, limit: n
 }
 
 const RENDER_WINDOW_SIZE = 50
+const MAX_RENDER_WINDOW_SIZE = 110
 const LOAD_MORE_CHUNK = 30
 const LOAD_MORE_SCROLL_THRESHOLD_PX = 200
 
-const renderWindowStart = ref(0)
-const renderWindowEnd = ref<number | null>(null)
+const renderWindowStart = ref(Math.max(0, props.messages.length - RENDER_WINDOW_SIZE))
+const renderWindowEnd = ref(props.messages.length)
 const isLoadingMore = ref(false)
 
-const visibleMessages = computed(() => props.messages.slice(renderWindowStart.value, renderWindowEnd.value ?? undefined))
+const visibleMessages = computed(() => props.messages.slice(renderWindowStart.value, renderWindowEnd.value))
 const hasMoreAbove = computed(() => renderWindowStart.value > 0 || props.hasMorePersistedAbove === true)
+const hasMoreBelow = computed(() => renderWindowEnd.value < props.messages.length)
+const isRenderingLatest = computed(() => renderWindowEnd.value >= props.messages.length)
 const latestPendingRequest = computed(() => {
   const rows = props.pendingRequests
   return rows.length > 0 ? rows[rows.length - 1] : null
 })
+
+function setRenderWindow(start: number, end: number): void {
+  const messageCount = props.messages.length
+  if (messageCount <= 0) {
+    renderWindowStart.value = 0
+    renderWindowEnd.value = 0
+    return
+  }
+
+  const nextStart = Math.max(0, Math.min(Math.floor(start), messageCount - 1))
+  const nextEnd = Math.max(nextStart + 1, Math.min(Math.floor(end), messageCount))
+  renderWindowStart.value = nextStart
+  renderWindowEnd.value = nextEnd
+}
+
+function setRenderWindowToLatest(): void {
+  const messageCount = props.messages.length
+  setRenderWindow(Math.max(0, messageCount - RENDER_WINDOW_SIZE), messageCount)
+}
+
+function setRenderWindowAroundIndex(messageIndex: number): void {
+  const messageCount = props.messages.length
+  if (messageCount <= 0) {
+    setRenderWindow(0, 0)
+    return
+  }
+
+  const targetIndex = Math.max(0, Math.min(messageIndex, messageCount - 1))
+  let start = Math.max(0, targetIndex - 6)
+  let end = Math.min(messageCount, start + RENDER_WINDOW_SIZE)
+  if (end - start < RENDER_WINDOW_SIZE) {
+    start = Math.max(0, end - RENDER_WINDOW_SIZE)
+  }
+  setRenderWindow(start, end)
+}
+
+function clampRenderWindowToMessages(): void {
+  const messageCount = props.messages.length
+  if (messageCount <= 0) {
+    setRenderWindow(0, 0)
+    return
+  }
+
+  if (renderWindowEnd.value <= renderWindowStart.value) {
+    setRenderWindowToLatest()
+    return
+  }
+
+  const nextEnd = Math.min(renderWindowEnd.value, messageCount)
+  const nextStart = Math.min(renderWindowStart.value, Math.max(0, nextEnd - 1))
+  setRenderWindow(nextStart, nextEnd)
+}
 
 const showJumpToLatestButton = computed(
   () => !autoFollowOutput.value && (props.messages.length > 0 || props.pendingRequests.length > 0 || Boolean(props.liveOverlay)),
@@ -2170,7 +2342,7 @@ function buildCopyableMessageContent(message: UiMessage): string {
 const copyableResponseContentByAnchorId = computed<Record<string, string>>(() => {
   const groupedResponses = new Map<string, { anchorMessageId: string; parts: string[] }>()
 
-  for (const message of props.messages) {
+  for (const message of visibleMessages.value) {
     if (!isCopyableAssistantMessage(message)) continue
 
     const content = buildCopyableMessageContent(message)
@@ -2212,7 +2384,7 @@ const copyableResponseContentByAnchorId = computed<Record<string, string>>(() =>
 const forkableTurnIndexByAnchorId = computed<Record<string, number>>(() => {
   const groupedTurns = new Map<string, { anchorMessageId: string; turnIndex: number }>()
 
-  for (const message of props.messages) {
+  for (const message of visibleMessages.value) {
     if (!isCopyableAssistantMessage(message) || typeof message.turnIndex !== 'number') continue
 
     const responseKey = `turn:${message.turnIndex}`
@@ -2311,7 +2483,7 @@ const anchoredFileChangeSummaryByAnchorId = computed<Record<string, TurnFileChan
   const assistantSummaryByAnchorId = new Map<string, TurnFileChangeSummary>()
   const fileChangeMessagesByTurnKey = new Map<string, UiMessage[]>()
 
-  for (const message of props.messages) {
+  for (const message of visibleMessages.value) {
     if (isCopyableAssistantMessage(message) && typeof message.turnIndex === 'number') {
       assistantAnchorIdByTurnKey.set(`turn:${message.turnIndex}`, message.id)
       if (Array.isArray(message.fileChanges) && message.fileChanges.length > 0) {
@@ -2354,7 +2526,7 @@ const standaloneFileChangeSummaryByMessageId = computed<Record<string, TurnFileC
   const assistantAnchorIdByTurnKey = new Map<string, string>()
   const fileChangeMessagesByTurnKey = new Map<string, UiMessage[]>()
 
-  for (const message of props.messages) {
+  for (const message of visibleMessages.value) {
     if (isCopyableAssistantMessage(message) && typeof message.turnIndex === 'number') {
       assistantAnchorIdByTurnKey.set(`turn:${message.turnIndex}`, message.id)
     }
@@ -2796,7 +2968,7 @@ function forkResponse(anchorMessageId: string): void {
 
 const editableTurnIdByMessageId = computed<Record<string, string>>(() => {
   const next: Record<string, string> = {}
-  for (const message of props.messages) {
+  for (const message of visibleMessages.value) {
     if (message.role !== 'user' || typeof message.turnIndex !== 'number') continue
     const turnId = typeof message.turnId === 'string' && message.turnId.length > 0 ? message.turnId : ''
     if (!turnId || message.text.trim().length === 0) continue
@@ -3584,6 +3756,15 @@ async function copyFileLinkContextLink(): Promise<void> {
 
 function onWindowPointerDownForFileLinkContextMenu(event: PointerEvent): void {
   const target = event.target
+  if (isMessageNavigationOpen.value) {
+    const nav = messageNavigationRef.value
+    if (!nav) {
+      closeMessageNavigation()
+    } else if (!(target instanceof Node) || !nav.contains(target)) {
+      closeMessageNavigation()
+    }
+  }
+
   if (isFileLinkContextMenuVisible.value) {
     const menu = fileLinkContextMenuRef.value
     if (!menu) {
@@ -3604,19 +3785,28 @@ function onWindowPointerDownForFileLinkContextMenu(event: PointerEvent): void {
 }
 
 function onWindowBlurForFileLinkContextMenu(): void {
+  closeMessageNavigation()
   closeFileLinkContextMenu()
   closeFileLinkPicker()
 }
 
 function onWindowKeydownForFileLinkContextMenu(event: KeyboardEvent): void {
   if (event.key !== 'Escape') return
+  let handled = false
+  if (isMessageNavigationOpen.value) {
+    closeMessageNavigation()
+    handled = true
+  }
   if (isFileLinkPickerVisible.value) {
-    event.preventDefault()
     closeFileLinkPicker()
+    handled = true
   }
   if (isFileLinkContextMenuVisible.value) {
-    event.preventDefault()
     closeFileLinkContextMenu()
+    handled = true
+  }
+  if (handled) {
+    event.preventDefault()
   }
 }
 
@@ -4935,28 +5125,9 @@ function onPendingImageSettled(): void {
 
 function jumpToLatest(): void {
   autoFollowOutput.value = true
-  renderWindowEnd.value = null
-  renderWindowStart.value = Math.max(0, props.messages.length - RENDER_WINDOW_SIZE)
+  setRenderWindowToLatest()
   enforceBottomState()
   scheduleBottomLock(4)
-}
-
-function setRenderWindowAroundMessage(messageIndex: number): void {
-  const messageCount = props.messages.length
-  if (messageCount <= RENDER_WINDOW_SIZE) {
-    renderWindowStart.value = 0
-    renderWindowEnd.value = null
-    return
-  }
-
-  const targetIndex = Math.max(0, Math.min(messageCount - 1, messageIndex))
-  let start = Math.max(0, targetIndex - Math.floor(RENDER_WINDOW_SIZE / 3))
-  let end = Math.min(messageCount, start + RENDER_WINDOW_SIZE)
-  if (end - start < RENDER_WINDOW_SIZE) {
-    start = Math.max(0, end - RENDER_WINDOW_SIZE)
-  }
-  renderWindowStart.value = start
-  renderWindowEnd.value = end
 }
 
 function resolveRevealMessageId(messageId: string): string {
@@ -4982,19 +5153,17 @@ function resolveRevealMessageId(messageId: string): string {
 }
 
 async function revealMessage(messageId: string): Promise<boolean> {
-  const targetId = resolveRevealMessageId(messageId.trim())
-  if (!targetId) return false
-  const messageIndex = props.messages.findIndex((message) => message.id === targetId)
+  const requestedId = messageId.trim()
+  if (!requestedId) return false
+  const messageIndex = props.messages.findIndex((message) => message.id === requestedId)
   if (messageIndex < 0) return false
 
   autoFollowOutput.value = false
-  setRenderWindowAroundMessage(messageIndex)
+  setRenderWindowAroundIndex(messageIndex)
   await nextTick()
 
-  const container = conversationListRef.value
-  if (!container) return false
-  const selector = `[data-message-id="${CSS.escape(targetId)}"]`
-  const item = container.querySelector<HTMLElement>(selector)
+  const targetId = resolveRevealMessageId(requestedId)
+  const item = findRenderedMessageElement(targetId)
   if (!item) return false
 
   item.scrollIntoView({ block: 'center', behavior: 'smooth' })
@@ -5011,6 +5180,115 @@ async function revealMessage(messageId: string): Promise<boolean> {
   return true
 }
 
+function closeMessageNavigation(): void {
+  isMessageNavigationOpen.value = false
+}
+
+function toggleMessageNavigation(): void {
+  isMessageNavigationOpen.value = !isMessageNavigationOpen.value
+  if (isMessageNavigationOpen.value) {
+    messageNavigationScrollTop.value = 0
+    void nextTick(() => {
+      if (messageNavigationListRef.value) {
+        messageNavigationListRef.value.scrollTop = 0
+      }
+    })
+  }
+}
+
+function onMessageNavigationScroll(): void {
+  messageNavigationScrollTop.value = messageNavigationListRef.value?.scrollTop ?? 0
+}
+
+function clearHighlightedMessage(): void {
+  highlightedMessageId.value = ''
+  if (highlightedMessageResetTimer) {
+    clearTimeout(highlightedMessageResetTimer)
+    highlightedMessageResetTimer = null
+  }
+}
+
+function highlightMessage(messageId: string): void {
+  clearHighlightedMessage()
+  highlightedMessageId.value = messageId
+  highlightedMessageResetTimer = setTimeout(() => {
+    if (highlightedMessageId.value === messageId) {
+      highlightedMessageId.value = ''
+    }
+    highlightedMessageResetTimer = null
+  }, MESSAGE_NAV_HIGHLIGHT_MS)
+}
+
+function findRenderedMessageElement(messageId: string): HTMLElement | null {
+  const container = conversationListRef.value
+  if (!container) return null
+
+  const elements = container.querySelectorAll<HTMLElement>('[data-message-id]')
+  for (const element of elements) {
+    if (element.dataset.messageId === messageId) return element
+  }
+  return null
+}
+
+function scrollMessageElementIntoView(element: HTMLElement): void {
+  const container = conversationListRef.value
+  if (!container) return
+
+  const targetTop = Math.max(0, element.offsetTop - MESSAGE_NAV_SCROLL_OFFSET_PX)
+  if (typeof container.scrollTo === 'function') {
+    container.scrollTo({ top: targetTop, behavior: 'smooth' })
+  } else {
+    container.scrollTop = targetTop
+  }
+}
+
+function readFirstVisibleMessageAnchor(container: HTMLElement): { messageId: string; offsetTop: number } | null {
+  const containerRect = container.getBoundingClientRect()
+  const elements = container.querySelectorAll<HTMLElement>('[data-message-id]')
+  for (const element of elements) {
+    const messageId = element.dataset.messageId ?? ''
+    if (!messageId) continue
+    const rect = element.getBoundingClientRect()
+    if (rect.bottom < containerRect.top) continue
+    return {
+      messageId,
+      offsetTop: rect.top - containerRect.top,
+    }
+  }
+  return null
+}
+
+function restoreMessageAnchor(container: HTMLElement, anchor: { messageId: string; offsetTop: number } | null): void {
+  if (!anchor) return
+  const element = findRenderedMessageElement(anchor.messageId)
+  if (!element) return
+  const containerRect = container.getBoundingClientRect()
+  const nextOffsetTop = element.getBoundingClientRect().top - containerRect.top
+  container.scrollTop += nextOffsetTop - anchor.offsetTop
+}
+
+async function jumpToUserMessage(item: UserMessageNavigationItem): Promise<void> {
+  closeMessageNavigation()
+  autoFollowOutput.value = false
+
+  let targetIndex = props.messages.findIndex((message) => message.id === item.id)
+  if (targetIndex < 0 && props.ensureMessageLoaded) {
+    await props.ensureMessageLoaded(props.activeThreadId, item.id)
+    await nextTick()
+    targetIndex = props.messages.findIndex((message) => message.id === item.id)
+  }
+  if (targetIndex < 0) return
+
+  setRenderWindowAroundIndex(targetIndex)
+
+  await nextTick()
+  const element = findRenderedMessageElement(item.id)
+  if (!element) return
+
+  scrollMessageElementIntoView(element)
+  highlightMessage(item.id)
+}
+
 async function loadMoreAbove(): Promise<void> {
   const container = conversationListRef.value
   if (!container || !hasMoreAbove.value || isLoadingMore.value || props.isLoadingPersistedAbove === true) return
@@ -5020,21 +5298,56 @@ async function loadMoreAbove(): Promise<void> {
 
   const prevScrollHeight = container.scrollHeight
   const prevScrollTop = container.scrollTop
+  const anchor = readFirstVisibleMessageAnchor(container)
+  const anchorMessageId = anchor?.messageId ?? visibleMessages.value[0]?.id ?? ''
+  const previousWindowSize = Math.max(1, renderWindowEnd.value - renderWindowStart.value)
+  let loadedPersistedAbove = false
 
   try {
-    renderWindowEnd.value = null
     if (renderWindowStart.value > 0) {
-      renderWindowStart.value = Math.max(0, renderWindowStart.value - LOAD_MORE_CHUNK)
+      const nextStart = Math.max(0, renderWindowStart.value - LOAD_MORE_CHUNK)
+      const nextEnd = Math.min(renderWindowEnd.value, nextStart + MAX_RENDER_WINDOW_SIZE)
+      setRenderWindow(nextStart, nextEnd)
     } else if (props.hasMorePersistedAbove === true) {
       await props.loadEarlierMessages?.(threadIdAtStart)
+      loadedPersistedAbove = true
     }
 
     await nextTick()
 
     // Discard scroll restoration if the thread changed while we were awaiting.
     if (props.activeThreadId === threadIdAtStart) {
-      container.scrollTop = prevScrollTop + (container.scrollHeight - prevScrollHeight)
+      if (loadedPersistedAbove && anchorMessageId) {
+        const anchorIndex = props.messages.findIndex((message) => message.id === anchorMessageId)
+        if (anchorIndex >= 0) {
+          setRenderWindow(anchorIndex, Math.min(props.messages.length, anchorIndex + previousWindowSize))
+          await nextTick()
+        }
+      }
+      if (anchor) {
+        restoreMessageAnchor(container, anchor)
+      } else {
+        container.scrollTop = prevScrollTop + (container.scrollHeight - prevScrollHeight)
+      }
     }
+  } finally {
+    isLoadingMore.value = false
+  }
+}
+
+async function loadMoreBelow(): Promise<void> {
+  const container = conversationListRef.value
+  if (!container || !hasMoreBelow.value || isLoadingMore.value) return
+  isLoadingMore.value = true
+  const anchor = readFirstVisibleMessageAnchor(container)
+
+  const nextEnd = Math.min(props.messages.length, renderWindowEnd.value + LOAD_MORE_CHUNK)
+  const nextStart = Math.max(renderWindowStart.value, nextEnd - MAX_RENDER_WINDOW_SIZE)
+  setRenderWindow(nextStart, nextEnd)
+
+  try {
+    await nextTick()
+    restoreMessageAnchor(container, anchor)
   } finally {
     isLoadingMore.value = false
   }
@@ -5117,11 +5430,18 @@ function clearRenderCaches(): void {
 
 watch(
   () => props.messages,
-  async (next) => {
+  async () => {
     if (props.isLoading) return
 
+    if (autoFollowOutput.value) {
+      setRenderWindowToLatest()
+    } else {
+      clampRenderWindowToMessages()
+    }
+
+    const renderedMessages = visibleMessages.value
     const commandIds = new Set(
-      next
+      renderedMessages
         .filter((message) => message.messageType === 'commandExecution' && message.commandExecution)
         .map((message) => message.id),
     )
@@ -5133,7 +5453,7 @@ watch(
     )
     expandedToolCallIds.value = pruneCommandIdSet(
       expandedToolCallIds.value,
-      new Set(next.filter((message) => isToolCallMessage(message)).map((message) => message.id)),
+      new Set(renderedMessages.filter((message) => isToolCallMessage(message)).map((message) => message.id)),
     )
     expandedToolCallGroupIds.value = pruneCommandIdSet(
       expandedToolCallGroupIds.value,
@@ -5150,23 +5470,11 @@ watch(
       expandedResponseSourceIds.value,
       new Set(Object.keys(copyableResponseContentByAnchorId.value)),
     )
-
-    // Keep renderWindowStart in bounds whenever the message list changes length.
-    // Following output: always pin the window to the last RENDER_WINDOW_SIZE messages so
-    //   the rendered count stays bounded (handles both growth and shrink/rollback).
-    // Scrolled up: only clamp downward so renderWindowStart never exceeds the list length
-    //   (prevents visibleMessages from becoming empty after a rollback).
-    if (autoFollowOutput.value) {
-      renderWindowEnd.value = null
-      renderWindowStart.value = Math.max(0, next.length - RENDER_WINDOW_SIZE)
-    } else {
-      renderWindowStart.value = Math.min(renderWindowStart.value, Math.max(0, next.length - 1))
-      if (renderWindowEnd.value !== null) {
-        renderWindowEnd.value = Math.max(
-          renderWindowStart.value + 1,
-          Math.min(renderWindowEnd.value, next.length),
-        )
-      }
+    if (highlightedMessageId.value && !renderedMessages.some((message) => message.id === highlightedMessageId.value)) {
+      clearHighlightedMessage()
+    }
+    if (!isMessageNavigationLoading.value && !messageNavigationSourceMessages.value.some((message) => message.role === 'user')) {
+      closeMessageNavigation()
     }
 
     await scheduleConversationScroll()
@@ -5183,7 +5491,7 @@ watch(
 )
 
 watch(
-  () => props.messages.some((message) => message.text.includes('```')),
+  () => visibleMessages.value.some((message) => message.text.includes('```')),
   (hasCodeBlocks) => {
     if (!hasCodeBlocks || highlightJsModule.value) return
     void ensureHighlightJsLoaded()
@@ -5227,8 +5535,7 @@ watch(
   () => props.isLoading,
   async (loading) => {
     if (loading) return
-    renderWindowEnd.value = null
-    renderWindowStart.value = Math.max(0, props.messages.length - RENDER_WINDOW_SIZE)
+    setRenderWindowToLatest()
     await scheduleConversationScroll()
   },
 )
@@ -5238,13 +5545,14 @@ watch(
   async () => {
     autoFollowOutput.value = true
     modalImageUrl.value = ''
+    closeMessageNavigation()
+    clearHighlightedMessage()
     closeFileLinkPicker()
     closeFileLinkContextMenu()
     isLoadingMore.value = false
     expandedResponseSourceIds.value = new Set()
     // Apply immediately for cached threads where isLoading never toggles.
-    renderWindowEnd.value = null
-    renderWindowStart.value = Math.max(0, props.messages.length - RENDER_WINDOW_SIZE)
+    setRenderWindowToLatest()
     await scheduleConversationScroll()
   },
   { flush: 'post' },
@@ -5253,9 +5561,12 @@ watch(
 function onConversationScroll(): void {
   const container = conversationListRef.value
   if (!container || props.isLoading) return
-  autoFollowOutput.value = renderWindowEnd.value === null && isAtBottom(container)
+  autoFollowOutput.value = isRenderingLatest.value && isAtBottom(container)
   if (hasMoreAbove.value && !isLoadingMore.value && container.scrollTop < LOAD_MORE_SCROLL_THRESHOLD_PX) {
     void loadMoreAbove()
+  }
+  if (hasMoreBelow.value && container.scrollHeight - (container.scrollTop + container.clientHeight) < LOAD_MORE_SCROLL_THRESHOLD_PX) {
+    void loadMoreBelow()
   }
 }
 
@@ -5294,6 +5605,10 @@ onBeforeUnmount(() => {
   if (searchHighlightResetTimer) {
     clearTimeout(searchHighlightResetTimer)
     searchHighlightResetTimer = null
+  }
+  if (highlightedMessageResetTimer) {
+    clearTimeout(highlightedMessageResetTimer)
+    highlightedMessageResetTimer = null
   }
   if (fileLinkPickerSearchDebounceTimer) {
     clearTimeout(fileLinkPickerSearchDebounceTimer)
@@ -5356,6 +5671,10 @@ onBeforeUnmount(() => {
   }
 }
 
+.conversation-item-jump-highlight {
+  @apply rounded-lg bg-sky-50/80 ring-1 ring-sky-300/70 transition-colors dark:bg-sky-950/30 dark:ring-sky-700/70;
+}
+
 .conversation-item-request {
   @apply justify-center;
 }
@@ -5400,6 +5719,70 @@ onBeforeUnmount(() => {
 
 .jump-to-latest-icon {
   transform: rotate(180deg);
+}
+
+.message-nav {
+  @apply absolute right-3 top-3 z-30 flex flex-col items-end;
+}
+
+.message-nav-toggle {
+  @apply inline-flex h-8 max-w-[calc(100vw-1.5rem)] items-center gap-1.5 rounded-md border border-zinc-200 bg-white/95 px-2.5 text-xs font-medium leading-none text-zinc-700 shadow-sm shadow-zinc-950/5 transition hover:border-zinc-300 hover:bg-white hover:text-zinc-950 dark:border-zinc-700 dark:bg-zinc-900/95 dark:text-zinc-200 dark:hover:border-zinc-600 dark:hover:bg-zinc-900 dark:hover:text-white;
+  font-family: var(--conversation-ui-symbol-font-family);
+  font-synthesis: none;
+}
+
+.message-nav-toggle-label {
+  @apply min-w-0 truncate;
+}
+
+.message-nav-count {
+  @apply inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-zinc-100 px-1 text-[10px] leading-none text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400;
+}
+
+.message-nav-chevron {
+  @apply h-3.5 w-3.5 shrink-0 text-zinc-500 transition-transform dark:text-zinc-400;
+}
+
+.message-nav-toggle[data-open='true'] .message-nav-chevron {
+  transform: rotate(180deg);
+}
+
+.message-nav-panel {
+  @apply mt-2 w-[min(22rem,calc(100vw-1.5rem))] overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-xl shadow-zinc-950/10 dark:border-zinc-700 dark:bg-zinc-900;
+  font-family: var(--conversation-ui-symbol-font-family);
+  font-synthesis: none;
+}
+
+.message-nav-header {
+  @apply flex items-center justify-between gap-3 border-b border-zinc-100 px-3 py-2 text-xs font-medium text-zinc-500 dark:border-zinc-800 dark:text-zinc-400;
+}
+
+.message-nav-list {
+  @apply m-0 max-h-[min(22rem,calc(100vh-12rem))] list-none overflow-y-auto p-1;
+}
+
+.message-nav-list-item {
+  @apply m-0;
+}
+
+.message-nav-spacer {
+  @apply m-0 block shrink-0;
+}
+
+.message-nav-empty {
+  @apply px-2 py-2 text-xs leading-5 text-zinc-500 dark:text-zinc-400;
+}
+
+.message-nav-item {
+  @apply grid w-full grid-cols-[2rem_minmax(0,1fr)] items-center gap-2 rounded-md border-0 bg-transparent px-2 py-2 text-left transition hover:bg-zinc-100 dark:hover:bg-zinc-800;
+}
+
+.message-nav-item-index {
+  @apply inline-flex h-5 min-w-5 items-center justify-center rounded bg-zinc-100 px-1 text-[10px] font-semibold leading-none text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400;
+}
+
+.message-nav-item-text {
+  @apply min-w-0 truncate text-xs leading-5 text-zinc-800 dark:text-zinc-100;
 }
 
 .message-stack {
