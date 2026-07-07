@@ -100,22 +100,53 @@ function addAncestorDirectories(
   }
 }
 
-function normalizeFuzzyMatchText(value: string): string {
+function isPathSeparator(char: string | undefined): boolean {
+  return char === '/' || char === '\\'
+}
+
+function isWordBoundary(previous: string | undefined, current: string | undefined): boolean {
+  if (!current) return false
+  if (!previous) return true
+  if (isPathSeparator(previous)) return true
+  if (/[^a-z0-9]/iu.test(previous) && /[a-z0-9]/iu.test(current)) return true
+  return /[a-z0-9]/u.test(previous) && /[A-Z]/u.test(current)
+}
+
+function normalizeFuzzyQuery(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/gu, '')
 }
 
 function scoreFuzzySubsequence(path: string, query: string): number | null {
-  const normalizedPath = normalizeFuzzyMatchText(path)
-  const normalizedQuery = normalizeFuzzyMatchText(query)
-  if (!normalizedPath || !normalizedQuery) return null
+  const normalizedQuery = normalizeFuzzyQuery(query)
+  if (!path || !normalizedQuery) return null
 
+  const lowerPath = path.toLowerCase()
   let searchFrom = 0
   let firstMatch = -1
   let previousMatch = -1
+  let boundaryMatches = 0
+  let consecutiveMatches = 0
+  let separatorMatches = 0
+  let extensionMatches = 0
+
   for (const char of normalizedQuery) {
-    const nextMatch = normalizedPath.indexOf(char, searchFrom)
+    const nextMatch = lowerPath.indexOf(char, searchFrom)
     if (nextMatch < 0) return null
     if (firstMatch < 0) firstMatch = nextMatch
+
+    if (isWordBoundary(path[nextMatch - 1], path[nextMatch])) {
+      boundaryMatches += 1
+    }
+    if (previousMatch >= 0 && nextMatch === previousMatch + 1) {
+      consecutiveMatches += 1
+    }
+    if (isPathSeparator(path[nextMatch - 1])) {
+      separatorMatches += 1
+    }
+    if (path[nextMatch - 1] === '.') {
+      extensionMatches += 1
+    }
+
     previousMatch = nextMatch
     searchFrom = nextMatch + 1
   }
@@ -123,8 +154,25 @@ function scoreFuzzySubsequence(path: string, query: string): number | null {
   const span = previousMatch - firstMatch + 1
   const compactnessPenalty = span - normalizedQuery.length
   const leadingPenalty = firstMatch
-  const lengthPenalty = Math.max(0, normalizedPath.length - normalizedQuery.length)
-  return Math.min(9.5, 5 + (leadingPenalty * 0.15) + (compactnessPenalty * 0.35) + (lengthPenalty * 0.02))
+  const lengthPenalty = Math.max(0, path.length - normalizedQuery.length)
+  const boundaryBonus = boundaryMatches * 0.28
+  const consecutiveBonus = consecutiveMatches * 0.18
+  const separatorBonus = separatorMatches * 0.35
+  const extensionPenalty = extensionMatches * 0.2
+  return Math.min(
+    9.5,
+    Math.max(
+      4.25,
+      7
+        + (leadingPenalty * 0.08)
+        + (compactnessPenalty * 0.22)
+        + (lengthPenalty * 0.01)
+        + extensionPenalty
+        - boundaryBonus
+        - consecutiveBonus
+        - separatorBonus,
+    ),
+  )
 }
 
 export function scoreComposerPathCandidate(path: string, query: string): number {
@@ -132,15 +180,19 @@ export function scoreComposerPathCandidate(path: string, query: string): number 
   const lowerPath = path.toLowerCase()
   const lowerQuery = query.toLowerCase()
   const normalizedPath = lowerPath.replace(/\\/gu, '/')
+  const normalizedOriginalPath = path.replace(/\\/gu, '/')
   const baseName = normalizedPath.slice(normalizedPath.lastIndexOf('/') + 1)
+  const originalBaseName = normalizedOriginalPath.slice(normalizedOriginalPath.lastIndexOf('/') + 1)
   if (baseName === lowerQuery) return 0
   if (baseName.startsWith(lowerQuery)) return 1
   if (baseName.includes(lowerQuery)) return 2
   if (normalizedPath.includes(`/${lowerQuery}`)) return 3
   if (normalizedPath.includes(lowerQuery)) return 4
+  const baseNameFuzzyScore = scoreFuzzySubsequence(originalBaseName, lowerQuery)
+  const pathFuzzyScore = scoreFuzzySubsequence(normalizedOriginalPath, lowerQuery)
   const fuzzyScores = [
-    scoreFuzzySubsequence(baseName, lowerQuery),
-    scoreFuzzySubsequence(normalizedPath, lowerQuery),
+    baseNameFuzzyScore,
+    typeof pathFuzzyScore === 'number' ? pathFuzzyScore + 0.75 : null,
   ].filter((score): score is number => typeof score === 'number')
   if (fuzzyScores.length > 0) {
     return Math.min(...fuzzyScores)
@@ -156,6 +208,21 @@ function compareComposerPathCandidates(
     || (a.pathDepth - b.pathDepth)
     || (a.pathLength - b.pathLength)
     || a.path.localeCompare(b.path)
+}
+
+function pushRankedComposerPathCandidate(
+  ranked: RankedComposerSearchPathCandidate[],
+  candidate: RankedComposerSearchPathCandidate,
+  limit: number,
+): void {
+  if (ranked.length >= limit) {
+    const worst = ranked[ranked.length - 1]
+    if (worst && compareComposerPathCandidates(candidate, worst) >= 0) return
+    ranked[ranked.length - 1] = candidate
+  } else {
+    ranked.push(candidate)
+  }
+  ranked.sort(compareComposerPathCandidates)
 }
 
 async function listPathsWithRipgrep(cwd: string): Promise<string[]> {
@@ -349,6 +416,28 @@ function filterComposerPathResults(
     .map(({ path, kind, isSymlink }) => ({ path, kind, isSymlink }))
 }
 
+function rankComposerPathCandidates(
+  candidates: ComposerSearchPathCandidate[],
+  query: string,
+  limit: number,
+): RankedComposerSearchPathCandidate[] {
+  const trimmedQuery = query.trim()
+  const ranked: RankedComposerSearchPathCandidate[] = []
+
+  for (const candidate of candidates) {
+    const score = scoreComposerPathCandidate(candidate.path, trimmedQuery)
+    if (trimmedQuery.length > 0 && score >= 10) continue
+    pushRankedComposerPathCandidate(ranked, {
+      ...candidate,
+      score,
+      pathDepth: candidate.path.split('/').filter(Boolean).length,
+      pathLength: candidate.path.length,
+    }, limit)
+  }
+
+  return ranked.slice(0, limit)
+}
+
 async function readAbsolutePathResult(pathValue: string): Promise<ComposerSearchPathResult | null> {
   try {
     const linkInfo = await lstat(pathValue)
@@ -430,6 +519,7 @@ export async function searchComposerPaths(
 
   const topLevelRows = await listTopLevelComposerPaths(cwd)
   if (!trimmedQuery) {
+    warmComposerPathCache(cwd)
     return topLevelRows.slice(0, maxResults)
   }
 
@@ -449,16 +539,11 @@ export async function searchComposerPaths(
   if (!cachedPaths) {
     warmComposerPathCache(cwd)
   }
-  const candidates = buildComposerSearchPathCandidates(paths)
-    .map((candidate) => ({
-      ...candidate,
-      score: scoreComposerPathCandidate(candidate.path, trimmedQuery),
-      pathDepth: candidate.path.split('/').filter(Boolean).length,
-      pathLength: candidate.path.length,
-    }))
-    .filter((row) => trimmedQuery.length === 0 || row.score < 10)
-    .sort(compareComposerPathCandidates)
-    .slice(0, maxResults)
+  const candidates = rankComposerPathCandidates(
+    buildComposerSearchPathCandidates(paths),
+    trimmedQuery,
+    maxResults,
+  )
 
   return await Promise.all(candidates.map(async (candidate) => ({
     path: candidate.path,

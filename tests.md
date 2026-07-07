@@ -6693,6 +6693,38 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Rollback/Cleanup
 - No persistent cleanup is required.
 
+### Feature: Faster fzf-style composer file mention search
+
+#### Prerequisites
+- App server is running from this repository.
+- The active project contains several files with similar acronym or subsequence matches, for example `ThreadComposer.vue` and `tests/cache.txt`.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Run `./node_modules/.bin/vitest run src/server/composerFileSearch.test.ts src/components/content/composerFileMentions.test.ts`.
+2. Open a thread in light theme and focus the composer.
+3. Type `@` and confirm top-level path suggestions appear immediately.
+4. Continue typing an acronym-style query such as `tc`.
+5. Confirm basename acronym matches such as `ThreadComposer.vue` rank ahead of loose path-spanning matches such as `tests/cache.txt`.
+6. Select a suggestion and confirm the inserted inline mention still uses the existing `./path` or `@/path` format.
+7. Repeat steps 2-6 in dark theme.
+
+#### Expected Results
+- File mention suggestions update faster while typing because the client waits 60ms before searching instead of 120ms.
+- Bare `@` opens the top-level suggestion list and starts warming the recursive path cache in the background.
+- Fuzzy results prefer fzf-like compact, boundary, and camel-case acronym matches.
+- Existing relative, home-prefixed, absolute, directory, file, and symlink suggestion metadata behavior remains unchanged.
+- Light and dark theme suggestion rows remain readable.
+
+#### Performance Audit
+- Empty-query mention search still returns from one top-level `readdir`, then warms the existing 30-second `rg --files` cache asynchronously for follow-up fuzzy queries.
+- Recursive candidate ranking no longer materializes and globally sorts every matching candidate; it maintains a bounded top-N working set before returning the requested limit.
+- Fuzzy scoring is O(path length + query length) per candidate and does not add extra filesystem reads.
+- Symlink checks still run only for the final returned candidates.
+
+#### Rollback/Cleanup
+- No persistent cleanup is required.
+
 ### Feature: Consecutive tool-call rows group like command rows
 
 #### Prerequisites

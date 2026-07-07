@@ -520,6 +520,7 @@ type ComposerSkillMentionsModule = typeof import('./composerSkillMentions')
 
 const INLINE_MENTION_TOKEN_PATTERN = /(^|\s)([@\uFF20$\uFF04][^\s@\uFF20$\uFF04]*)$/u
 const FULL_WIDTH_DOLLAR = '\uFF04'
+const FILE_MENTION_SEARCH_DEBOUNCE_MS = 60
 
 let markdownRendererModulePromise: Promise<MarkdownRendererModule> | null = null
 let composerFileMentionsModulePromise: Promise<ComposerFileMentionsModule> | null = null
@@ -1909,7 +1910,7 @@ async function queueFileMentionSearch(): Promise<void> {
       if (!isFileMentionOpen.value || token !== fileMentionSearchToken) return
       fileMentionSuggestions.value = []
     }
-  }, 120)
+  }, FILE_MENTION_SEARCH_DEBOUNCE_MS)
 }
 
 async function applyFileMention(suggestion: ComposerFileSuggestion): Promise<void> {

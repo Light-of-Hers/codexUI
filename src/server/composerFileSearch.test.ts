@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
-import { searchComposerPaths } from './composerFileSearch'
+import { scoreComposerPathCandidate, searchComposerPaths } from './composerFileSearch'
 
 let tempDir = ''
 
@@ -139,6 +139,32 @@ describe('searchComposerPaths', () => {
     )
     expect(results.findIndex((entry) => entry.path === 'SeedKernelBench')).toBeLessThan(
       results.findIndex((entry) => entry.path === '_workspace.tmp/deep/3rdparty/SeedKernelBench'),
+    )
+  })
+
+  it('prefers fzf-style basename acronym matches over path-spanning matches', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'codexui-composer-search-'))
+
+    await writeFile(join(tempDir, 'ThreadComposer.vue'), 'component')
+    await mkdir(join(tempDir, 'tests'), { recursive: true })
+    await writeFile(join(tempDir, 'tests', 'cache.txt'), 'cache')
+
+    const results = await searchComposerPaths(tempDir, 'tc', 20)
+
+    expect(results[0]?.path).toBe('ThreadComposer.vue')
+    expect(results.findIndex((entry) => entry.path === 'ThreadComposer.vue')).toBeLessThan(
+      results.findIndex((entry) => entry.path === 'tests/cache.txt'),
+    )
+  })
+})
+
+describe('scoreComposerPathCandidate', () => {
+  it('rewards compact word-boundary acronym matches like fzf', () => {
+    expect(scoreComposerPathCandidate('ThreadComposer.vue', 'tc')).toBeLessThan(
+      scoreComposerPathCandidate('tests/cache.txt', 'tc'),
+    )
+    expect(scoreComposerPathCandidate('SeedKernelBench', 'skb')).toBeLessThan(
+      scoreComposerPathCandidate('sidekick-bootstrap.txt', 'skb'),
     )
   })
 })
