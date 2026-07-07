@@ -6817,3 +6817,34 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - Stop any disposable live test turn if it is still running, then close the header search control.
+
+### Feature: Markdown preview code-block copy buttons
+
+#### Prerequisites
+- App server is running from this repository.
+- A local Markdown file is available with at least one fenced code block.
+- Light and dark color schemes are available from the operating system or browser.
+
+#### Steps
+1. Run `pnpm exec vitest run src/server/localBrowseUi.test.ts -t "markdown preview HTML"`.
+2. Open the Markdown file through the local edit route.
+3. Click `Preview`.
+4. In light theme, hover a fenced code block and click the copy button in its top-right corner.
+5. Paste into a scratch field and confirm the copied text matches only the code block content.
+6. Confirm the copy button changes to the copied state briefly and then returns to `Copy code`.
+7. Switch to dark theme, reload or reopen preview, and repeat steps 4-6.
+8. Open the standalone `/codex-local-preview/<path>` route for the same file and repeat one copy check.
+
+#### Expected Results
+- Each rendered code block in local Markdown preview has one top-right copy button.
+- Clicking the button copies the code text without the language header or surrounding Markdown.
+- The button remains readable and the copied state is visible in light and dark themes.
+- Existing preview interactions still work: image browse links open, annotation/highlight clicks still show their controls, and double-clicking non-interactive preview content still jumps to the editor line.
+
+#### Performance Audit
+- Copy buttons are inserted with one bounded string replacement pass over the already-rendered preview HTML.
+- The click handler uses event delegation on the preview document, so rendering many code blocks does not add per-block listeners.
+- Clipboard work runs only after a user click and adds no network, filesystem, or preview refresh work.
+
+#### Rollback/Cleanup
+- No persistent cleanup is required.

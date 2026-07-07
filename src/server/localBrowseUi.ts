@@ -1053,6 +1053,7 @@ function markdownPreviewStyles(): string {
       padding: 0.1rem 0.32rem;
     }
     .message-code-block {
+      position: relative;
       overflow: hidden;
       border: 1px solid var(--border);
       border-radius: 8px;
@@ -1064,18 +1065,56 @@ function markdownPreviewStyles(): string {
       color: var(--muted-fg);
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
       font-size: 11px;
-      padding: 0.45rem 0.75rem;
+      padding: 0.45rem 2.8rem 0.45rem 0.75rem;
       text-transform: uppercase;
       letter-spacing: 0;
     }
     .message-code-pre {
       margin: 0;
       overflow-x: auto;
-      padding: 0.8rem;
+      padding: 0.8rem 2.8rem 0.8rem 0.8rem;
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
       font-size: 13px;
       line-height: 1.55;
       white-space: pre;
+    }
+    .message-code-copy-button {
+      position: absolute;
+      top: 0.45rem;
+      right: 0.55rem;
+      z-index: 2;
+      display: inline-flex;
+      width: 1.5rem;
+      height: 1.5rem;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: color-mix(in srgb, var(--block-code-bg) 86%, var(--preview-bg));
+      color: var(--muted-fg);
+      opacity: 0.78;
+      cursor: pointer;
+      transition: border-color 140ms ease, background-color 140ms ease, color 140ms ease, opacity 140ms ease;
+    }
+    .message-code-copy-button:hover,
+    .message-code-copy-button:focus-visible {
+      border-color: var(--syntax-constant);
+      color: var(--syntax-constant);
+      opacity: 1;
+    }
+    .message-code-copy-button[data-copied="true"] {
+      border-color: var(--syntax-addition-fg);
+      background: var(--syntax-addition-bg);
+      color: var(--syntax-addition-fg);
+      opacity: 1;
+    }
+    .message-code-copy-icon {
+      width: 0.86rem;
+      height: 0.86rem;
+      display: block;
+      background: currentColor;
+      -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 16a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2z'/%3E%3Cpath d='M4 8v10a2 2 0 0 0 2 2h10'/%3E%3C/svg%3E") center / contain no-repeat;
+      mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 16a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2z'/%3E%3Cpath d='M4 8v10a2 2 0 0 0 2 2h10'/%3E%3C/svg%3E") center / contain no-repeat;
     }
     .message-code-pre .hljs {
       display: block;
@@ -1227,6 +1266,23 @@ function markdownPreviewStyles(): string {
   `
 }
 
+function markdownPreviewCodeCopyButtonHtml(): string {
+  return '<button class="message-code-copy-button" type="button" title="Copy code" aria-label="Copy code"><span class="message-code-copy-icon" aria-hidden="true"></span></button>'
+}
+
+function addMarkdownPreviewCodeCopyButtons(html: string): string {
+  if (!html.includes('message-code-block') || html.includes('message-code-copy-button')) return html
+  return html.replace(
+    /<div\b(?=[^>]*class="[^"]*\bmessage-code-block\b[^"]*")[^>]*>/gu,
+    (openingTag) => {
+      const focusableOpeningTag = /\stabindex=/u.test(openingTag)
+        ? openingTag
+        : openingTag.replace(/>$/u, ' tabindex="0">')
+      return `${focusableOpeningTag}${markdownPreviewCodeCopyButtonHtml()}`
+    },
+  )
+}
+
 function markdownPreviewScript(localPath: string): string {
   const safePathLiteral = escapeForInlineScriptString(localPath)
   return `
@@ -1242,9 +1298,61 @@ function markdownPreviewScript(localPath: string): string {
         height: rect.height,
       });
       let activePreviewActionTarget = null;
+      let copiedCodeBlockResetTimer = 0;
       let floatingActionPositionFrame = 0;
       let highlightSelectionFrame = 0;
       let isPreviewPointerSelectionActive = false;
+      const writeTextToClipboard = async (text) => {
+        if (!text) return false;
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function' && window.isSecureContext) {
+          await navigator.clipboard.writeText(text);
+          return true;
+        }
+        const fallback = document.createElement('textarea');
+        fallback.value = text;
+        fallback.setAttribute('readonly', 'readonly');
+        fallback.style.position = 'fixed';
+        fallback.style.top = '-9999px';
+        fallback.style.left = '-9999px';
+        fallback.style.opacity = '0';
+        document.body.appendChild(fallback);
+        fallback.focus();
+        fallback.select();
+        const copied = document.execCommand('copy');
+        document.body.removeChild(fallback);
+        if (!copied) throw new Error('Clipboard copy failed');
+        return true;
+      };
+      const copyCodeBlock = async (button) => {
+        const block = button.closest('.message-code-block');
+        if (!block) return;
+        const code = block.querySelector('.message-code-pre code');
+        const content = code?.textContent || '';
+        if (!content) return;
+        try {
+          await writeTextToClipboard(content);
+        } catch {
+          return;
+        }
+        const previousCopiedButton = document.querySelector('.message-code-copy-button[data-copied="true"]');
+        if (previousCopiedButton && previousCopiedButton !== button) {
+          previousCopiedButton.dataset.copied = 'false';
+          previousCopiedButton.setAttribute('aria-label', 'Copy code');
+          previousCopiedButton.setAttribute('title', 'Copy code');
+        }
+        button.dataset.copied = 'true';
+        button.setAttribute('aria-label', 'Code copied');
+        button.setAttribute('title', 'Code copied');
+        if (copiedCodeBlockResetTimer) {
+          window.clearTimeout(copiedCodeBlockResetTimer);
+        }
+        copiedCodeBlockResetTimer = window.setTimeout(() => {
+          button.dataset.copied = 'false';
+          button.setAttribute('aria-label', 'Copy code');
+          button.setAttribute('title', 'Copy code');
+          copiedCodeBlockResetTimer = 0;
+        }, 1400);
+      };
       const postHighlightActionDismiss = () => {
         activePreviewActionTarget = null;
         window.parent.postMessage({
@@ -1444,6 +1552,13 @@ function markdownPreviewScript(localPath: string): string {
           : event.target && event.target.nodeType === Node.TEXT_NODE
             ? event.target.parentElement
             : null;
+        const codeCopyButton = targetElement?.closest('button.message-code-copy-button');
+        if (codeCopyButton) {
+          event.preventDefault();
+          event.stopPropagation();
+          void copyCodeBlock(codeCopyButton);
+          return;
+        }
         const imageElement = targetElement?.closest('img.message-markdown-image[data-browse-href]');
         const imageBrowseHref = imageElement?.getAttribute('data-browse-href') || '';
         if (imageBrowseHref && imageBrowseHref !== '#') {
@@ -1509,11 +1624,11 @@ function markdownPreviewScript(localPath: string): string {
 }
 
 export function createMarkdownPreviewHtml(localPath: string, markdown: string): string {
-  const rendered = renderMarkdownContent(markdown, {
+  const rendered = addMarkdownPreviewCodeCopyButtons(renderMarkdownContent(markdown, {
     cwd: dirname(localPath),
     kind: 'message',
     highlightVersion: 0,
-  }).html
+  }).html)
   const bodyHtml = rendered.trim()
     ? rendered
     : '<p class="message-text">Nothing to preview.</p>'
