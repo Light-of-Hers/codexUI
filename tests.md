@@ -987,6 +987,29 @@ Model, skill, thinking, and plan controls remain usable while a thread turn is i
 
 ### Feature: pnpm dev script installs dependencies and starts Vite
 
+#### Prerequisites
+- `pnpm` is available on PATH.
+- Port `5373` is free, or choose another disposable port for the smoke check.
+
+#### Steps
+1. Run `node -c scripts/dev.cjs`.
+2. Run `timeout 6s codex-ui-dev --host 127.0.0.1 --port 5373`.
+3. Confirm the startup command line prints `node scripts/dev.cjs --host 127.0.0.1 --port 5373`, without a leading standalone `--`.
+4. Confirm Vite reports `http://127.0.0.1:5373/`, not the default `5173`.
+5. Run `timeout 6s pnpm run dev --host 127.0.0.1 --port 5373` and confirm the same port behavior.
+
+#### Expected Results
+- The generated `codex-ui-dev` launcher forwards flags through `pnpm run dev` without adding a literal `--` to `scripts/dev.cjs`.
+- `scripts/dev.cjs` defensively strips a leading standalone `--` if another caller still provides one.
+- Vite receives `--host` and `--port` as real flags and binds the requested port.
+
+#### Performance Audit
+- Argument normalization is a constant-time check of the first passthrough argument.
+- The launcher change does not add filesystem scans, dependency installs, network calls, or extra child processes.
+
+#### Rollback/Cleanup
+- Stop the temporary dev server after the smoke check.
+
 ### Feature: Tailscale CIDRs bypass password and Cloudflare tunnel is opt-in
 
 #### Prerequisites

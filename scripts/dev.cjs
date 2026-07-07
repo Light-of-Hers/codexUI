@@ -115,6 +115,9 @@ function run(command, args, options = {}) {
 }
 
 const passthroughArgs = process.argv.slice(2)
+if (passthroughArgs[0] === '--') {
+  passthroughArgs.shift()
+}
 const viteBinPath = join(process.cwd(), 'node_modules', '.bin', process.platform === 'win32' ? 'vite.cmd' : 'vite')
 const vueTscBinPath = join(process.cwd(), 'node_modules', '.bin', process.platform === 'win32' ? 'vue-tsc.cmd' : 'vue-tsc')
 
