@@ -1813,6 +1813,42 @@ describe('active turn state reconciliation', () => {
     expect(gatewayMocks.startThreadTurn).not.toHaveBeenCalled()
   })
 
+  it('starts a new turn when stale running state steers into an idle backend', async () => {
+    const state = await createThreadHarness()
+    gatewayMocks.getThreadDetail.mockResolvedValue(activeTurnDetail('turn-stale'))
+    gatewayMocks.steerThreadTurn.mockRejectedValueOnce(new Error('RPC turn/steer failed with HTTP 502: no active turn to steer'))
+    gatewayMocks.startThreadTurn.mockResolvedValueOnce('turn-new')
+
+    await state.sendMessageToSelectedThread('continue after stale active state')
+    await waitForAsyncCondition(() => gatewayMocks.startThreadTurn.mock.calls.length > 0)
+    await flushAsyncTasks()
+
+    expect(gatewayMocks.steerThreadTurn).toHaveBeenCalledTimes(1)
+    expect(gatewayMocks.steerThreadTurn).toHaveBeenCalledWith(
+      'thread-a',
+      'turn-stale',
+      'continue after stale active state',
+      [],
+      undefined,
+      [],
+      undefined,
+    )
+    expect(gatewayMocks.startThreadTurn).toHaveBeenCalledWith(
+      'thread-a',
+      'continue after stale active state',
+      [],
+      undefined,
+      undefined,
+      undefined,
+      [],
+      'default',
+      undefined,
+    )
+    expect(state.error.value).toBe('')
+    expect(state.selectedThread.value?.inProgress).toBe(true)
+    expect(state.selectedLiveOverlay.value?.activityLabel).toBe('Thinking')
+  })
+
   it('keeps a just-started turn running when the first thread read has not caught up', async () => {
     const state = await createThreadHarness()
     gatewayMocks.getThreadDetail
@@ -1980,6 +2016,25 @@ describe('turn interruption', () => {
     expect(gatewayMocks.interruptThreadTurn).toHaveBeenNthCalledWith(1, 'thread-a', 'turn-stale')
     expect(gatewayMocks.interruptThreadTurn).toHaveBeenNthCalledWith(2, 'thread-a', 'turn-current')
     expect(state.error.value).toBe('')
+  })
+
+  it('treats no active turn during stop as already settled', async () => {
+    const { state } = createInterruptHarness()
+    gatewayMocks.getThreadDetail
+      .mockResolvedValueOnce(threadDetail('turn-stale'))
+      .mockResolvedValueOnce(threadDetail('', false))
+    gatewayMocks.interruptThreadTurn
+      .mockRejectedValueOnce(new Error('RPC turn/interrupt failed with HTTP 502: no active turn to interrupt'))
+
+    expect(state.selectedThreadInProgress.value).toBe(true)
+
+    await state.interruptSelectedThreadTurn()
+
+    expect(gatewayMocks.interruptThreadTurn).toHaveBeenCalledTimes(1)
+    expect(gatewayMocks.interruptThreadTurn).toHaveBeenCalledWith('thread-a', 'turn-stale')
+    expect(state.error.value).toBe('')
+    expect(state.selectedThreadInProgress.value).toBe(false)
+    expect(state.isInterruptingTurn.value).toBe(false)
   })
 })
 

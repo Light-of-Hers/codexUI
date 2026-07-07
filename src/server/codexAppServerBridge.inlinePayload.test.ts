@@ -78,20 +78,34 @@ process.stdin.on('data', (chunk) => {
   await chmod(path, 0o755)
 }
 
-async function writeThreadRoutingCommand(path: string, provider: string, logPath: string, ownsThread: boolean): Promise<void> {
+async function writeThreadRoutingCommand(path: string, provider: string, logPath: string, ownsThread: boolean, options: { emitStartedNotification?: boolean; interruptError?: string } = {}): Promise<void> {
   await writeFile(path, `#!/usr/bin/env node
 const fs = require('node:fs')
 if (process.argv[2] === '--version') {
   console.log(${JSON.stringify(`${provider} mock`)})
   process.exit(0)
 }
+const emitStartedNotification = ${JSON.stringify(options.emitStartedNotification === true)}
+const interruptError = ${JSON.stringify(options.interruptError ?? '')}
 process.stdin.setEncoding('utf8')
 let buffer = ''
+let notificationEmitted = false
 function result(id, payload) {
   process.stdout.write(JSON.stringify({ id, result: payload }) + '\\n')
 }
 function error(id, message) {
   process.stdout.write(JSON.stringify({ id, error: { code: -32000, message } }) + '\\n')
+}
+function emitNotification() {
+  if (!emitStartedNotification || notificationEmitted) return
+  notificationEmitted = true
+  process.stdout.write(JSON.stringify({
+    method: 'turn/started',
+    params: {
+      threadId: 'thread-1',
+      turn: { id: 'turn-1', threadId: 'thread-1' }
+    }
+  }) + '\\n')
 }
 process.stdin.on('data', (chunk) => {
   buffer += chunk
@@ -104,6 +118,7 @@ process.stdin.on('data', (chunk) => {
       fs.appendFileSync(${JSON.stringify(logPath)}, ${JSON.stringify(provider)} + ':' + message.method + '\\n')
       if (message.method === 'config/read') {
         result(message.id, { config: { model_provider: ${JSON.stringify(provider)}, model: 'gpt-5.5-extra-high' } })
+        emitNotification()
       } else if (message.method === 'thread/read') {
         if (${JSON.stringify(ownsThread)}) {
           result(message.id, { thread: { id: 'thread-1', status: { type: 'running' }, turns: [{ id: 'turn-1', status: 'inProgress' }] } })
@@ -111,7 +126,8 @@ process.stdin.on('data', (chunk) => {
           error(message.id, 'thread not found: thread-1')
         }
       } else if (message.method === 'turn/interrupt') {
-        if (${JSON.stringify(ownsThread)}) result(message.id, {})
+        if (${JSON.stringify(ownsThread)} && interruptError) error(message.id, interruptError)
+        else if (${JSON.stringify(ownsThread)}) result(message.id, {})
         else error(message.id, 'thread not found: thread-1')
       } else {
         result(message.id, {})
@@ -1570,6 +1586,71 @@ describe('backend queue scheduling', () => {
     }
   })
 
+  it('drains explicit queued turns after a manually stopped interrupted turn', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-queue-after-interrupted-'))
+    vi.stubEnv('CODEX_HOME', tempDir)
+    await writeFile(join(tempDir, '.codex-global-state.json'), JSON.stringify(queuedTurnState('queued after interrupt')), 'utf8')
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = []
+    const processor = new BackendQueueProcessor({
+      onNotification: () => () => undefined,
+      async rpc(method: string, params: Record<string, unknown>): Promise<unknown> {
+        calls.push({ method, params })
+        if (method === 'thread/read') {
+          return {
+            thread: {
+              id: 'thread-1',
+              status: { type: 'idle' },
+              turns: [{ id: 'turn-1', status: 'interrupted' }],
+            },
+          }
+        }
+        return {}
+      },
+    } as never)
+
+    try {
+      processor.recordIntentionalInterrupt('thread-1', 'turn-1')
+      await processor.processThreadQueue('thread-1')
+
+      expect(calls).toEqual([
+        { method: 'thread/read', params: { threadId: 'thread-1', includeTurns: true } },
+        {
+          method: 'thread/resume',
+          params: {
+            threadId: 'thread-1',
+            persistExtendedHistory: true,
+            model: 'gpt-5.5-extra-high',
+            modelProvider: 'rustcat',
+          },
+        },
+        {
+          method: 'turn/start',
+          params: {
+            threadId: 'thread-1',
+            input: [{ type: 'text', text: 'queued after interrupt' }],
+            model: 'gpt-5.5-extra-high',
+            modelProvider: 'rustcat',
+            effort: 'xhigh',
+            collaborationMode: {
+              mode: 'default',
+              settings: {
+                model: 'gpt-5.5-extra-high',
+                reasoning_effort: 'xhigh',
+                developer_instructions: null,
+                model_provider: 'rustcat',
+              },
+            },
+          },
+        },
+      ])
+      const state = JSON.parse(await readFile(join(tempDir, '.codex-global-state.json'), 'utf8')) as Record<string, unknown>
+      expect(state['thread-queue-state']).toBeUndefined()
+    } finally {
+      processor.dispose()
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
   it('detects interrupted idle turns that were not intentionally stopped', () => {
     const snapshot = shouldAutoContinueInterruptedThreadFromThreadRead({
       thread: {
@@ -1807,6 +1888,9 @@ describe('backend queue scheduling', () => {
     })
 
     await vi.advanceTimersByTimeAsync(250)
+    await vi.waitFor(() => {
+      expect(calls).toHaveLength(3)
+    })
 
     expect(calls).toEqual([
       { method: 'thread/read', params: { threadId: 'thread-1', includeTurns: true } },
@@ -2022,6 +2106,75 @@ describe('backend queue scheduling', () => {
     processor.dispose()
   })
 
+  it('clears the manual stop guard after a later non-interrupted turn completes', async () => {
+    vi.useFakeTimers()
+    vi.stubEnv('CODEX_HOME', `/tmp/codexui-auto-continue-stop-clear-completed-${String(Date.now())}`)
+    const listeners: Array<(value: { method: string; params: unknown }) => void> = []
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = []
+    const processor = new BackendQueueProcessor({
+      onNotification(listener: (value: { method: string; params: unknown }) => void) {
+        listeners.push(listener)
+        return () => undefined
+      },
+      async rpc(method: string, params: Record<string, unknown>): Promise<unknown> {
+        calls.push({ method, params })
+        if (method === 'thread/read') {
+          return {
+            thread: {
+              id: 'thread-1',
+              status: { type: 'idle' },
+              turns: [
+                { id: 'turn-stopped', status: 'interrupted' },
+                { id: 'turn-later', status: 'interrupted' },
+              ],
+            },
+          }
+        }
+        if (method === 'thread/resume') {
+          return { model: 'deepseek-v4-pro' }
+        }
+        return {}
+      },
+    } as never)
+
+    processor.recordIntentionalInterrupt('thread-1', 'turn-stopped')
+    listeners[0]?.({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-1',
+        turn: { id: 'turn-success', status: 'completed' },
+      },
+    })
+    listeners[0]?.({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-1',
+        turn: { id: 'turn-later', status: 'interrupted' },
+      },
+    })
+
+    await vi.advanceTimersByTimeAsync(250)
+    await vi.waitFor(() => {
+      expect(calls).toHaveLength(4)
+    })
+
+    expect(calls).toEqual([
+      { method: 'thread/read', params: { threadId: 'thread-1', includeTurns: true } },
+      { method: 'thread/read', params: { threadId: 'thread-1', includeTurns: true } },
+      { method: 'thread/resume', params: { threadId: 'thread-1', persistExtendedHistory: true } },
+      {
+        method: 'turn/start',
+        params: {
+          threadId: 'thread-1',
+          input: [{ type: 'text', text: 'Please continue.' }],
+          model: 'deepseek-v4-pro',
+        },
+      },
+    ])
+
+    processor.dispose()
+  })
+
   it('auto-continues interrupted turns again after an explicit stop is cleared', async () => {
     vi.useFakeTimers()
     vi.stubEnv('CODEX_HOME', `/tmp/codexui-auto-continue-stop-clear-${String(Date.now())}`)
@@ -2061,6 +2214,9 @@ describe('backend queue scheduling', () => {
     })
 
     await vi.advanceTimersByTimeAsync(250)
+    await vi.waitFor(() => {
+      expect(calls).toHaveLength(3)
+    })
 
     expect(calls).toEqual([
       { method: 'thread/read', params: { threadId: 'thread-1', includeTurns: true } },
@@ -2538,6 +2694,38 @@ describe('app-server runtime configuration', () => {
     }
   })
 
+  it('treats turn interrupts with no active turn as idempotent success', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-provider-interrupt-no-active-'))
+    const commandLogPath = join(tempDir, 'commands.log')
+    const cursorCommand = join(tempDir, 'codex-cursor')
+    await writeThreadRoutingCommand(cursorCommand, 'cursor', commandLogPath, true, {
+      interruptError: 'no active turn to interrupt',
+    })
+    vi.stubEnv('CODEX_HOME', tempDir)
+    vi.stubEnv('CODEXUI_CODEX_COMMAND', cursorCommand)
+    vi.stubEnv('CODEXUI_CODEX_CURSOR_COMMAND', cursorCommand)
+
+    const middleware = createCodexBridgeMiddleware()
+
+    try {
+      const response = await invokeBridgeJson(middleware, '/codex-api/rpc', {
+        method: 'turn/interrupt',
+        params: {
+          threadId: 'thread-1',
+          turnId: 'turn-1',
+          modelProvider: 'cursor',
+        },
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(response.payload).toEqual({ result: {} })
+      expect(await readFile(commandLogPath, 'utf8')).toContain('cursor:turn/interrupt\n')
+    } finally {
+      middleware.dispose()
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
   it('retries unqualified turn interrupts on a runtime that previously read the thread', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'codexui-provider-interrupt-fallback-'))
     const commandLogPath = join(tempDir, 'commands.log')
@@ -2586,6 +2774,61 @@ describe('app-server runtime configuration', () => {
       expect(log).toContain('cursor:thread/read\n')
       expect(log).toContain('moon:turn/interrupt\n')
       expect(log).toContain('cursor:turn/interrupt\n')
+    } finally {
+      middleware.dispose()
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('retries unqualified turn interrupts on a runtime that emitted thread notifications', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-provider-interrupt-notification-fallback-'))
+    const commandLogPath = join(tempDir, 'commands.log')
+    const cursorCommand = join(tempDir, 'codex-cursor')
+    const moonCommand = join(tempDir, 'codex-moon')
+    await writeThreadRoutingCommand(cursorCommand, 'cursor', commandLogPath, true, { emitStartedNotification: true })
+    await writeThreadRoutingCommand(moonCommand, 'moon', commandLogPath, false)
+    await writeFile(join(tempDir, 'webui-free-mode.json'), JSON.stringify({
+      enabled: true,
+      apiKey: null,
+      model: 'gpt-5.5-extra-high',
+      provider: 'cursor',
+    }), 'utf8')
+    vi.stubEnv('CODEX_HOME', tempDir)
+    vi.stubEnv('CODEXUI_CODEX_COMMAND', cursorCommand)
+    vi.stubEnv('CODEXUI_CODEX_CURSOR_COMMAND', cursorCommand)
+    vi.stubEnv('CODEXUI_CODEX_MOON_COMMAND', moonCommand)
+
+    const middleware = createCodexBridgeMiddleware()
+
+    try {
+      const cursorProviderResponse = await invokeBridgeJson(middleware, '/codex-api/free-mode/custom-provider', {
+        provider: 'cursor',
+      })
+      expect(cursorProviderResponse.statusCode, JSON.stringify(cursorProviderResponse.payload)).toBe(200)
+
+      const configResponse = await invokeBridgeJson(middleware, '/codex-api/rpc', {
+        method: 'config/read',
+        params: {},
+      })
+      expect(configResponse.statusCode, JSON.stringify(configResponse.payload)).toBe(200)
+
+      const providerResponse = await invokeBridgeJson(middleware, '/codex-api/free-mode/custom-provider', {
+        provider: 'moon',
+      })
+      expect(providerResponse.statusCode, JSON.stringify(providerResponse.payload)).toBe(200)
+
+      const interruptResponse = await invokeBridgeJson(middleware, '/codex-api/rpc', {
+        method: 'turn/interrupt',
+        params: { threadId: 'thread-1', turnId: 'turn-1' },
+      })
+
+      expect(interruptResponse.statusCode).toBe(200)
+      expect(interruptResponse.payload).toEqual({ result: {} })
+      const log = await readFile(commandLogPath, 'utf8')
+      expect(log).toContain('cursor:config/read\n')
+      expect(log).toContain('moon:turn/interrupt\n')
+      expect(log).toContain('cursor:turn/interrupt\n')
+      expect(log).not.toContain('cursor:thread/read\n')
     } finally {
       middleware.dispose()
       await rm(tempDir, { recursive: true, force: true })

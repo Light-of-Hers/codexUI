@@ -5532,7 +5532,7 @@ Markdown files opened through the local editor expose a preview button that rend
 - Stop only the temporary dev server started for this test.
 - Remove generated files under `output/playwright/` if they are not needed.
 
-### Feature: Auto-continue unexpectedly interrupted Codex turns
+### Feature: Auto-continue skips manually stopped Codex turns
 
 #### Prerequisites
 - App server is running from this repository.
@@ -5551,8 +5551,8 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Expected Results
 - Latest interrupted turns on idle threads are detected from `thread/read` snapshots.
 - Interruptions caused by `turn/interrupt` are recorded as intentional stops and skipped.
-- The automatic continuation resumes the thread before calling `turn/start`.
-- The automatic continuation reuses the model returned by `thread/resume` when available.
+- Unexpected interruptions still resume the thread before calling `turn/start` with `Please continue.`.
+- Explicitly queued user messages can still start after a manually stopped interrupted idle turn.
 - The targeted Vitest suite passes.
 
 #### Rollback/Cleanup
@@ -5622,7 +5622,7 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Rollback/Cleanup
 - No cleanup is required.
 
-### Feature: Restored interrupted-turn recovery and provider runtime isolation
+### Feature: Disabled interrupted-turn auto-recovery and provider runtime isolation
 
 #### Prerequisites
 - App server is running from this repository.

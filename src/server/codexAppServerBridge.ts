@@ -106,6 +106,10 @@ const THREAD_MODEL_PROVIDER_OVERRIDE_METHODS = new Set([
   'turn/interrupt',
 ])
 
+function isInterruptedTurnAutoContinueEnabled(): boolean {
+  return process.env.CODEXUI_AUTO_CONTINUE_INTERRUPTED_TURNS !== '0'
+}
+
 type ServerRequestReply = {
   result?: unknown
   error?: {
@@ -1337,6 +1341,10 @@ function isNoRolloutFoundError(error: unknown): boolean {
 function isThreadNotFoundError(error: unknown): boolean {
   const message = getErrorMessage(error, '').toLowerCase()
   return message.includes('thread not found') || message.includes('thread not found:')
+}
+
+function isNoActiveTurnToInterruptError(error: unknown): boolean {
+  return getErrorMessage(error, '').toLowerCase().includes('no active turn to interrupt')
 }
 
 function isTurnRuntimeRetryMethod(method: string): boolean {
@@ -5955,6 +5963,27 @@ type CapturedItem = {
   completed: boolean
 }
 
+function extractThreadIdFromParams(params: unknown): string {
+  const record = asRecord(params)
+  if (!record) return ''
+  const threadId =
+    (typeof record.threadId === 'string' ? record.threadId : '') ||
+    (typeof record.thread_id === 'string' ? record.thread_id : '') ||
+    (typeof record.conversationId === 'string' ? record.conversationId : '') ||
+    (typeof record.conversation_id === 'string' ? record.conversation_id : '')
+  if (threadId) return threadId
+  const thread = asRecord(record.thread)
+  if (thread && typeof thread.id === 'string') return thread.id
+  const turn = asRecord(record.turn)
+  if (turn) {
+    const turnThreadId =
+      (typeof turn.threadId === 'string' ? turn.threadId : '') ||
+      (typeof turn.thread_id === 'string' ? turn.thread_id : '')
+    if (turnThreadId) return turnThreadId
+  }
+  return ''
+}
+
 const MERGEABLE_ITEM_TYPES = new Set([
   'commandExecution',
   'fileChange',
@@ -6198,24 +6227,7 @@ class AppServerProcess {
   }
 
   private extractThreadIdFromParams(params: unknown): string {
-    const record = asRecord(params)
-    if (!record) return ''
-    const threadId =
-      (typeof record.threadId === 'string' ? record.threadId : '') ||
-      (typeof record.thread_id === 'string' ? record.thread_id : '') ||
-      (typeof record.conversationId === 'string' ? record.conversationId : '') ||
-      (typeof record.conversation_id === 'string' ? record.conversation_id : '')
-    if (threadId) return threadId
-    const thread = asRecord(record.thread)
-    if (thread && typeof thread.id === 'string') return thread.id
-    const turn = asRecord(record.turn)
-    if (turn) {
-      const turnThreadId =
-        (typeof turn.threadId === 'string' ? turn.threadId : '') ||
-        (typeof turn.thread_id === 'string' ? turn.thread_id : '')
-      if (turnThreadId) return turnThreadId
-    }
-    return ''
+    return extractThreadIdFromParams(params)
   }
 
   private recordStreamEvent(notification: { method: string; params: unknown }): void {
@@ -6633,6 +6645,7 @@ export class BackendQueueProcessor {
       }
 
       if (notification.method === 'thread/status/changed') {
+        if (!isInterruptedTurnAutoContinueEnabled()) return
         const threadId = extractThreadIdFromNotificationParams(notification.params)
         if (threadId) {
           this.scheduleInterruptedTurnCheck(threadId)
@@ -6670,14 +6683,33 @@ export class BackendQueueProcessor {
     if (!normalizedThreadId || !normalizedTurnId) return
     this.intentionalInterruptTurnIds.add(normalizedTurnId)
     this.intentionalInterruptThreadIds.add(normalizedThreadId)
-    rememberIntentionalInterrupt(normalizedThreadId, normalizedTurnId).catch(() => {})
+    this.intentionalInterruptStateReady = this.intentionalInterruptStateReady
+      .catch(() => {})
+      .then(async () => {
+        this.intentionalInterruptTurnIds.add(normalizedTurnId)
+        this.intentionalInterruptThreadIds.add(normalizedThreadId)
+        try {
+          await rememberIntentionalInterrupt(normalizedThreadId, normalizedTurnId)
+        } catch {
+          // Intentional stop persistence is best-effort; live memory guards still apply.
+        }
+      })
   }
 
   clearIntentionalInterruptForThread(threadId: string): void {
     const normalizedThreadId = threadId.trim()
     if (!normalizedThreadId) return
     this.intentionalInterruptThreadIds.delete(normalizedThreadId)
-    forgetIntentionalInterruptThreadId(normalizedThreadId).catch(() => {})
+    this.intentionalInterruptStateReady = this.intentionalInterruptStateReady
+      .catch(() => {})
+      .then(async () => {
+        this.intentionalInterruptThreadIds.delete(normalizedThreadId)
+        try {
+          await forgetIntentionalInterruptThreadId(normalizedThreadId)
+        } catch {
+          // Intentional stop persistence is best-effort; live memory guards still apply.
+        }
+      })
   }
 
   async scheduleAllQueuedThreads(delayMs = 0): Promise<void> {
@@ -6719,6 +6751,7 @@ export class BackendQueueProcessor {
     source: 'turn/completed' | 'thread/status/changed' = 'thread/status/changed',
     completedTurnId = '',
   ): void {
+    if (!isInterruptedTurnAutoContinueEnabled()) return
     if (!threadId) return
     const existingTimer = this.interruptedTurnCheckTimersByThreadId.get(threadId)
     if (existingTimer) {
@@ -6767,9 +6800,15 @@ export class BackendQueueProcessor {
     if (!turn) return
 
     if (readProtocolToken(turn.status) === 'interrupted') {
-      this.scheduleInterruptedTurnCheck(turn.threadId, 250, 'turn/completed', turn.turnId)
+      if (isInterruptedTurnAutoContinueEnabled()) {
+        this.scheduleInterruptedTurnCheck(turn.threadId, 250, 'turn/completed', turn.turnId)
+      } else if (await this.hasQueuedTurns(turn.threadId)) {
+        void this.processThreadQueue(turn.threadId)
+      }
       return
     }
+
+    this.clearIntentionalInterruptForThread(turn.threadId)
 
     const contextExceededTurn = this.runtimeProvider === CURSOR_PROVIDER_ID
       ? readContextWindowExceededTurn(notification)
@@ -6826,6 +6865,7 @@ export class BackendQueueProcessor {
     source: 'turn/completed' | 'thread/status/changed',
     completedTurnId = '',
   ): Promise<boolean> {
+    if (!isInterruptedTurnAutoContinueEnabled()) return false
     const normalizedThreadId = threadId.trim()
     const normalizedCompletedTurnId = completedTurnId.trim()
     if (!normalizedThreadId) return false
@@ -6990,7 +7030,13 @@ export class BackendQueueProcessor {
     if (!latestTurn) return true
 
     const latestStatus = readProtocolToken(latestTurn.status)
-    if (latestStatus === 'interrupted') return false
+    if (latestStatus === 'interrupted') {
+      await this.intentionalInterruptStateReady
+      if (this.intentionalInterruptThreadIds.has(threadId)) return true
+      const latestTurnId = readNonEmptyString(latestTurn.id)
+      if (latestTurnId && this.intentionalInterruptTurnIds.has(latestTurnId)) return true
+      return !isInterruptedTurnAutoContinueEnabled()
+    }
     if (isTerminalProtocolToken(latestStatus)) return true
 
     return turnHasAssistantResult(latestTurn)
@@ -7243,6 +7289,7 @@ class AppServerRuntime {
 class AppServerRuntimePool {
   private readonly runtimesBySignature = new Map<string, AppServerRuntime>()
   private readonly notificationListeners = new Set<(notification: BridgeNotification) => void>()
+  private readonly runtimeByThreadId = new Map<string, AppServerRuntime>()
   private activeState: FreeModeState = readActiveFreeModeStateSync()
 
   private emitNotification(notification: BridgeNotification): void {
@@ -7254,6 +7301,10 @@ class AppServerRuntimePool {
   private createRuntime(state: FreeModeState): AppServerRuntime {
     let runtime: AppServerRuntime
     runtime = new AppServerRuntime(state, (notification) => {
+      const threadId = extractThreadIdFromParams(notification.params)
+      if (threadId) {
+        this.runtimeByThreadId.set(threadId, runtime)
+      }
       this.emitNotification(notification)
     }, (method, params) => {
       const requestedProvider = readRequestedRuntimeProvider(method, params)
@@ -7293,9 +7344,19 @@ class AppServerRuntimePool {
     return this.getOrCreateRuntime(this.activeState)
   }
 
-  findRuntimeWithThreadSnapshot(threadId: string, excludedRuntime?: AppServerRuntime): AppServerRuntime | null {
+  recordThreadRuntime(threadId: string, runtime: AppServerRuntime): void {
+    const normalizedThreadId = threadId.trim()
+    if (!normalizedThreadId) return
+    this.runtimeByThreadId.set(normalizedThreadId, runtime)
+  }
+
+  findRuntimeWithThreadState(threadId: string, excludedRuntime?: AppServerRuntime): AppServerRuntime | null {
     const normalizedThreadId = threadId.trim()
     if (!normalizedThreadId) return null
+    const recordedRuntime = this.runtimeByThreadId.get(normalizedThreadId)
+    if (recordedRuntime && recordedRuntime !== excludedRuntime) {
+      return recordedRuntime
+    }
     for (const runtime of this.runtimesBySignature.values()) {
       if (runtime === excludedRuntime) continue
       if (runtime.appServer.getLastThreadReadSnapshot(normalizedThreadId)) {
@@ -7342,8 +7403,30 @@ class AppServerRuntimePool {
       runtime.dispose()
     }
     this.runtimesBySignature.clear()
+    this.runtimeByThreadId.clear()
     this.notificationListeners.clear()
   }
+}
+
+function recordRuntimeThreadState(runtimePool: AppServerRuntimePool, threadId: string, runtime: AppServerRuntime): void {
+  const maybeRuntimePool = runtimePool as AppServerRuntimePool & {
+    recordThreadRuntime?: (threadId: string, runtime: AppServerRuntime) => void
+  }
+  maybeRuntimePool.recordThreadRuntime?.(threadId, runtime)
+}
+
+function findRuntimeWithThreadState(
+  runtimePool: AppServerRuntimePool,
+  threadId: string,
+  excludedRuntime?: AppServerRuntime,
+): AppServerRuntime | null {
+  const maybeRuntimePool = runtimePool as AppServerRuntimePool & {
+    findRuntimeWithThreadState?: (threadId: string, excludedRuntime?: AppServerRuntime) => AppServerRuntime | null
+    findRuntimeWithThreadSnapshot?: (threadId: string, excludedRuntime?: AppServerRuntime) => AppServerRuntime | null
+  }
+  return maybeRuntimePool.findRuntimeWithThreadState?.(threadId, excludedRuntime)
+    ?? maybeRuntimePool.findRuntimeWithThreadSnapshot?.(threadId, excludedRuntime)
+    ?? null
 }
 
 class MethodCatalog {
@@ -8466,12 +8549,6 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
             turnId,
           }).catch(() => {})
         }
-        if (body.method === 'turn/start') {
-          const paramsRecord = asRecord(body.params)
-          const threadId = readNonEmptyString(paramsRecord?.threadId)
-          runtimePool.clearIntentionalInterruptForThread(threadId)
-        }
-
         const rewrittenRpcParams = await rewriteOpenAiThreadModelProvider(effectiveRpcAppServer, body.method, body.params ?? null)
         const rpcParams = persistTurnStartModelProviderInCollaborationMode(body.method, rewrittenRpcParams)
         let rpcResult: unknown
@@ -8482,16 +8559,27 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           const paramsRecord = asRecord(rpcParams)
           const threadId = readNonEmptyString(paramsRecord?.threadId)
           const fallbackRuntime = isTurnRuntimeRetryMethod(body.method) && isThreadNotFoundError(error)
-            ? runtimePool.findRuntimeWithThreadSnapshot(threadId, effectiveRpcRuntime)
+            ? findRuntimeWithThreadState(runtimePool, threadId, effectiveRpcRuntime)
             : null
           if (fallbackRuntime) {
             effectiveRpcRuntime = fallbackRuntime
             effectiveRpcAppServer = fallbackRuntime.appServer
-            writeDebugLog('rpc-turn-runtime-fallback', 'Retrying turn RPC on runtime that has the thread snapshot', {
+            writeDebugLog('rpc-turn-runtime-fallback', 'Retrying turn RPC on runtime that has the thread state', {
               method: body.method,
               threadId,
             }).catch(() => {})
-            rpcResult = await callRpcWithArchiveRecovery(effectiveRpcAppServer, body.method, rpcParams)
+            try {
+              rpcResult = await callRpcWithArchiveRecovery(effectiveRpcAppServer, body.method, rpcParams)
+            } catch (fallbackError) {
+              if (body.method === 'turn/interrupt' && isNoActiveTurnToInterruptError(fallbackError)) {
+                writeDebugLog('rpc-turn-interrupt-no-active', 'turn/interrupt found no active turn; treating stop as settled', {
+                  threadId,
+                }).catch(() => {})
+                setJson(res, 200, { result: {} })
+                return
+              }
+              throw fallbackError
+            }
           } else {
 	          if (body.method === 'account/rateLimits/read' && isUnauthenticatedRateLimitError(error)) {
 	            setJson(res, 200, { result: null })
@@ -8506,6 +8594,13 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 	              return
 	            }
 	          }
+            if (body.method === 'turn/interrupt' && isNoActiveTurnToInterruptError(error)) {
+              writeDebugLog('rpc-turn-interrupt-no-active', 'turn/interrupt found no active turn; treating stop as settled', {
+                threadId,
+              }).catch(() => {})
+              setJson(res, 200, { result: {} })
+              return
+            }
 	          throw error
           }
 	        }
@@ -8525,12 +8620,13 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
             : explicitModelResult
         }
 
-	        if (THREAD_METHODS_WITH_THREAD_SNAPSHOT.has(body.method)) {
+        if (THREAD_METHODS_WITH_THREAD_SNAPSHOT.has(body.method)) {
           const rpcRecord = asRecord(result)
           const rpcThread = asRecord(rpcRecord?.thread)
           const rpcThreadId = typeof rpcThread?.id === 'string' ? rpcThread.id : ''
           if (rpcThreadId) {
             effectiveRpcAppServer.storeThreadReadSnapshot(rpcThreadId, result)
+            recordRuntimeThreadState(runtimePool, rpcThreadId, effectiveRpcRuntime)
           }
         }
 

@@ -917,6 +917,16 @@ function isUnsupportedChatGptModelError(error: unknown): boolean {
   )
 }
 
+function isNoActiveTurnToSteerError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  return error.message.toLowerCase().includes('no active turn to steer')
+}
+
+function isNoActiveTurnToInterruptError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  return error.message.toLowerCase().includes('no active turn to interrupt')
+}
+
 function areMessageFieldsEqual(first: UiMessage, second: UiMessage): boolean {
   return (
     first.id === second.id &&
@@ -6309,7 +6319,29 @@ export function useDesktopState() {
         imageUrls,
         skills,
         fileAttachments,
-      ).catch((unknownError) => {
+      ).catch(async (unknownError) => {
+        if (isNoActiveTurnToSteerError(unknownError)) {
+          try {
+            await startTurnAfterStaleSteer(
+              threadId,
+              nextText,
+              imageUrls,
+              skills,
+              fileAttachments,
+              collaborationModeOverride,
+            )
+            error.value = ''
+            return
+          } catch (fallbackError) {
+            shouldAutoScrollOnNextAgentEvent = false
+            setThreadInProgress(threadId, false)
+            setTurnActivityForThread(threadId, null)
+            const fallbackErrorMessage = fallbackError instanceof Error ? fallbackError.message : 'Unknown application error'
+            setTurnErrorForThread(threadId, fallbackErrorMessage)
+            error.value = fallbackErrorMessage
+            return
+          }
+        }
         const errorMessage = unknownError instanceof Error ? unknownError.message : 'Unknown application error'
         setTurnErrorForThread(threadId, errorMessage)
         error.value = errorMessage
@@ -6757,6 +6789,53 @@ export function useDesktopState() {
     }
   }
 
+  async function startTurnAfterStaleSteer(
+    threadId: string,
+    nextText: string,
+    imageUrls: string[] = [],
+    skills: Array<{ name: string; path: string }> = [],
+    fileAttachments: FileAttachment[] = [],
+    collaborationModeOverride?: CollaborationModeKind,
+  ): Promise<void> {
+    console.warn('[DEBUG:sendMessageToSelectedThread] steer found no active turn — starting a new turn instead; threadId=%s', threadId)
+    fetch('/codex-api/debug-log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tag: 'send-steer-no-active-fallback',
+        message: 'turn/steer found no active turn; starting a new turn',
+        extra: { threadId },
+      }),
+    }).catch(() => {})
+
+    clearActiveTurnForThread(threadId)
+    setTurnSummaryForThread(threadId, null)
+    setTurnErrorForThread(threadId, null)
+    const selectedReasoningEffortForThread = readReasoningEffortForThread(threadId)
+    setTurnActivityForThread(threadId, {
+      label: 'Thinking',
+      details: buildPendingTurnDetails(
+        readModelIdForThread(threadId),
+        selectedReasoningEffortForThread,
+        collaborationModeOverride === 'plan'
+          ? 'plan'
+          : collaborationModeOverride === 'default'
+            ? 'default'
+            : selectedCollaborationMode.value,
+      ),
+    })
+    setThreadInProgress(threadId, true)
+
+    await startTurnForThread(
+      threadId,
+      nextText,
+      imageUrls,
+      skills,
+      fileAttachments,
+      collaborationModeOverride,
+    )
+  }
+
   async function processQueuedMessages(threadId: string): Promise<void> {
     if (queueProcessingByThreadId.value[threadId] === true) return
     queueProcessingByThreadId.value = {
@@ -6778,6 +6857,15 @@ export function useDesktopState() {
     window.setTimeout(() => {
       void processQueuedMessages(threadId)
     }, 650)
+  }
+
+  async function settleInterruptedTurnUiState(threadId: string): Promise<void> {
+    clearActiveTurnForThread(threadId)
+    setTurnActivityForThread(threadId, null)
+    setTurnErrorForThread(threadId, null)
+    pendingThreadMessageRefresh.add(threadId)
+    pendingThreadsRefresh = true
+    await syncFromNotifications()
   }
 
   async function interruptSelectedThreadTurn(): Promise<void> {
@@ -6805,19 +6893,22 @@ export function useDesktopState() {
       const activeTurnProviderId = activeTurnProviderIdByThreadId.value[threadId]
         || readThreadRpcProviderId(threadId)
       await interruptActiveTurnWithRefresh(threadId, turnId, activeTurnProviderId || undefined)
-      setThreadInProgress(threadId, false)
-      setTurnActivityForThread(threadId, null)
-      setTurnErrorForThread(threadId, null)
-      if (activeTurnIdByThreadId.value[threadId]) {
-        activeTurnIdByThreadId.value = omitKey(activeTurnIdByThreadId.value, threadId)
-      }
-      if (activeTurnProviderIdByThreadId.value[threadId]) {
-        activeTurnProviderIdByThreadId.value = omitKey(activeTurnProviderIdByThreadId.value, threadId)
-      }
-      pendingThreadMessageRefresh.add(threadId)
-      pendingThreadsRefresh = true
-      await syncFromNotifications()
+      await settleInterruptedTurnUiState(threadId)
     } catch (unknownError) {
+      if (isNoActiveTurnToInterruptError(unknownError)) {
+        console.warn('[DEBUG:interruptSelectedThreadTurn] no active turn during stop; treating as settled — threadId=%s', threadId)
+        fetch('/codex-api/debug-log', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tag: 'interrupt-no-active-settled',
+            message: 'turn/interrupt found no active turn; clearing local active state',
+            extra: { threadId },
+          }),
+        }).catch(() => {})
+        await settleInterruptedTurnUiState(threadId)
+        return
+      }
       const errorMessage = unknownError instanceof Error ? unknownError.message : 'Failed to interrupt active turn'
       console.error('[DEBUG:interruptSelectedThreadTurn] FAILED — threadId=%s error=%s', threadId, errorMessage)
       setTurnErrorForThread(threadId, errorMessage)
