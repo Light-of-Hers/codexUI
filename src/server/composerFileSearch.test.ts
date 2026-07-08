@@ -99,6 +99,22 @@ describe('searchComposerPaths', () => {
     expect(results.some((entry) => entry.path === 'repos/opencode')).toBe(true)
   })
 
+  it('surfaces empty shallow directories even when the query only matches the leaf name', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'codexui-composer-search-'))
+
+    await mkdir(join(tempDir, 'repos', 'opencode'), { recursive: true })
+    await mkdir(join(tempDir, 'tooling', 'ntfy-notify', 'opencode'), { recursive: true })
+    await writeFile(
+      join(tempDir, 'tooling', 'ntfy-notify', 'opencode', 'ntfy-notify.js'),
+      'sidecar',
+    )
+
+    const results = await searchComposerPaths(tempDir, 'opencode', 20)
+    const paths = results.map((entry) => entry.path)
+
+    expect(paths).toContain('repos/opencode')
+  })
+
   it('returns exact absolute path queries without treating them as cwd-relative text', async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'codexui-composer-search-'))
     const targetDir = join(tempDir, 'absolute-target')

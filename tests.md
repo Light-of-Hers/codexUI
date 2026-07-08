@@ -6923,3 +6923,33 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - No persistent cleanup is required.
+
+### Feature: Composer file mention empty shallow directory match
+
+#### Prerequisites
+- App server is running from this repository.
+- Working directory has at least one empty second-level directory whose name is
+  itself the query (for example an uninitialized `repos/opencode` submodule).
+
+#### Steps
+1. Run `pnpm exec vitest run src/server/composerFileSearch.test.ts src/components/content/composerFileMentions.test.ts`.
+2. Run `pnpm exec vue-tsc --noEmit`.
+3. Open the composer.
+4. Type `@opencode`.
+5. Confirm the suggestion list contains `repos/opencode` near the top.
+6. Type `@repoopecod` and confirm `repos/opencode` is still the first suggestion.
+
+#### Expected Results
+- Empty second-level directories that would be invisible to `rg --files`
+  still appear in `@` mention suggestions when their name fuzzy-matches the query.
+- Ranking against file-based candidates prefers exact directory basename matches.
+
+#### Performance Audit
+- Second-level directory candidates are computed once per cwd and cached with
+  the same TTL as the ripgrep path index.
+- The expansion is bounded by `COMPOSER_SHALLOW_DIRECTORY_CANDIDATE_LIMIT` and
+  skips `.git` and `node_modules` names.
+- No additional recursive scanning is performed per query.
+
+#### Rollback/Cleanup
+- No persistent cleanup is required.
