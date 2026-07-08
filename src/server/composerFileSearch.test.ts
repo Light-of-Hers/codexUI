@@ -74,6 +74,18 @@ describe('searchComposerPaths', () => {
     expect(results.some((entry) => entry.path === 'files/cache/triton/docs/meetups/notes.md')).toBe(false)
   })
 
+  it('expands direct children for top-level directory prefix matches', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'codexui-composer-search-'))
+
+    await mkdir(join(tempDir, '.cookies'), { recursive: true })
+    await writeFile(join(tempDir, '.cookies', 'cloud.bytedance.net.json'), 'cookie')
+
+    const results = await searchComposerPaths(tempDir, '.cookie', 20)
+
+    expect(results[0]?.path).toBe('.cookies')
+    expect(results.some((entry) => entry.path === '.cookies/cloud.bytedance.net.json')).toBe(true)
+  })
+
   it('returns exact absolute path queries without treating them as cwd-relative text', async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'codexui-composer-search-'))
     const targetDir = join(tempDir, 'absolute-target')

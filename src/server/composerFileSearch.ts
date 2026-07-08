@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import type { Dirent } from 'node:fs'
 import { lstat, readdir, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, parse, resolve } from 'node:path'
@@ -29,6 +30,7 @@ const COMPOSER_PATH_CACHE_TTL_MS = 30_000
 const COMPOSER_FUZZY_INITIAL_SCAN_BUDGET_MS = 250
 const COMPOSER_FILE_PREFILTER_MIN_ROWS = 80
 const COMPOSER_FILE_PREFILTER_LIMIT_MULTIPLIER = 8
+const COMPOSER_DIRECTORY_PREFIX_EXPANSION_MIN_QUERY_LENGTH = 2
 const COMPOSER_RIPGREP_FILE_ARGS = [
   '--files',
   '--follow',
@@ -421,6 +423,81 @@ async function listTopLevelComposerPaths(cwd: string): Promise<ComposerSearchPat
   return topLevelResults.map(({ path, kind, isSymlink }) => ({ path, kind, isSymlink }))
 }
 
+async function listComposerDirectoryChildren(
+  cwd: string,
+  directoryPath: string,
+  limit: number,
+): Promise<ComposerSearchPathResult[]> {
+  if (limit <= 0) return []
+
+  let entries: Dirent<string>[]
+  try {
+    entries = await readdir(resolve(cwd, directoryPath), { withFileTypes: true })
+  } catch {
+    return []
+  }
+
+  const results: ComposerSearchPathResult[] = []
+  const sortedEntries = entries
+    .filter((entry) => !COMPOSER_SEARCH_EXCLUDED_TOP_LEVEL_NAMES.has(entry.name))
+    .sort((a, b) => a.name.localeCompare(b.name))
+
+  for (const entry of sortedEntries) {
+    if (results.length >= limit) break
+    let isDirectory = entry.isDirectory()
+    const isSymlink = entry.isSymbolicLink()
+    const childPath = normalizeComposerSearchPath(`${directoryPath}/${entry.name}`)
+    if (!childPath) continue
+
+    if (isSymlink) {
+      try {
+        isDirectory = (await stat(resolve(cwd, childPath))).isDirectory()
+      } catch {
+        isDirectory = false
+      }
+    }
+
+    results.push({
+      path: childPath,
+      kind: isDirectory ? 'directory' : 'file',
+      isSymlink,
+    })
+  }
+
+  return results
+}
+
+async function expandTopLevelDirectoryPrefixMatches(
+  cwd: string,
+  topLevelMatches: ComposerSearchPathResult[],
+  query: string,
+  limit: number,
+): Promise<ComposerSearchPathResult[]> {
+  if (query.length < COMPOSER_DIRECTORY_PREFIX_EXPANSION_MIN_QUERY_LENGTH || query.includes('/')) {
+    return topLevelMatches
+  }
+
+  const lowerQuery = query.toLowerCase()
+  const seen = new Map(topLevelMatches.map((row) => [row.path, row]))
+  const prefixDirectories = topLevelMatches.filter((row) =>
+    row.kind === 'directory' && row.path.toLowerCase().startsWith(lowerQuery),
+  )
+
+  for (const directory of prefixDirectories) {
+    const remaining = limit - seen.size
+    if (remaining <= 0) break
+    const children = await listComposerDirectoryChildren(cwd, directory.path, remaining)
+    for (const child of children) {
+      if (!seen.has(child.path)) {
+        seen.set(child.path, child)
+      }
+    }
+  }
+
+  if (seen.size === topLevelMatches.length) return topLevelMatches
+  return filterComposerPathResults(Array.from(seen.values()), query, limit)
+}
+
 function filterComposerPathResults(
   rows: ComposerSearchPathResult[],
   query: string,
@@ -598,7 +675,7 @@ export async function searchComposerPaths(
 
   const topLevelMatches = filterComposerPathResults(topLevelRows, trimmedQuery, maxResults)
   if (topLevelMatches.some((row) => row.path.toLowerCase().startsWith(trimmedQuery.toLowerCase()))) {
-    return topLevelMatches
+    return await expandTopLevelDirectoryPrefixMatches(cwd, topLevelMatches, trimmedQuery, maxResults)
   }
 
   const cachedPaths = getCachedPaths(cwd)

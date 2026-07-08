@@ -6866,3 +6866,32 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - No persistent cleanup is required.
+
+### Feature: Composer file mention directory-prefix expansion
+
+#### Prerequisites
+- App server is running from this repository.
+- Open a project that has a top-level `.cookies/` directory containing at least one file, such as `.cookies/cloud.bytedance.net.json`.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Run `pnpm exec vitest run src/server/composerFileSearch.test.ts src/components/content/composerFileMentions.test.ts`.
+2. Run `pnpm exec vue-tsc --noEmit`.
+3. Open the composer in light theme.
+4. Type `@.cookie`.
+5. Confirm the suggestion list shows both `.cookies` and `.cookies/cloud.bytedance.net.json`.
+6. Switch to dark theme and repeat steps 4-5.
+
+#### Expected Results
+- A top-level directory prefix match remains visible as the first suggestion.
+- Direct children of that matched directory are also visible, so users can select a file inside the directory without typing the full directory path.
+- Existing basename-first ranking for deep file matches remains unchanged.
+- Light and dark theme suggestion rows remain readable.
+
+#### Performance Audit
+- Prefix expansion is limited to direct children of already-matched top-level directories.
+- The change does not start a full recursive `rg --files` scan when a top-level prefix match is enough.
+- Expansion stops at the backend result limit and skips `.git` and `node_modules` directory names.
+
+#### Rollback/Cleanup
+- No persistent cleanup is required.
