@@ -27,7 +27,8 @@ type RankedComposerSearchPathCandidate = ComposerSearchPathCandidate & {
 const COMPOSER_SEARCH_EXCLUDED_TOP_LEVEL_NAMES = new Set(['.git', 'node_modules'])
 const COMPOSER_PATH_CACHE_TTL_MS = 30_000
 const COMPOSER_FUZZY_INITIAL_SCAN_BUDGET_MS = 250
-const COMPOSER_FUZZY_INITIAL_SCAN_MAX_ROWS = 2_000
+const COMPOSER_FILE_PREFILTER_MIN_ROWS = 80
+const COMPOSER_FILE_PREFILTER_LIMIT_MULTIPLIER = 8
 const COMPOSER_RIPGREP_FILE_ARGS = [
   '--files',
   '--follow',
@@ -41,7 +42,9 @@ const COMPOSER_RIPGREP_FILE_ARGS = [
 type ComposerPathCacheEntry = {
   expiresAt: number
   promise: Promise<string[]>
-  paths?: string[]
+  paths: string[]
+  settled: boolean
+  waiters: Set<() => void>
 }
 
 const composerPathCache = new Map<string, ComposerPathCacheEntry>()
@@ -177,17 +180,11 @@ function scoreFuzzySubsequence(path: string, query: string): number | null {
 
 export function scoreComposerPathCandidate(path: string, query: string): number {
   if (!query) return 0
-  const lowerPath = path.toLowerCase()
+  const literalScore = scoreComposerPathLiteralCandidate(path, query)
+  if (typeof literalScore === 'number') return literalScore
   const lowerQuery = query.toLowerCase()
-  const normalizedPath = lowerPath.replace(/\\/gu, '/')
   const normalizedOriginalPath = path.replace(/\\/gu, '/')
-  const baseName = normalizedPath.slice(normalizedPath.lastIndexOf('/') + 1)
   const originalBaseName = normalizedOriginalPath.slice(normalizedOriginalPath.lastIndexOf('/') + 1)
-  if (baseName === lowerQuery) return 0
-  if (baseName.startsWith(lowerQuery)) return 1
-  if (baseName.includes(lowerQuery)) return 2
-  if (normalizedPath.includes(`/${lowerQuery}`)) return 3
-  if (normalizedPath.includes(lowerQuery)) return 4
   const baseNameFuzzyScore = scoreFuzzySubsequence(originalBaseName, lowerQuery)
   const pathFuzzyScore = scoreFuzzySubsequence(normalizedOriginalPath, lowerQuery)
   const fuzzyScores = [
@@ -198,6 +195,20 @@ export function scoreComposerPathCandidate(path: string, query: string): number 
     return Math.min(...fuzzyScores)
   }
   return 10
+}
+
+function scoreComposerPathLiteralCandidate(path: string, query: string): number | null {
+  if (!query) return 0
+  const lowerPath = path.toLowerCase()
+  const lowerQuery = query.toLowerCase()
+  const normalizedPath = lowerPath.replace(/\\/gu, '/')
+  const baseName = normalizedPath.slice(normalizedPath.lastIndexOf('/') + 1)
+  if (baseName === lowerQuery) return 0
+  if (baseName.startsWith(lowerQuery)) return 1
+  if (baseName.includes(lowerQuery)) return 2
+  if (normalizedPath.includes(`/${lowerQuery}`)) return 3
+  if (normalizedPath.includes(lowerQuery)) return 4
+  return null
 }
 
 function compareComposerPathCandidates(
@@ -225,7 +236,16 @@ function pushRankedComposerPathCandidate(
   ranked.sort(compareComposerPathCandidates)
 }
 
-async function listPathsWithRipgrep(cwd: string): Promise<string[]> {
+function notifyComposerPathCacheWaiters(entry: ComposerPathCacheEntry): void {
+  for (const waiter of Array.from(entry.waiters)) {
+    waiter()
+  }
+}
+
+async function listPathsWithRipgrep(
+  cwd: string,
+  onPath?: (path: string) => void,
+): Promise<string[]> {
   return await new Promise<string[]>((resolvePromise, reject) => {
     const ripgrepCommand = resolveRipgrepCommand()
     if (!ripgrepCommand) {
@@ -238,124 +258,128 @@ async function listPathsWithRipgrep(cwd: string): Promise<string[]> {
       env: process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
-    let stdout = ''
-    let stderr = ''
-    proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString() })
-    proc.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
-    proc.on('error', reject)
-    proc.on('close', (code, signal) => {
-      const rows = stdout
-        .split(/\r?\n/)
-        .map(normalizeComposerSearchPath)
-        .filter(Boolean)
-      if (code === 0 || code === 1 || (typeof code === 'number' && rows.length > 0)) {
-        resolvePromise(rows)
-        return
-      }
-      const details = [stderr.trim(), stdout.trim()].filter(Boolean).join('\n')
-      const exitStatus = signal ? `signal ${signal}` : `exit code ${String(code)}`
-      reject(new Error(details || `rg --files failed with ${exitStatus}`))
-    })
-  })
-}
-
-async function listPathsWithRipgrepBudget(cwd: string, budgetMs: number, maxRows: number): Promise<string[]> {
-  return await new Promise<string[]>((resolvePromise, reject) => {
-    const ripgrepCommand = resolveRipgrepCommand()
-    if (!ripgrepCommand) {
-      reject(new Error('ripgrep (rg) is not available'))
-      return
-    }
-
     const rows: string[] = []
     let pending = ''
-    let settled = false
-    const proc = spawn(ripgrepCommand, COMPOSER_RIPGREP_FILE_ARGS, {
-      cwd,
-      env: process.env,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    })
-
-    const finish = () => {
-      if (settled) return
-      settled = true
-      clearTimeout(timeout)
-      const finalRow = normalizeComposerSearchPath(pending)
-      if (finalRow) rows.push(finalRow)
-      resolvePromise(rows)
-    }
-
-    const timeout = setTimeout(() => {
-      finish()
-      proc.kill('SIGTERM')
-    }, Math.max(1, budgetMs))
-
+    let stderr = ''
     proc.stdout.on('data', (chunk: Buffer) => {
       pending += chunk.toString()
       const lines = pending.split(/\r?\n/u)
       pending = lines.pop() ?? ''
       for (const line of lines) {
         const row = normalizeComposerSearchPath(line)
-        if (row) rows.push(row)
-        if (rows.length >= maxRows) {
-          finish()
-          proc.kill('SIGTERM')
-          return
-        }
+        if (!row) continue
+        rows.push(row)
+        onPath?.(row)
       }
     })
-    proc.on('error', (error) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timeout)
-      reject(error)
+    proc.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
+    proc.on('error', reject)
+    proc.on('close', (code, signal) => {
+      const finalRow = normalizeComposerSearchPath(pending)
+      if (finalRow) {
+        rows.push(finalRow)
+        onPath?.(finalRow)
+      }
+      if (code === 0 || code === 1 || (typeof code === 'number' && rows.length > 0)) {
+        resolvePromise(rows)
+        return
+      }
+      const details = stderr.trim()
+      const exitStatus = signal ? `signal ${signal}` : `exit code ${String(code)}`
+      reject(new Error(details || `rg --files failed with ${exitStatus}`))
     })
-    proc.on('close', finish)
   })
 }
 
 function getCachedPaths(cwd: string): string[] | null {
   const cached = composerPathCache.get(cwd)
   if (!cached || cached.expiresAt <= Date.now()) return null
-  return cached.paths ?? null
+  return cached.settled ? cached.paths : null
 }
 
-async function listCachedPathsWithRipgrep(cwd: string): Promise<string[]> {
+function getOrStartComposerPathCache(cwd: string): ComposerPathCacheEntry {
   const now = Date.now()
   const cached = composerPathCache.get(cwd)
   if (cached && cached.expiresAt > now) {
-    return cached.promise
+    return cached
   }
 
   const entry: ComposerPathCacheEntry = {
     expiresAt: now + COMPOSER_PATH_CACHE_TTL_MS,
     promise: Promise.resolve([]),
+    paths: [],
+    settled: false,
+    waiters: new Set(),
   }
-  const promise = listPathsWithRipgrep(cwd).then((paths) => {
+  const promise = listPathsWithRipgrep(cwd, (path) => {
+    entry.paths.push(path)
+    notifyComposerPathCacheWaiters(entry)
+  }).then((paths) => {
     entry.paths = paths
+    entry.settled = true
+    entry.expiresAt = Date.now() + COMPOSER_PATH_CACHE_TTL_MS
+    notifyComposerPathCacheWaiters(entry)
     return paths
   }).catch((error) => {
     if (composerPathCache.get(cwd)?.promise === promise) {
       composerPathCache.delete(cwd)
     }
+    entry.settled = true
+    notifyComposerPathCacheWaiters(entry)
     throw error
   })
   entry.promise = promise
   composerPathCache.set(cwd, entry)
-  return promise
+  return entry
+}
+
+async function listCachedPathsWithRipgrep(cwd: string): Promise<string[]> {
+  return await getOrStartComposerPathCache(cwd).promise
 }
 
 function warmComposerPathCache(cwd: string): void {
   void listCachedPathsWithRipgrep(cwd).catch(() => {})
 }
 
-function buildComposerSearchPathCandidates(paths: string[]): ComposerSearchPathCandidate[] {
-  const candidates = new Map<string, ComposerSearchPathCandidate>()
-  for (const path of paths) {
-    addCandidate(candidates, path, 'file')
-    addAncestorDirectories(candidates, path)
+function hasComposerPathMatch(paths: string[], query: string, startIndex: number): { matched: boolean; nextIndex: number } {
+  const trimmedQuery = query.trim()
+  for (let index = startIndex; index < paths.length; index += 1) {
+    if (!trimmedQuery || scoreComposerPathCandidate(paths[index], trimmedQuery) < 10) {
+      return { matched: true, nextIndex: index + 1 }
+    }
   }
-  return Array.from(candidates.values())
+  return { matched: false, nextIndex: paths.length }
+}
+
+async function waitForComposerPathCacheMatch(
+  entry: ComposerPathCacheEntry,
+  query: string,
+  budgetMs: number,
+): Promise<void> {
+  let checkedIndex = 0
+  const initialMatch = hasComposerPathMatch(entry.paths, query, checkedIndex)
+  checkedIndex = initialMatch.nextIndex
+  if (entry.settled || initialMatch.matched) return
+
+  await new Promise<void>((resolvePromise) => {
+    let timeout: ReturnType<typeof setTimeout> | null = null
+    let waiter: (() => void) | null = null
+    let settled = false
+    const cleanup = () => {
+      if (settled) return
+      settled = true
+      if (timeout) clearTimeout(timeout)
+      if (waiter) entry.waiters.delete(waiter)
+      resolvePromise()
+    }
+    waiter = () => {
+      const result = hasComposerPathMatch(entry.paths, query, checkedIndex)
+      checkedIndex = result.nextIndex
+      if (entry.settled || result.matched) cleanup()
+    }
+    timeout = setTimeout(cleanup, Math.max(1, budgetMs))
+    entry.waiters.add(waiter)
+  })
 }
 
 async function isSymlinkPath(cwd: string, path: string): Promise<boolean> {
@@ -436,6 +460,55 @@ function rankComposerPathCandidates(
   }
 
   return ranked.slice(0, limit)
+}
+
+function rankComposerFilePathRows(
+  paths: string[],
+  query: string,
+  limit: number,
+): RankedComposerSearchPathCandidate[] {
+  const trimmedQuery = query.trim()
+  const prefilterLimit = Math.max(COMPOSER_FILE_PREFILTER_MIN_ROWS, limit * COMPOSER_FILE_PREFILTER_LIMIT_MULTIPLIER)
+  const ranked: RankedComposerSearchPathCandidate[] = []
+
+  for (const path of paths) {
+    const score = scoreComposerPathLiteralCandidate(path, trimmedQuery)
+    if (typeof score !== 'number') continue
+    pushRankedComposerPathCandidate(ranked, {
+      path,
+      kind: 'file',
+      score,
+      pathDepth: path.split('/').filter(Boolean).length,
+      pathLength: path.length,
+    }, prefilterLimit)
+  }
+
+  if (ranked.length > 0) return ranked
+
+  for (const path of paths) {
+    const score = scoreComposerPathCandidate(path, trimmedQuery)
+    if (trimmedQuery.length > 0 && score >= 10) continue
+    pushRankedComposerPathCandidate(ranked, {
+      path,
+      kind: 'file',
+      score,
+      pathDepth: path.split('/').filter(Boolean).length,
+      pathLength: path.length,
+    }, prefilterLimit)
+  }
+
+  return ranked
+}
+
+function buildComposerSearchPathCandidatesFromRankedFiles(
+  files: RankedComposerSearchPathCandidate[],
+): ComposerSearchPathCandidate[] {
+  const candidates = new Map<string, ComposerSearchPathCandidate>()
+  for (const file of files) {
+    addCandidate(candidates, file.path, 'file')
+    addAncestorDirectories(candidates, file.path)
+  }
+  return Array.from(candidates.values())
 }
 
 async function readAbsolutePathResult(pathValue: string): Promise<ComposerSearchPathResult | null> {
@@ -529,18 +602,14 @@ export async function searchComposerPaths(
   }
 
   const cachedPaths = getCachedPaths(cwd)
-  const paths = cachedPaths
-    ? cachedPaths
-    : await listPathsWithRipgrepBudget(
-      cwd,
-      COMPOSER_FUZZY_INITIAL_SCAN_BUDGET_MS,
-      COMPOSER_FUZZY_INITIAL_SCAN_MAX_ROWS,
-    )
-  if (!cachedPaths) {
-    warmComposerPathCache(cwd)
+  const cacheEntry = cachedPaths ? null : getOrStartComposerPathCache(cwd)
+  if (cacheEntry) {
+    await waitForComposerPathCacheMatch(cacheEntry, trimmedQuery, COMPOSER_FUZZY_INITIAL_SCAN_BUDGET_MS)
   }
+  const paths = cachedPaths ?? cacheEntry?.paths ?? []
+  const rankedFiles = rankComposerFilePathRows(paths, trimmedQuery, maxResults)
   const candidates = rankComposerPathCandidates(
-    buildComposerSearchPathCandidates(paths),
+    buildComposerSearchPathCandidatesFromRankedFiles(rankedFiles),
     trimmedQuery,
     maxResults,
   )
