@@ -8548,6 +8548,62 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
             threadId,
             turnId,
           }).catch(() => {})
+
+          // Fire the soft interrupt in the background so the HTTP response
+          // returns immediately and the UI feels instant. We do NOT force-kill
+          // the codex app-server here because the same child process is shared
+          // by every thread that has the same free-mode signature, so a kill
+          // would cascade into unrelated sessions being aborted.
+          const softInterruptRuntime = effectiveRpcRuntime
+          const softInterruptAppServer = effectiveRpcAppServer
+          const softInterruptMethod = body.method
+          const softInterruptParams = body.params ?? null
+
+          const softInterruptPromise = (async () => {
+            try {
+              const softParams = await rewriteOpenAiThreadModelProvider(softInterruptAppServer, softInterruptMethod, softInterruptParams)
+              const softFinalParams = persistTurnStartModelProviderInCollaborationMode(softInterruptMethod, softParams)
+              await ensureTurnStartRuntimeThreadState(softInterruptAppServer, softInterruptMethod, softFinalParams)
+              try {
+                await callRpcWithArchiveRecovery(softInterruptAppServer, softInterruptMethod, softFinalParams)
+              } catch (softError) {
+                if (isThreadNotFoundError(softError) && threadId) {
+                  const fallbackRuntime = findRuntimeWithThreadState(runtimePool, threadId, softInterruptRuntime)
+                  if (fallbackRuntime) {
+                    try {
+                      await callRpcWithArchiveRecovery(fallbackRuntime.appServer, softInterruptMethod, softFinalParams)
+                    } catch (fallbackSoftError) {
+                      if (!isNoActiveTurnToInterruptError(fallbackSoftError)) {
+                        writeDebugLog('rpc-turn-interrupt-soft-failed', 'soft turn/interrupt failed on fallback runtime', {
+                          threadId,
+                          turnId,
+                          error: getErrorMessage(fallbackSoftError, 'unknown'),
+                        }).catch(() => {})
+                      }
+                    }
+                    return
+                  }
+                }
+                if (!isNoActiveTurnToInterruptError(softError)) {
+                  writeDebugLog('rpc-turn-interrupt-soft-failed', 'soft turn/interrupt failed', {
+                    threadId,
+                    turnId,
+                    error: getErrorMessage(softError, 'unknown'),
+                  }).catch(() => {})
+                }
+              }
+            } catch (softError) {
+              writeDebugLog('rpc-turn-interrupt-soft-failed', 'soft turn/interrupt threw', {
+                threadId,
+                turnId,
+                error: getErrorMessage(softError, 'unknown'),
+              }).catch(() => {})
+            }
+          })()
+          softInterruptPromise.catch(() => {})
+
+          setJson(res, 200, { result: {} })
+          return
         }
         const rewrittenRpcParams = await rewriteOpenAiThreadModelProvider(effectiveRpcAppServer, body.method, body.params ?? null)
         const rpcParams = persistTurnStartModelProviderInCollaborationMode(body.method, rewrittenRpcParams)

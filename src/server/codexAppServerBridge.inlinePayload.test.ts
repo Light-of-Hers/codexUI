@@ -35,6 +35,21 @@ afterEach(() => {
   vi.unstubAllEnvs()
 })
 
+async function waitForLogToContain(path: string, needle: string, timeoutMs = 4000): Promise<string> {
+  const deadline = Date.now() + timeoutMs
+  let lastContent = ''
+  while (Date.now() < deadline) {
+    try {
+      lastContent = await readFile(path, 'utf8')
+      if (lastContent.includes(needle)) return lastContent
+    } catch {
+      // file may not exist yet while the background RPC is still starting
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+  return lastContent
+}
+
 async function writeMockCommand(path: string): Promise<void> {
   await writeFile(path, '#!/bin/sh\nif [ "$1" = "--version" ]; then echo mock; exit 0; fi\nexit 0\n', 'utf8')
   await chmod(path, 0o755)
@@ -2687,7 +2702,7 @@ describe('app-server runtime configuration', () => {
 
       expect(response.statusCode).toBe(200)
       expect(JSON.parse(responseChunks.join(''))).toEqual({ result: {} })
-      expect(await readFile(commandLogPath, 'utf8')).toContain('cursor:turn/interrupt\n')
+      expect(await waitForLogToContain(commandLogPath, 'cursor:turn/interrupt\n')).toContain('cursor:turn/interrupt\n')
     } finally {
       middleware.dispose()
       await rm(tempDir, { recursive: true, force: true })
@@ -2719,7 +2734,7 @@ describe('app-server runtime configuration', () => {
 
       expect(response.statusCode).toBe(200)
       expect(response.payload).toEqual({ result: {} })
-      expect(await readFile(commandLogPath, 'utf8')).toContain('cursor:turn/interrupt\n')
+      expect(await waitForLogToContain(commandLogPath, 'cursor:turn/interrupt\n')).toContain('cursor:turn/interrupt\n')
     } finally {
       middleware.dispose()
       await rm(tempDir, { recursive: true, force: true })
@@ -2770,6 +2785,8 @@ describe('app-server runtime configuration', () => {
 
       expect(interruptResponse.statusCode).toBe(200)
       expect(interruptResponse.payload).toEqual({ result: {} })
+      await waitForLogToContain(commandLogPath, 'moon:turn/interrupt\n')
+      await waitForLogToContain(commandLogPath, 'cursor:turn/interrupt\n')
       const log = await readFile(commandLogPath, 'utf8')
       expect(log).toContain('cursor:thread/read\n')
       expect(log).toContain('moon:turn/interrupt\n')
@@ -2824,6 +2841,8 @@ describe('app-server runtime configuration', () => {
 
       expect(interruptResponse.statusCode).toBe(200)
       expect(interruptResponse.payload).toEqual({ result: {} })
+      await waitForLogToContain(commandLogPath, 'moon:turn/interrupt\n')
+      await waitForLogToContain(commandLogPath, 'cursor:turn/interrupt\n')
       const log = await readFile(commandLogPath, 'utf8')
       expect(log).toContain('cursor:config/read\n')
       expect(log).toContain('moon:turn/interrupt\n')

@@ -6876,46 +6876,60 @@ export function useDesktopState() {
     if (!threadId) return
     if (inProgressById.value[threadId] !== true) { console.warn('[DEBUG:interruptSelectedThreadTurn] skipped — thread not in progress'); return }
     if (interruptBlockedUntilPersistedByThreadId.value[threadId] === true) { console.warn('[DEBUG:interruptSelectedThreadTurn] skipped — interrupt blocked (persistence gate)'); return }
-    const activeTurnState = await refreshActiveTurnStateForThread(threadId)
-    const turnId = activeTurnState.activeTurnId || (!activeTurnState.refreshed ? activeTurnIdByThreadId.value[threadId] : '')
-    if (!turnId && activeTurnState.refreshed && !activeTurnState.inProgress) {
-      setTurnActivityForThread(threadId, null)
-      setTurnErrorForThread(threadId, null)
-      return
+
+    // Immediately settle the UI so the stop button feels instantaneous.
+    // The interrupt RPC is dispatched in the background; the codex
+    // app-server is shared across sibling threads with the same free-mode
+    // signature, so we intentionally never force-kill it here.
+    const cachedTurnId = activeTurnIdByThreadId.value[threadId] ?? ''
+    const activeTurnProviderId = activeTurnProviderIdByThreadId.value[threadId]
+      || readThreadRpcProviderId(threadId)
+
+    setThreadInProgress(threadId, false)
+    setTurnActivityForThread(threadId, null)
+    setTurnErrorForThread(threadId, null)
+    if (activeTurnIdByThreadId.value[threadId]) {
+      activeTurnIdByThreadId.value = omitKey(activeTurnIdByThreadId.value, threadId)
     }
-    if (!turnId) {
-      throw new Error('Could not determine active turn id for interrupt')
+    if (activeTurnProviderIdByThreadId.value[threadId]) {
+      activeTurnProviderIdByThreadId.value = omitKey(activeTurnProviderIdByThreadId.value, threadId)
     }
+    error.value = ''
 
     isInterruptingTurn.value = true
-    error.value = ''
-    try {
-      const activeTurnProviderId = activeTurnProviderIdByThreadId.value[threadId]
-        || readThreadRpcProviderId(threadId)
-      await interruptActiveTurnWithRefresh(threadId, turnId, activeTurnProviderId || undefined)
-      await settleInterruptedTurnUiState(threadId)
-    } catch (unknownError) {
-      if (isNoActiveTurnToInterruptError(unknownError)) {
-        console.warn('[DEBUG:interruptSelectedThreadTurn] no active turn during stop; treating as settled — threadId=%s', threadId)
-        fetch('/codex-api/debug-log', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            tag: 'interrupt-no-active-settled',
-            message: 'turn/interrupt found no active turn; clearing local active state',
-            extra: { threadId },
-          }),
-        }).catch(() => {})
-        await settleInterruptedTurnUiState(threadId)
-        return
+    void (async () => {
+      try {
+        let turnId = cachedTurnId
+        if (!turnId) {
+          const refreshed = await refreshActiveTurnStateForThread(threadId)
+          turnId = refreshed.activeTurnId
+        }
+        if (turnId) {
+          try {
+            await interruptActiveTurnWithRefresh(threadId, turnId, activeTurnProviderId || undefined)
+          } catch (rpcError) {
+            if (!isNoActiveTurnToInterruptError(rpcError)) {
+              const message = rpcError instanceof Error ? rpcError.message : 'Failed to interrupt active turn'
+              console.warn('[DEBUG:interruptSelectedThreadTurn] soft interrupt RPC failed — threadId=%s error=%s', threadId, message)
+              fetch('/codex-api/debug-log', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  tag: 'interrupt-soft-rpc-failed',
+                  message,
+                  extra: { threadId, turnId },
+                }),
+              }).catch(() => {})
+            }
+          }
+        }
+        pendingThreadMessageRefresh.add(threadId)
+        pendingThreadsRefresh = true
+        await syncFromNotifications()
+      } finally {
+        isInterruptingTurn.value = false
       }
-      const errorMessage = unknownError instanceof Error ? unknownError.message : 'Failed to interrupt active turn'
-      console.error('[DEBUG:interruptSelectedThreadTurn] FAILED — threadId=%s error=%s', threadId, errorMessage)
-      setTurnErrorForThread(threadId, errorMessage)
-      error.value = errorMessage
-    } finally {
-      isInterruptingTurn.value = false
-    }
+    })()
   }
 
   async function rollbackSelectedThread(turnId: string): Promise<void> {

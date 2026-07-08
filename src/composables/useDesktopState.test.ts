@@ -1942,6 +1942,20 @@ describe('active turn state reconciliation', () => {
 })
 
 describe('turn interruption', () => {
+  async function flushMicrotasks(times = 20): Promise<void> {
+    for (let index = 0; index < times; index += 1) {
+      await Promise.resolve()
+    }
+  }
+
+  async function waitForCalls(mock: { mock: { calls: unknown[] } }, minCalls: number): Promise<void> {
+    for (let index = 0; index < 50; index += 1) {
+      if (mock.mock.calls.length >= minCalls) return
+      await Promise.resolve()
+    }
+    throw new Error(`Timed out waiting for ${minCalls} mock invocation(s)`)
+  }
+
   function notification(method: string, params: unknown): RpcNotification {
     return {
       method,
@@ -1991,26 +2005,28 @@ describe('turn interruption', () => {
 
   it('refreshes the active turn id before interrupting', async () => {
     const { state } = createInterruptHarness()
-    gatewayMocks.getThreadDetail.mockResolvedValueOnce(threadDetail('turn-current'))
     gatewayMocks.interruptThreadTurn.mockResolvedValueOnce(undefined)
 
     await state.interruptSelectedThreadTurn()
+    await waitForCalls(gatewayMocks.interruptThreadTurn, 1)
 
-    expect(gatewayMocks.getThreadDetail).toHaveBeenCalledWith('thread-a')
+    // Cached activeTurnId from the notification is used directly, so
+    // getThreadDetail is not required on the fast path anymore.
     expect(gatewayMocks.interruptThreadTurn).toHaveBeenCalledTimes(1)
-    expect(gatewayMocks.interruptThreadTurn).toHaveBeenCalledWith('thread-a', 'turn-current')
+    expect(gatewayMocks.interruptThreadTurn).toHaveBeenCalledWith('thread-a', 'turn-stale')
+    expect(state.selectedThreadInProgress.value).toBe(false)
   })
 
   it('retries interrupt once when the active turn changes during stop', async () => {
     const { state } = createInterruptHarness()
     gatewayMocks.getThreadDetail
-      .mockResolvedValueOnce(threadDetail('turn-stale'))
       .mockResolvedValueOnce(threadDetail('turn-current'))
     gatewayMocks.interruptThreadTurn
       .mockRejectedValueOnce(new Error('RPC turn/interrupt failed with HTTP 502: expected active turn id turn-current but found turn-stale'))
       .mockResolvedValueOnce(undefined)
 
     await state.interruptSelectedThreadTurn()
+    await waitForCalls(gatewayMocks.interruptThreadTurn, 2)
 
     expect(gatewayMocks.interruptThreadTurn).toHaveBeenCalledTimes(2)
     expect(gatewayMocks.interruptThreadTurn).toHaveBeenNthCalledWith(1, 'thread-a', 'turn-stale')
@@ -2021,7 +2037,6 @@ describe('turn interruption', () => {
   it('treats no active turn during stop as already settled', async () => {
     const { state } = createInterruptHarness()
     gatewayMocks.getThreadDetail
-      .mockResolvedValueOnce(threadDetail('turn-stale'))
       .mockResolvedValueOnce(threadDetail('', false))
     gatewayMocks.interruptThreadTurn
       .mockRejectedValueOnce(new Error('RPC turn/interrupt failed with HTTP 502: no active turn to interrupt'))
@@ -2029,11 +2044,40 @@ describe('turn interruption', () => {
     expect(state.selectedThreadInProgress.value).toBe(true)
 
     await state.interruptSelectedThreadTurn()
+    // UI settles synchronously; the RPC runs in the background.
+    expect(state.selectedThreadInProgress.value).toBe(false)
+    await waitForCalls(gatewayMocks.interruptThreadTurn, 1)
+    await flushMicrotasks()
 
     expect(gatewayMocks.interruptThreadTurn).toHaveBeenCalledTimes(1)
     expect(gatewayMocks.interruptThreadTurn).toHaveBeenCalledWith('thread-a', 'turn-stale')
     expect(state.error.value).toBe('')
+    expect(state.isInterruptingTurn.value).toBe(false)
+  })
+
+  it('settles UI state synchronously before awaiting the interrupt RPC', async () => {
+    const { state } = createInterruptHarness()
+    let releaseInterrupt: () => void = () => undefined
+    gatewayMocks.interruptThreadTurn.mockImplementationOnce(
+      () => new Promise<void>((resolve) => {
+        releaseInterrupt = resolve
+      }),
+    )
+
+    expect(state.selectedThreadInProgress.value).toBe(true)
+
+    const interruptCall = state.interruptSelectedThreadTurn()
+
+    // Stop button becomes idle immediately, even though the RPC is still
+    // pending on the network.
     expect(state.selectedThreadInProgress.value).toBe(false)
+
+    releaseInterrupt()
+    await interruptCall
+    await waitForCalls(gatewayMocks.interruptThreadTurn, 1)
+    await flushMicrotasks()
+
+    expect(gatewayMocks.interruptThreadTurn).toHaveBeenCalledWith('thread-a', 'turn-stale')
     expect(state.isInterruptingTurn.value).toBe(false)
   })
 })
