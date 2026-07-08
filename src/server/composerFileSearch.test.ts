@@ -159,6 +159,12 @@ describe('searchComposerPaths', () => {
 })
 
 describe('scoreComposerPathCandidate', () => {
+  it('prefers exact basename matches over earlier fuzzy-looking paths', () => {
+    expect(scoreComposerPathCandidate('_notebooks/byte/sec_string.txt', 'sec_string')).toBeLessThan(
+      scoreComposerPathCandidate('_notebooks/byte/_workspace/amd/sec_token_string.txt', 'sec_string'),
+    )
+  })
+
   it('rewards compact word-boundary acronym matches like fzf', () => {
     expect(scoreComposerPathCandidate('ThreadComposer.vue', 'tc')).toBeLessThan(
       scoreComposerPathCandidate('tests/cache.txt', 'tc'),

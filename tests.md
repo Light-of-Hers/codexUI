@@ -6728,7 +6728,7 @@ Markdown files opened through the local editor expose a preview button that rend
 2. Run `./node_modules/.bin/vue-tsc --noEmit`.
 3. Start a disposable server with `pnpm run dev --host 127.0.0.1 --port 4173`.
 4. POST `/codex-api/composer-file-search` with `cwd=/root/work/my-notebook`, `query=sec_string`, and `limit=20`.
-5. Confirm the response includes `_notebooks/byte/sec_string.txt`.
+5. Confirm the first response item is `_notebooks/byte/sec_string.txt`, not an earlier fuzzy match such as `sec_token_string.txt`.
 6. Repeat the POST after the cache is warm and confirm it remains well below the previous second-level response time.
 7. Open a thread in light theme and focus the composer.
 8. Type `@` and confirm top-level path suggestions appear immediately.
@@ -6741,6 +6741,7 @@ Markdown files opened through the local editor expose a preview button that rend
 - File mention suggestions update faster while typing because the client waits 60ms before searching instead of 120ms.
 - Bare `@` opens the top-level suggestion list and starts warming one streaming recursive path cache in the background.
 - Follow-up keystrokes reuse the same in-progress cache instead of spawning duplicate `rg --files` scans.
+- Cold relative searches wait for a literal/exact path match before returning early, so early fuzzy matches cannot outrank a later exact basename hit.
 - Fuzzy results prefer fzf-like compact, boundary, and camel-case acronym matches.
 - Existing relative, home-prefixed, absolute, directory, file, and symlink suggestion metadata behavior remains unchanged.
 - Light and dark theme suggestion rows remain readable.
@@ -6750,7 +6751,7 @@ Markdown files opened through the local editor expose a preview button that rend
 - Cold relative fuzzy searches start or reuse one streaming cache per cwd, wait only until a matching row appears or the short budget expires, and avoid launching one `rg` process per keystroke.
 - Hot literal searches such as `sec_string` run a literal-first pass and skip full fuzzy scoring when enough high-quality substring matches exist.
 - Recursive candidate ranking no longer expands ancestors for every path in large repositories; it ranks file paths first, then expands ancestors only for the bounded top file matches.
-- On `/root/work/my-notebook` with about 196k indexed paths, `sec_string` returned `_notebooks/byte/sec_string.txt` in about 25ms on a warm cache; `sec` and `tc` were about 83ms on the same disposable 4173 server.
+- On `/root/work/my-notebook` with about 196k indexed paths, cold `sec_string` returned `_notebooks/byte/sec_string.txt` first in about 34ms; `sec` was about 25ms on the same disposable 4173 server.
 - Fuzzy scoring is O(path length + query length) per prefiltered candidate and does not add extra filesystem reads.
 - Symlink checks still run only for the final returned candidates.
 

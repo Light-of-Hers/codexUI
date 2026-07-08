@@ -341,10 +341,10 @@ function warmComposerPathCache(cwd: string): void {
   void listCachedPathsWithRipgrep(cwd).catch(() => {})
 }
 
-function hasComposerPathMatch(paths: string[], query: string, startIndex: number): { matched: boolean; nextIndex: number } {
+function hasComposerPathLiteralMatch(paths: string[], query: string, startIndex: number): { matched: boolean; nextIndex: number } {
   const trimmedQuery = query.trim()
   for (let index = startIndex; index < paths.length; index += 1) {
-    if (!trimmedQuery || scoreComposerPathCandidate(paths[index], trimmedQuery) < 10) {
+    if (!trimmedQuery || typeof scoreComposerPathLiteralCandidate(paths[index], trimmedQuery) === 'number') {
       return { matched: true, nextIndex: index + 1 }
     }
   }
@@ -357,7 +357,7 @@ async function waitForComposerPathCacheMatch(
   budgetMs: number,
 ): Promise<void> {
   let checkedIndex = 0
-  const initialMatch = hasComposerPathMatch(entry.paths, query, checkedIndex)
+  const initialMatch = hasComposerPathLiteralMatch(entry.paths, query, checkedIndex)
   checkedIndex = initialMatch.nextIndex
   if (entry.settled || initialMatch.matched) return
 
@@ -373,7 +373,7 @@ async function waitForComposerPathCacheMatch(
       resolvePromise()
     }
     waiter = () => {
-      const result = hasComposerPathMatch(entry.paths, query, checkedIndex)
+      const result = hasComposerPathLiteralMatch(entry.paths, query, checkedIndex)
       checkedIndex = result.nextIndex
       if (entry.settled || result.matched) cleanup()
     }
