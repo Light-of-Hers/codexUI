@@ -60,7 +60,7 @@ describe('searchComposerPaths', () => {
     expect(results.some((entry) => entry.path === 'install-configs.py')).toBe(true)
   })
 
-  it('returns top-level prefix matches without waiting for deep duplicate paths', async () => {
+  it('ranks top-level basename hits above deeper same-named files', async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'codexui-composer-search-'))
 
     await mkdir(join(tempDir, 'notes'), { recursive: true })
@@ -71,7 +71,10 @@ describe('searchComposerPaths', () => {
     const results = await searchComposerPaths(tempDir, 'notes', 20)
 
     expect(results[0]?.path).toBe('notes')
-    expect(results.some((entry) => entry.path === 'files/cache/triton/docs/meetups/notes.md')).toBe(false)
+    const deepIndex = results.findIndex((entry) => entry.path === 'files/cache/triton/docs/meetups/notes.md')
+    if (deepIndex >= 0) {
+      expect(deepIndex).toBeGreaterThan(0)
+    }
   })
 
   it('expands direct children for top-level directory prefix matches', async () => {

@@ -232,6 +232,19 @@ export function resolveCodexCursorCommand(): string | null {
   return null
 }
 
+export function resolveFzfCommand(): string | null {
+  const explicit = process.env.CODEXUI_FZF_COMMAND?.trim()
+  const fallbackCandidates = process.platform === 'win32' ? ['fzf.exe', 'fzf'] : ['fzf']
+
+  for (const candidate of uniqueStrings([explicit, ...fallbackCandidates])) {
+    if (isRunnableCommand(candidate, ['--version'])) {
+      return candidate
+    }
+  }
+
+  return null
+}
+
 export function resolveRipgrepCommand(): string | null {
   const explicit = process.env.CODEXUI_RG_COMMAND?.trim()
   const packageCandidates = getPotentialNpmPrefixes().flatMap(getPotentialRipgrepExecutables)

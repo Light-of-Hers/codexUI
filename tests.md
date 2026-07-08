@@ -6953,3 +6953,27 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - No persistent cleanup is required.
+
+### Feature: Composer file mention fzf-backed ranking
+
+#### Prerequisites
+- The system `fzf` binary is on `PATH`, or `CODEXUI_FZF_COMMAND` points at one.
+- App server is running from this repository.
+
+#### Steps
+1. Run `pnpm exec vitest run src/server/composerFileSearch.test.ts src/components/content/composerFileMentions.test.ts`.
+2. Run `pnpm exec vue-tsc --noEmit`.
+3. Open the composer and type queries such as `@opencode`, `@repoopecod`, `@sec_string`, `@.cookie`, `@tc`, `@KernelBench`.
+4. Compare the ordering with `printf ... | fzf --filter=<query> --scheme=path --tiebreak=length,index` on the same candidate list.
+
+#### Expected Results
+- The composer suggestion order matches `fzf` (basename hits first, compact matches ranked above sparser ones).
+- Empty second-level directories such as `repos/opencode` still appear.
+- When `fzf` is missing, the previous heuristic keeps working as a fallback.
+
+#### Performance Audit
+- Candidate pool = top-level entries + cached shallow directories + cached `rg --files` paths.
+- Ranking is delegated to a single `fzf --filter` process per query rather than to per-candidate JS scoring.
+
+#### Rollback/Cleanup
+- No persistent cleanup is required.

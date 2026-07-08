@@ -4,7 +4,7 @@ import { lstat, readdir, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, parse, resolve } from 'node:path'
 import { normalizePathForUi } from '../pathUtils.js'
-import { resolveRipgrepCommand } from '../commandResolution.js'
+import { resolveFzfCommand, resolveRipgrepCommand } from '../commandResolution.js'
 
 export type ComposerSearchPathKind = 'file' | 'directory'
 
@@ -28,9 +28,6 @@ type RankedComposerSearchPathCandidate = ComposerSearchPathCandidate & {
 const COMPOSER_SEARCH_EXCLUDED_TOP_LEVEL_NAMES = new Set(['.git', 'node_modules'])
 const COMPOSER_PATH_CACHE_TTL_MS = 30_000
 const COMPOSER_FUZZY_INITIAL_SCAN_BUDGET_MS = 250
-const COMPOSER_FILE_PREFILTER_MIN_ROWS = 80
-const COMPOSER_FILE_PREFILTER_LIMIT_MULTIPLIER = 8
-const COMPOSER_DIRECTORY_PREFIX_EXPANSION_MIN_QUERY_LENGTH = 2
 const COMPOSER_SHALLOW_DIRECTORY_CANDIDATE_LIMIT = 1_000
 const COMPOSER_RIPGREP_FILE_ARGS = [
   '--files',
@@ -424,81 +421,6 @@ async function listTopLevelComposerPaths(cwd: string): Promise<ComposerSearchPat
   return topLevelResults.map(({ path, kind, isSymlink }) => ({ path, kind, isSymlink }))
 }
 
-async function listComposerDirectoryChildren(
-  cwd: string,
-  directoryPath: string,
-  limit: number,
-): Promise<ComposerSearchPathResult[]> {
-  if (limit <= 0) return []
-
-  let entries: Dirent<string>[]
-  try {
-    entries = await readdir(resolve(cwd, directoryPath), { withFileTypes: true })
-  } catch {
-    return []
-  }
-
-  const results: ComposerSearchPathResult[] = []
-  const sortedEntries = entries
-    .filter((entry) => !COMPOSER_SEARCH_EXCLUDED_TOP_LEVEL_NAMES.has(entry.name))
-    .sort((a, b) => a.name.localeCompare(b.name))
-
-  for (const entry of sortedEntries) {
-    if (results.length >= limit) break
-    let isDirectory = entry.isDirectory()
-    const isSymlink = entry.isSymbolicLink()
-    const childPath = normalizeComposerSearchPath(`${directoryPath}/${entry.name}`)
-    if (!childPath) continue
-
-    if (isSymlink) {
-      try {
-        isDirectory = (await stat(resolve(cwd, childPath))).isDirectory()
-      } catch {
-        isDirectory = false
-      }
-    }
-
-    results.push({
-      path: childPath,
-      kind: isDirectory ? 'directory' : 'file',
-      isSymlink,
-    })
-  }
-
-  return results
-}
-
-async function expandTopLevelDirectoryPrefixMatches(
-  cwd: string,
-  topLevelMatches: ComposerSearchPathResult[],
-  query: string,
-  limit: number,
-): Promise<ComposerSearchPathResult[]> {
-  if (query.length < COMPOSER_DIRECTORY_PREFIX_EXPANSION_MIN_QUERY_LENGTH || query.includes('/')) {
-    return topLevelMatches
-  }
-
-  const lowerQuery = query.toLowerCase()
-  const seen = new Map(topLevelMatches.map((row) => [row.path, row]))
-  const prefixDirectories = topLevelMatches.filter((row) =>
-    row.kind === 'directory' && row.path.toLowerCase().startsWith(lowerQuery),
-  )
-
-  for (const directory of prefixDirectories) {
-    const remaining = limit - seen.size
-    if (remaining <= 0) break
-    const children = await listComposerDirectoryChildren(cwd, directory.path, remaining)
-    for (const child of children) {
-      if (!seen.has(child.path)) {
-        seen.set(child.path, child)
-      }
-    }
-  }
-
-  if (seen.size === topLevelMatches.length) return topLevelMatches
-  return filterComposerPathResults(Array.from(seen.values()), query, limit)
-}
-
 type ShallowDirectoryCacheEntry = {
   expiresAt: number
   promise: Promise<ComposerSearchPathResult[]>
@@ -587,25 +509,6 @@ async function listShallowComposerDirectoryCandidates(
   return await entry.promise
 }
 
-function filterComposerPathResults(
-  rows: ComposerSearchPathResult[],
-  query: string,
-  limit: number,
-): ComposerSearchPathResult[] {
-  const trimmedQuery = query.trim()
-  return rows
-    .map((row) => ({
-      ...row,
-      score: scoreComposerPathCandidate(row.path, trimmedQuery),
-      pathDepth: row.path.split('/').filter(Boolean).length,
-      pathLength: row.path.length,
-    }))
-    .filter((row) => trimmedQuery.length === 0 || row.score < 10)
-    .sort(compareComposerPathCandidates)
-    .slice(0, limit)
-    .map(({ path, kind, isSymlink }) => ({ path, kind, isSymlink }))
-}
-
 function rankComposerPathCandidates(
   candidates: ComposerSearchPathCandidate[],
   query: string,
@@ -626,55 +529,6 @@ function rankComposerPathCandidates(
   }
 
   return ranked.slice(0, limit)
-}
-
-function rankComposerFilePathRows(
-  paths: string[],
-  query: string,
-  limit: number,
-): RankedComposerSearchPathCandidate[] {
-  const trimmedQuery = query.trim()
-  const prefilterLimit = Math.max(COMPOSER_FILE_PREFILTER_MIN_ROWS, limit * COMPOSER_FILE_PREFILTER_LIMIT_MULTIPLIER)
-  const ranked: RankedComposerSearchPathCandidate[] = []
-
-  for (const path of paths) {
-    const score = scoreComposerPathLiteralCandidate(path, trimmedQuery)
-    if (typeof score !== 'number') continue
-    pushRankedComposerPathCandidate(ranked, {
-      path,
-      kind: 'file',
-      score,
-      pathDepth: path.split('/').filter(Boolean).length,
-      pathLength: path.length,
-    }, prefilterLimit)
-  }
-
-  if (ranked.length > 0) return ranked
-
-  for (const path of paths) {
-    const score = scoreComposerPathCandidate(path, trimmedQuery)
-    if (trimmedQuery.length > 0 && score >= 10) continue
-    pushRankedComposerPathCandidate(ranked, {
-      path,
-      kind: 'file',
-      score,
-      pathDepth: path.split('/').filter(Boolean).length,
-      pathLength: path.length,
-    }, prefilterLimit)
-  }
-
-  return ranked
-}
-
-function buildComposerSearchPathCandidatesFromRankedFiles(
-  files: RankedComposerSearchPathCandidate[],
-): ComposerSearchPathCandidate[] {
-  const candidates = new Map<string, ComposerSearchPathCandidate>()
-  for (const file of files) {
-    addCandidate(candidates, file.path, 'file')
-    addAncestorDirectories(candidates, file.path)
-  }
-  return Array.from(candidates.values())
 }
 
 async function readAbsolutePathResult(pathValue: string): Promise<ComposerSearchPathResult | null> {
@@ -746,6 +600,88 @@ async function searchAbsoluteComposerPaths(
   return results
 }
 
+type ComposerCandidatePool = Map<string, ComposerSearchPathCandidate>
+
+function poolAdd(
+  pool: ComposerCandidatePool,
+  pathValue: string,
+  kind: ComposerSearchPathKind,
+): void {
+  const normalized = normalizeComposerSearchPath(pathValue)
+  if (!normalized || normalized === '.') return
+  if (!pool.has(normalized)) {
+    pool.set(normalized, { path: normalized, kind })
+  }
+}
+
+function poolAddWithAncestors(pool: ComposerCandidatePool, pathValue: string): void {
+  poolAdd(pool, pathValue, 'file')
+  addAncestorDirectories(pool, pathValue)
+}
+
+async function runFzfFilter(candidates: string[], query: string): Promise<string[] | null> {
+  const command = resolveFzfCommand()
+  if (!command) return null
+  if (candidates.length === 0) return []
+
+  return await new Promise<string[] | null>((resolvePromise) => {
+    const proc = spawn(command, ['--filter', query, '--scheme=path', '--tiebreak=length,index'], {
+      stdio: ['pipe', 'pipe', 'ignore'],
+      env: process.env,
+    })
+    let stdout = ''
+    let failed = false
+    proc.stdout.setEncoding('utf8')
+    proc.stdout.on('data', (chunk: string) => { stdout += chunk })
+    proc.on('error', () => { failed = true; resolvePromise(null) })
+    proc.on('close', (code) => {
+      if (failed) return
+      // fzf exits with 1 when there are no matches; any other non-zero is a real error
+      if (code !== 0 && code !== 1) {
+        resolvePromise(null)
+        return
+      }
+      const lines = stdout.split(/\r?\n/u).filter(Boolean)
+      resolvePromise(lines)
+    })
+    proc.stdin.end(candidates.join('\n'))
+  })
+}
+
+function fallbackRankComposerCandidates(
+  candidates: ComposerSearchPathCandidate[],
+  query: string,
+  limit: number,
+): ComposerSearchPathCandidate[] {
+  return rankComposerPathCandidates(candidates, query, limit)
+    .map(({ path, kind }) => ({ path, kind }))
+}
+
+async function collectComposerCandidatePool(
+  cwd: string,
+  topLevelRows: ComposerSearchPathResult[],
+): Promise<{ pool: ComposerCandidatePool; symlinks: Map<string, boolean> }> {
+  const pool: ComposerCandidatePool = new Map()
+  const symlinks = new Map<string, boolean>()
+
+  for (const row of topLevelRows) {
+    poolAdd(pool, row.path, row.kind)
+    symlinks.set(row.path, row.isSymlink)
+  }
+
+  const shallowRows = await listShallowComposerDirectoryCandidates(
+    cwd,
+    topLevelRows,
+    COMPOSER_SHALLOW_DIRECTORY_CANDIDATE_LIMIT,
+  )
+  for (const row of shallowRows) {
+    poolAdd(pool, row.path, row.kind)
+    symlinks.set(row.path, row.isSymlink)
+  }
+
+  return { pool, symlinks }
+}
+
 export async function searchComposerPaths(
   cwd: string,
   query: string,
@@ -762,36 +698,45 @@ export async function searchComposerPaths(
     return topLevelRows.slice(0, maxResults)
   }
 
-  const topLevelMatches = filterComposerPathResults(topLevelRows, trimmedQuery, maxResults)
-  if (topLevelMatches.some((row) => row.path.toLowerCase().startsWith(trimmedQuery.toLowerCase()))) {
-    return await expandTopLevelDirectoryPrefixMatches(cwd, topLevelMatches, trimmedQuery, maxResults)
-  }
+  const { pool, symlinks } = await collectComposerCandidatePool(cwd, topLevelRows)
 
-  const shallowDirectoryRows = await listShallowComposerDirectoryCandidates(
-    cwd,
-    topLevelRows,
-    COMPOSER_SHALLOW_DIRECTORY_CANDIDATE_LIMIT,
-  )
-  const shallowDirectoryMatches = filterComposerPathResults(shallowDirectoryRows, trimmedQuery, maxResults)
   const cachedPaths = getCachedPaths(cwd)
   const cacheEntry = cachedPaths ? null : getOrStartComposerPathCache(cwd)
-  if (cacheEntry && shallowDirectoryMatches.length === 0) {
+  if (cacheEntry) {
     await waitForComposerPathCacheMatch(cacheEntry, trimmedQuery, COMPOSER_FUZZY_INITIAL_SCAN_BUDGET_MS)
   }
-  const paths = cachedPaths ?? cacheEntry?.paths ?? []
-  const rankedFiles = rankComposerFilePathRows(paths, trimmedQuery, maxResults)
-  const candidates = rankComposerPathCandidates(
-    [
-      ...shallowDirectoryMatches,
-      ...buildComposerSearchPathCandidatesFromRankedFiles(rankedFiles),
-    ],
-    trimmedQuery,
-    maxResults,
-  )
+  const filePaths = cachedPaths ?? cacheEntry?.paths ?? []
+  for (const filePath of filePaths) {
+    poolAddWithAncestors(pool, filePath)
+  }
 
-  return await Promise.all(candidates.map(async (candidate) => ({
+  const orderedPaths = await orderComposerCandidatesWithFzf(pool, trimmedQuery, maxResults)
+
+  return await Promise.all(orderedPaths.slice(0, maxResults).map(async (candidate) => ({
     path: candidate.path,
     kind: candidate.kind,
-    isSymlink: await isSymlinkPath(cwd, candidate.path),
+    isSymlink: symlinks.get(candidate.path) ?? await isSymlinkPath(cwd, candidate.path),
   })))
+}
+
+async function orderComposerCandidatesWithFzf(
+  pool: ComposerCandidatePool,
+  query: string,
+  limit: number,
+): Promise<ComposerSearchPathCandidate[]> {
+  const candidates = Array.from(pool.values())
+  if (candidates.length === 0) return []
+
+  const fzfOrdered = await runFzfFilter(candidates.map((c) => c.path), query)
+  if (fzfOrdered) {
+    const output: ComposerSearchPathCandidate[] = []
+    for (const path of fzfOrdered) {
+      const hit = pool.get(path)
+      if (hit) output.push(hit)
+      if (output.length >= limit) break
+    }
+    return output
+  }
+
+  return fallbackRankComposerCandidates(candidates, query, limit)
 }
