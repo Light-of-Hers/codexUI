@@ -5187,11 +5187,14 @@ function closeMessageNavigation(): void {
 function toggleMessageNavigation(): void {
   isMessageNavigationOpen.value = !isMessageNavigationOpen.value
   if (isMessageNavigationOpen.value) {
-    messageNavigationScrollTop.value = 0
+    const totalHeight = userMessageNavigationItems.value.length * MESSAGE_NAV_ITEM_HEIGHT_PX
+    // Pre-seed the virtualization window so the tail (latest) rows render on first paint.
+    messageNavigationScrollTop.value = totalHeight
     void nextTick(() => {
-      if (messageNavigationListRef.value) {
-        messageNavigationListRef.value.scrollTop = 0
-      }
+      const el = messageNavigationListRef.value
+      if (!el) return
+      el.scrollTop = el.scrollHeight
+      messageNavigationScrollTop.value = el.scrollTop
     })
   }
 }
