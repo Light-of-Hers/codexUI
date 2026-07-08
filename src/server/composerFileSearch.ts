@@ -31,6 +31,8 @@ const COMPOSER_FUZZY_INITIAL_SCAN_BUDGET_MS = 250
 const COMPOSER_FILE_PREFILTER_MIN_ROWS = 80
 const COMPOSER_FILE_PREFILTER_LIMIT_MULTIPLIER = 8
 const COMPOSER_DIRECTORY_PREFIX_EXPANSION_MIN_QUERY_LENGTH = 2
+const COMPOSER_DIRECTORY_FUZZY_CHILD_EXPANSION_MIN_QUERY_LENGTH = 4
+const COMPOSER_DIRECTORY_FUZZY_CHILD_EXPANSION_MIN_MATCHED_CHARS = 3
 const COMPOSER_SHALLOW_DIRECTORY_CANDIDATE_LIMIT = 1_000
 const COMPOSER_RIPGREP_FILE_ARGS = [
   '--files',
@@ -120,6 +122,31 @@ function isWordBoundary(previous: string | undefined, current: string | undefine
 
 function normalizeFuzzyQuery(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/gu, '')
+}
+
+function countFuzzyPrefixCharsMatchedByPath(path: string, query: string): number {
+  const normalizedPath = normalizeFuzzyQuery(path)
+  const normalizedQuery = normalizeFuzzyQuery(query)
+  if (!normalizedPath || !normalizedQuery) return 0
+
+  let queryIndex = 0
+  for (const char of normalizedPath) {
+    if (char !== normalizedQuery[queryIndex]) continue
+    queryIndex += 1
+    if (queryIndex >= normalizedQuery.length) break
+  }
+  return queryIndex
+}
+
+function shouldExpandTopLevelDirectoryChildrenForQuery(path: string, query: string): boolean {
+  const normalizedPath = normalizeFuzzyQuery(path)
+  const normalizedQuery = normalizeFuzzyQuery(query)
+  if (normalizedQuery.length < COMPOSER_DIRECTORY_FUZZY_CHILD_EXPANSION_MIN_QUERY_LENGTH) return false
+  if (!normalizedPath || normalizedQuery.length <= normalizedPath.length) return false
+
+  const matchedChars = countFuzzyPrefixCharsMatchedByPath(path, query)
+  return matchedChars >= COMPOSER_DIRECTORY_FUZZY_CHILD_EXPANSION_MIN_MATCHED_CHARS
+    && matchedChars / normalizedPath.length >= 0.6
 }
 
 function scoreFuzzySubsequence(path: string, query: string): number | null {
@@ -502,6 +529,7 @@ async function expandTopLevelDirectoryPrefixMatches(
 async function listShallowComposerDirectoryCandidates(
   cwd: string,
   topLevelRows: ComposerSearchPathResult[],
+  query: string,
   limit: number,
 ): Promise<ComposerSearchPathResult[]> {
   if (limit <= 0) return []
@@ -510,6 +538,7 @@ async function listShallowComposerDirectoryCandidates(
   for (const topLevelRow of topLevelRows) {
     if (results.length >= limit) break
     if (topLevelRow.kind !== 'directory' || topLevelRow.isSymlink) continue
+    if (!shouldExpandTopLevelDirectoryChildrenForQuery(topLevelRow.path, query)) continue
 
     let entries: Dirent<string>[]
     try {
@@ -733,6 +762,7 @@ export async function searchComposerPaths(
   const shallowDirectoryRows = await listShallowComposerDirectoryCandidates(
     cwd,
     topLevelRows,
+    trimmedQuery,
     COMPOSER_SHALLOW_DIRECTORY_CANDIDATE_LIMIT,
   )
   const shallowDirectoryMatches = filterComposerPathResults(shallowDirectoryRows, trimmedQuery, maxResults)
