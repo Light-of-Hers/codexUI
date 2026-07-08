@@ -6,6 +6,12 @@ export type ComposerInlineFileAttachment = {
   fsPath: string
 }
 
+export type ComposerFileMentionSuggestionLike = {
+  path: string
+  kind: 'file' | 'directory'
+  isSymlink: boolean
+}
+
 const FILE_MENTION_TRIGGERS = ['@', '\uFF20'] as const
 
 const MENTION_BOUNDARY_CHARS = new Set([
@@ -136,6 +142,91 @@ function readMentionPathAt(text: string, atIndex: number): { path: string; endIn
 
 export function toComposerFileMentionSearchQuery(query: string): string {
   return normalizeMentionPath(query)
+}
+
+function scoreMentionPathLiteral(pathValue: string, query: string): number | null {
+  if (!query) return 0
+  const normalizedPath = normalizePathSeparators(pathValue).toLowerCase()
+  const normalizedQuery = normalizePathSeparators(query).toLowerCase()
+  const baseName = normalizedPath.slice(normalizedPath.lastIndexOf('/') + 1)
+  if (baseName === normalizedQuery) return 0
+  if (baseName.startsWith(normalizedQuery)) return 1
+  if (baseName.includes(normalizedQuery)) return 2
+  if (normalizedPath.includes(`/${normalizedQuery}`)) return 3
+  if (normalizedPath.includes(normalizedQuery)) return 4
+  return null
+}
+
+function normalizeMentionFuzzyQuery(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/gu, '')
+}
+
+function scoreMentionPathFuzzy(pathValue: string, query: string): number | null {
+  const normalizedQuery = normalizeMentionFuzzyQuery(query)
+  if (!pathValue || !normalizedQuery) return null
+
+  const normalizedPath = normalizePathSeparators(pathValue)
+  const lowerPath = normalizedPath.toLowerCase()
+  let searchFrom = 0
+  let firstMatch = -1
+  let previousMatch = -1
+  for (const char of normalizedQuery) {
+    const nextMatch = lowerPath.indexOf(char, searchFrom)
+    if (nextMatch < 0) return null
+    if (firstMatch < 0) firstMatch = nextMatch
+    previousMatch = nextMatch
+    searchFrom = nextMatch + 1
+  }
+
+  const span = previousMatch - firstMatch + 1
+  const compactnessPenalty = span - normalizedQuery.length
+  const leadingPenalty = firstMatch
+  const lengthPenalty = Math.max(0, normalizedPath.length - normalizedQuery.length)
+  return 7 + (leadingPenalty * 0.08) + (compactnessPenalty * 0.22) + (lengthPenalty * 0.01)
+}
+
+function scoreComposerFileMentionSuggestion(pathValue: string, query: string): number {
+  if (!query) return 0
+  const literalScore = scoreMentionPathLiteral(pathValue, query)
+  if (typeof literalScore === 'number') return literalScore
+
+  const normalizedPath = normalizePathSeparators(pathValue)
+  const baseName = normalizedPath.slice(normalizedPath.lastIndexOf('/') + 1)
+  const scores = [
+    scoreMentionPathFuzzy(baseName, query),
+    scoreMentionPathFuzzy(normalizedPath, query),
+  ].filter((score): score is number => typeof score === 'number')
+  return scores.length > 0 ? Math.min(...scores) : 10
+}
+
+export function filterComposerFileMentionSuggestions<T extends ComposerFileMentionSuggestionLike>(
+  suggestions: readonly T[],
+  query: string,
+  limit: number,
+): T[] {
+  const normalizedQuery = normalizeMentionPath(query)
+  const maxResults = Math.max(1, Math.floor(limit))
+  return suggestions
+    .map((suggestion) => {
+      const normalizedPath = normalizeMentionPath(suggestion.path)
+      const score = scoreComposerFileMentionSuggestion(normalizedPath, normalizedQuery)
+      return {
+        suggestion,
+        score,
+        pathDepth: normalizedPath.split('/').filter(Boolean).length,
+        pathLength: normalizedPath.length,
+        path: normalizedPath,
+      }
+    })
+    .filter((row) => normalizedQuery.length === 0 || row.score < 10)
+    .sort((a, b) =>
+      (a.score - b.score)
+        || (a.pathDepth - b.pathDepth)
+        || (a.pathLength - b.pathLength)
+        || a.path.localeCompare(b.path),
+    )
+    .slice(0, maxResults)
+    .map((row) => row.suggestion)
 }
 
 function normalizePathSeparators(pathValue: string): string {

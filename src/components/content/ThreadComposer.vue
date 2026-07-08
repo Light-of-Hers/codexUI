@@ -520,7 +520,10 @@ type ComposerSkillMentionsModule = typeof import('./composerSkillMentions')
 
 const INLINE_MENTION_TOKEN_PATTERN = /(^|\s)([@\uFF20$\uFF04][^\s@\uFF20$\uFF04]*)$/u
 const FULL_WIDTH_DOLLAR = '\uFF04'
-const FILE_MENTION_SEARCH_DEBOUNCE_MS = 60
+const FILE_MENTION_DISPLAY_LIMIT = 20
+const FILE_MENTION_BACKEND_LIMIT = 100
+const FILE_MENTION_FAST_SEARCH_DELAY_MS = 80
+const FILE_MENTION_IDLE_REFRESH_DELAY_MS = 320
 
 let markdownRendererModulePromise: Promise<MarkdownRendererModule> | null = null
 let composerFileMentionsModulePromise: Promise<ComposerFileMentionsModule> | null = null
@@ -702,6 +705,10 @@ let composerOverflowMeasurementQueued = false
 const draftGeneration = ref(0)
 let fileMentionSearchToken = 0
 let fileMentionDebounceTimer: ReturnType<typeof setTimeout> | null = null
+let fileMentionBackendInFlight = false
+let fileMentionCachedCwd = ''
+let fileMentionCachedQuery = ''
+let fileMentionCachedRows: ComposerFileSuggestion[] = []
 let isHoldPressActive = false
 let dragDepth = 0
 let attachmentSessionToken = 0
@@ -1802,12 +1809,29 @@ function onInputKeydown(event: KeyboardEvent): void {
 }
 
 function closeInlineMention(): void {
+  fileMentionSearchToken += 1
   activeMentionKind.value = null
   mentionStartIndex.value = null
   mentionQuery.value = ''
   fileMentionSuggestions.value = []
   skillMentionSuggestions.value = []
   mentionHighlightedIndex.value = 0
+  if (fileMentionDebounceTimer) {
+    clearTimeout(fileMentionDebounceTimer)
+    fileMentionDebounceTimer = null
+  }
+}
+
+function clearFileMentionSuggestionCache(): void {
+  fileMentionSearchToken += 1
+  fileMentionCachedCwd = ''
+  fileMentionCachedQuery = ''
+  fileMentionCachedRows = []
+  fileMentionSuggestions.value = []
+  if (fileMentionDebounceTimer) {
+    clearTimeout(fileMentionDebounceTimer)
+    fileMentionDebounceTimer = null
+  }
 }
 
 function closeFileMention(): void {
@@ -1894,23 +1918,76 @@ async function queueFileMentionSearch(): Promise<void> {
     fileMentionSuggestions.value = []
     return
   }
+
+  const { filterComposerFileMentionSuggestions, toComposerFileMentionSearchQuery } = await loadComposerFileMentionsModule()
+  if (!isFileMentionOpen.value) return
+  const query = toComposerFileMentionSearchQuery(mentionQuery.value)
+  const hasReusableCache = fileMentionCachedCwd === cwd && fileMentionCachedRows.length > 0
+  let localRows: ComposerFileSuggestion[] = []
+  if (hasReusableCache) {
+    localRows = filterComposerFileMentionSuggestions(
+      fileMentionCachedRows,
+      query,
+      FILE_MENTION_DISPLAY_LIMIT,
+    )
+    fileMentionSuggestions.value = localRows
+    mentionHighlightedIndex.value = 0
+    resetMentionListScroll()
+  }
+
   if (fileMentionDebounceTimer) {
     clearTimeout(fileMentionDebounceTimer)
   }
-  const token = ++fileMentionSearchToken
-  fileMentionDebounceTimer = setTimeout(async () => {
-    try {
-      const { toComposerFileMentionSearchQuery } = await loadComposerFileMentionsModule()
-      const rows = await searchComposerFiles(cwd, toComposerFileMentionSearchQuery(mentionQuery.value), 20)
-      if (!isFileMentionOpen.value || token !== fileMentionSearchToken) return
-      fileMentionSuggestions.value = rows
-      mentionHighlightedIndex.value = 0
-      resetMentionListScroll()
-    } catch {
-      if (!isFileMentionOpen.value || token !== fileMentionSearchToken) return
+
+  const shouldFetchImmediately = !hasReusableCache || query.length === 0 || localRows.length === 0
+  const delayMs = shouldFetchImmediately ? FILE_MENTION_FAST_SEARCH_DELAY_MS : FILE_MENTION_IDLE_REFRESH_DELAY_MS
+  const token = fileMentionSearchToken
+  fileMentionDebounceTimer = setTimeout(() => {
+    void refreshFileMentionSuggestionsFromServer(cwd, query, token)
+  }, delayMs)
+}
+
+async function refreshFileMentionSuggestionsFromServer(cwd: string, query: string, token: number): Promise<void> {
+  if (fileMentionBackendInFlight) return
+  fileMentionBackendInFlight = true
+  try {
+    const { filterComposerFileMentionSuggestions, toComposerFileMentionSearchQuery } = await loadComposerFileMentionsModule()
+    const rows = await searchComposerFiles(cwd, query, FILE_MENTION_BACKEND_LIMIT)
+    if (!isFileMentionOpen.value || token !== fileMentionSearchToken || cwd !== (props.cwd ?? '').trim()) return
+    fileMentionCachedCwd = cwd
+    fileMentionCachedQuery = query
+    fileMentionCachedRows = rows
+    const currentQuery = toComposerFileMentionSearchQuery(mentionQuery.value)
+    fileMentionSuggestions.value = filterComposerFileMentionSuggestions(
+      rows,
+      currentQuery,
+      FILE_MENTION_DISPLAY_LIMIT,
+    )
+    mentionHighlightedIndex.value = 0
+    resetMentionListScroll()
+  } catch {
+    if (!isFileMentionOpen.value || token !== fileMentionSearchToken) return
+    if (fileMentionCachedCwd !== cwd || fileMentionCachedRows.length === 0) {
       fileMentionSuggestions.value = []
     }
-  }, FILE_MENTION_SEARCH_DEBOUNCE_MS)
+  } finally {
+    fileMentionBackendInFlight = false
+    void refreshFileMentionSuggestionsAfterInFlight()
+  }
+}
+
+async function refreshFileMentionSuggestionsAfterInFlight(): Promise<void> {
+  if (!isFileMentionOpen.value || fileMentionBackendInFlight) return
+  const cwd = (props.cwd ?? '').trim()
+  if (!cwd) return
+  const { toComposerFileMentionSearchQuery } = await loadComposerFileMentionsModule()
+  if (!isFileMentionOpen.value || fileMentionBackendInFlight) return
+  const query = toComposerFileMentionSearchQuery(mentionQuery.value)
+  if (fileMentionCachedCwd === cwd && fileMentionCachedQuery === query) return
+  const token = fileMentionSearchToken
+  fileMentionDebounceTimer = setTimeout(() => {
+    void refreshFileMentionSuggestionsFromServer(cwd, query, token)
+  }, FILE_MENTION_IDLE_REFRESH_DELAY_MS)
 }
 
 async function applyFileMention(suggestion: ComposerFileSuggestion): Promise<void> {
@@ -2154,6 +2231,7 @@ watch(draft, () => {
 watch(
   () => props.cwd,
   () => {
+    clearFileMentionSuggestionCache()
     if (isFileMentionOpen.value) {
       void queueFileMentionSearch()
     }

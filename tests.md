@@ -6732,13 +6732,19 @@ Markdown files opened through the local editor expose a preview button that rend
 6. Repeat the POST after the cache is warm and confirm it remains well below the previous second-level response time.
 7. Open a thread in light theme and focus the composer.
 8. Type `@` and confirm top-level path suggestions appear immediately.
-9. Continue typing `sec_string` or an acronym-style query such as `tc`.
-10. Confirm basename acronym matches such as `ThreadComposer.vue` rank ahead of loose path-spanning matches such as `tests/cache.txt`.
-11. Select a suggestion and confirm the inserted inline mention still uses the existing `./path` or `@/path` format.
-12. Repeat steps 7-11 in dark theme.
+9. Continue typing `sec_string` quickly.
+10. Confirm suggestions update from the locally cached result list while typing instead of waiting for a network request after every keypress.
+11. Confirm `_notebooks/byte/sec_string.txt` appears ahead of loose deep matches once it is in the cached result list.
+12. Type an acronym-style query such as `tc`.
+13. Confirm basename acronym matches such as `ThreadComposer.vue` rank ahead of loose path-spanning matches such as `tests/cache.txt`.
+14. Select a suggestion and confirm the inserted inline mention still uses the existing `./path` or `@/path` format.
+15. Repeat steps 7-14 in dark theme.
 
 #### Expected Results
-- File mention suggestions update faster while typing because the client waits 60ms before searching instead of 120ms.
+- File mention suggestions update from the most recent local candidate cache while the user types.
+- Backend file search is no longer canceled and restarted for every keystroke.
+- The client fetches up to 100 backend candidates, displays the best 20, and locally re-filters that cached candidate set between backend refreshes.
+- Backend refreshes happen quickly when there is no reusable cache or no local match, and otherwise wait for an idle pause.
 - Bare `@` opens the top-level suggestion list and starts warming one streaming recursive path cache in the background.
 - Follow-up keystrokes reuse the same in-progress cache instead of spawning duplicate `rg --files` scans.
 - Cold relative searches wait for a literal/exact path match before returning early, so early fuzzy matches cannot outrank a later exact basename hit.
@@ -6748,6 +6754,8 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Performance Audit
 - Empty-query mention search still returns from one top-level `readdir`, then warms the existing 30-second `rg --files` cache asynchronously for follow-up fuzzy queries.
+- Frontend mention filtering is O(cached result count) over at most 100 cached rows, avoiding one backend request per typed character in the common case.
+- Backend search requests are coalesced behind one in-flight request; if the query changes while a request is running, the completed result is cached and filtered against the current query before any idle refresh is scheduled.
 - Cold relative fuzzy searches start or reuse one streaming cache per cwd, wait only until a matching row appears or the short budget expires, and avoid launching one `rg` process per keystroke.
 - Hot literal searches such as `sec_string` run a literal-first pass and skip full fuzzy scoring when enough high-quality substring matches exist.
 - Recursive candidate ranking no longer expands ancestors for every path in large repositories; it ranks file paths first, then expands ancestors only for the bounded top file matches.

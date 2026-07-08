@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   extractComposerFileMentionAttachments,
+  filterComposerFileMentionSuggestions,
   formatComposerFileMention,
   insertComposerFileMentionText,
   resolveComposerFileMentionFsPath,
@@ -120,6 +121,21 @@ describe('composerFileMentions', () => {
   it('expands tilde file mentions from the current cwd', () => {
     expect(resolveComposerFileMentionFsPath('~/work/my-agent-configs/repos/codexUI', '/root/work/my-notebook')).toBe(
       '/root/work/my-agent-configs/repos/codexUI',
+    )
+  })
+
+  it('filters cached suggestions locally with basename-first ranking', () => {
+    const suggestions = [
+      { path: '_notebooks/byte/_workspace/amd/sec_token_string.txt', kind: 'file' as const, isSymlink: false },
+      { path: '_notebooks/byte/sec_string.txt', kind: 'file' as const, isSymlink: false },
+      { path: '_notebooks/byte/unrelated.txt', kind: 'file' as const, isSymlink: false },
+    ]
+
+    expect(filterComposerFileMentionSuggestions(suggestions, 'sec_string', 20)[0]?.path).toBe(
+      '_notebooks/byte/sec_string.txt',
+    )
+    expect(filterComposerFileMentionSuggestions(suggestions, 'sec', 20)[0]?.path).toBe(
+      '_notebooks/byte/sec_string.txt',
     )
   })
 })
