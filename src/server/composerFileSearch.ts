@@ -31,6 +31,7 @@ const COMPOSER_FUZZY_INITIAL_SCAN_BUDGET_MS = 250
 const COMPOSER_FILE_PREFILTER_MIN_ROWS = 80
 const COMPOSER_FILE_PREFILTER_LIMIT_MULTIPLIER = 8
 const COMPOSER_DIRECTORY_PREFIX_EXPANSION_MIN_QUERY_LENGTH = 2
+const COMPOSER_SHALLOW_DIRECTORY_CANDIDATE_LIMIT = 1_000
 const COMPOSER_RIPGREP_FILE_ARGS = [
   '--files',
   '--follow',
@@ -498,6 +499,57 @@ async function expandTopLevelDirectoryPrefixMatches(
   return filterComposerPathResults(Array.from(seen.values()), query, limit)
 }
 
+async function listShallowComposerDirectoryCandidates(
+  cwd: string,
+  topLevelRows: ComposerSearchPathResult[],
+  limit: number,
+): Promise<ComposerSearchPathResult[]> {
+  if (limit <= 0) return []
+
+  const results: ComposerSearchPathResult[] = []
+  for (const topLevelRow of topLevelRows) {
+    if (results.length >= limit) break
+    if (topLevelRow.kind !== 'directory' || topLevelRow.isSymlink) continue
+
+    let entries: Dirent<string>[]
+    try {
+      entries = await readdir(resolve(cwd, topLevelRow.path), { withFileTypes: true })
+    } catch {
+      continue
+    }
+
+    const sortedEntries = entries
+      .filter((entry) => !COMPOSER_SEARCH_EXCLUDED_TOP_LEVEL_NAMES.has(entry.name))
+      .sort((a, b) => a.name.localeCompare(b.name))
+
+    for (const entry of sortedEntries) {
+      if (results.length >= limit) break
+
+      let isDirectory = entry.isDirectory()
+      const isSymlink = entry.isSymbolicLink()
+      const childPath = normalizeComposerSearchPath(`${topLevelRow.path}/${entry.name}`)
+      if (!childPath) continue
+
+      if (isSymlink) {
+        try {
+          isDirectory = (await stat(resolve(cwd, childPath))).isDirectory()
+        } catch {
+          isDirectory = false
+        }
+      }
+      if (!isDirectory) continue
+
+      results.push({
+        path: childPath,
+        kind: 'directory',
+        isSymlink,
+      })
+    }
+  }
+
+  return results
+}
+
 function filterComposerPathResults(
   rows: ComposerSearchPathResult[],
   query: string,
@@ -678,15 +730,24 @@ export async function searchComposerPaths(
     return await expandTopLevelDirectoryPrefixMatches(cwd, topLevelMatches, trimmedQuery, maxResults)
   }
 
+  const shallowDirectoryRows = await listShallowComposerDirectoryCandidates(
+    cwd,
+    topLevelRows,
+    COMPOSER_SHALLOW_DIRECTORY_CANDIDATE_LIMIT,
+  )
+  const shallowDirectoryMatches = filterComposerPathResults(shallowDirectoryRows, trimmedQuery, maxResults)
   const cachedPaths = getCachedPaths(cwd)
   const cacheEntry = cachedPaths ? null : getOrStartComposerPathCache(cwd)
-  if (cacheEntry) {
+  if (cacheEntry && shallowDirectoryMatches.length === 0) {
     await waitForComposerPathCacheMatch(cacheEntry, trimmedQuery, COMPOSER_FUZZY_INITIAL_SCAN_BUDGET_MS)
   }
   const paths = cachedPaths ?? cacheEntry?.paths ?? []
   const rankedFiles = rankComposerFilePathRows(paths, trimmedQuery, maxResults)
   const candidates = rankComposerPathCandidates(
-    buildComposerSearchPathCandidatesFromRankedFiles(rankedFiles),
+    [
+      ...shallowDirectoryMatches,
+      ...buildComposerSearchPathCandidatesFromRankedFiles(rankedFiles),
+    ],
     trimmedQuery,
     maxResults,
   )

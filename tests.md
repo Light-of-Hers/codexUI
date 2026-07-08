@@ -6532,6 +6532,34 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Rollback/Cleanup
 - No persistent cleanup is required.
 
+### Feature: Composer file mention shallow-directory fuzzy search
+
+#### Prerequisites
+- App server is running from this repository.
+- Open a project that has an empty or uninitialized shallow subdirectory such as `repos/opencode`.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Run `pnpm exec vitest run src/server/composerFileSearch.test.ts src/components/content/composerFileMentions.test.ts`.
+2. Run `pnpm exec vue-tsc --noEmit`.
+3. Open the composer in light theme.
+4. Type `@repoopecod`.
+5. Confirm the suggestion list includes `repos/opencode`.
+6. Switch to dark theme and repeat steps 3-5.
+
+#### Expected Results
+- Empty shallow directories can be matched by fzf-style path-spanning fuzzy queries.
+- `repos/opencode` ranks ahead of weaker file matches such as unrelated `codex` or `opencode-input` files.
+- Light and dark theme suggestion rows remain readable.
+
+#### Performance Audit
+- The backend only scans direct children of top-level directories for this directory candidate pass.
+- The pass skips symlinked top-level directories and excluded names such as `.git` and `node_modules`.
+- When a shallow directory match exists, the backend does not wait for the cold fuzzy file-index budget before returning useful results.
+
+#### Rollback/Cleanup
+- No persistent cleanup is required.
+
 ### Feature: Dynamic Codex UI provider config
 
 #### Prerequisites

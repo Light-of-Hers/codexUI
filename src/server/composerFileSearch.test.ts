@@ -86,6 +86,19 @@ describe('searchComposerPaths', () => {
     expect(results.some((entry) => entry.path === '.cookies/cloud.bytedance.net.json')).toBe(true)
   })
 
+  it('matches empty shallow directories with path-spanning fuzzy queries', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'codexui-composer-search-'))
+
+    await mkdir(join(tempDir, 'repos', 'opencode'), { recursive: true })
+    await mkdir(join(tempDir, 'repos', 'codexUI', 'src', 'types'), { recursive: true })
+    await writeFile(join(tempDir, 'repos', 'codexUI', 'src', 'types', 'codex.ts'), 'types')
+
+    const results = await searchComposerPaths(tempDir, 'repoopecod', 20)
+
+    expect(results[0]?.path).toBe('repos/opencode')
+    expect(results.some((entry) => entry.path === 'repos/opencode')).toBe(true)
+  })
+
   it('returns exact absolute path queries without treating them as cwd-relative text', async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'codexui-composer-search-'))
     const targetDir = join(tempDir, 'absolute-target')
