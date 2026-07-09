@@ -775,8 +775,6 @@
         class="message-nav-panel"
         role="menu"
         aria-label="User messages"
-        @mousedown="onMessageNavigationMouseDown"
-        @auxclick="onMessageNavigationAuxClick"
       >
         <div class="message-nav-header">
           <span>User messages</span>
@@ -5324,24 +5322,40 @@ watch(() => userMessageNavigationItems.value.length, () => {
 function onMessageNavigationScroll(): void {
   messageNavigationScrollTop.value = messageNavigationListRef.value?.scrollTop ?? 0
 }
-function onMessageNavigationMouseDown(event: MouseEvent): void {
+function onMessageNavigationDocumentMouseDown(event: MouseEvent): void {
   // Middle click on a scrollable region triggers Chrome/Firefox autoscroll
   // ("cross" cursor mode). Inside the user-message dropdown that is never
   // useful and it makes the list jump around unexpectedly on the next mouse
   // movement, so suppress it here.
-  if (event.button === 1) {
-    event.preventDefault()
-  }
+  if (event.button !== 1) return
+  const nav = messageNavigationRef.value
+  if (!nav) return
+  const target = event.target
+  if (!(target instanceof Node) || !nav.contains(target)) return
+  event.preventDefault()
 }
 
-function onMessageNavigationAuxClick(event: MouseEvent): void {
+function onMessageNavigationDocumentAuxClick(event: MouseEvent): void {
   // Also swallow the resulting auxclick so browsers do not treat a middle
   // click on the item buttons as "open in new tab" or similar.
-  if (event.button === 1) {
-    event.preventDefault()
-    event.stopPropagation()
-  }
+  if (event.button !== 1) return
+  const nav = messageNavigationRef.value
+  if (!nav) return
+  const target = event.target
+  if (!(target instanceof Node) || !nav.contains(target)) return
+  event.preventDefault()
+  event.stopPropagation()
 }
+
+watch(isMessageNavigationOpen, (isOpen) => {
+  if (isOpen) {
+    document.addEventListener('mousedown', onMessageNavigationDocumentMouseDown, true)
+    document.addEventListener('auxclick', onMessageNavigationDocumentAuxClick, true)
+  } else {
+    document.removeEventListener('mousedown', onMessageNavigationDocumentMouseDown, true)
+    document.removeEventListener('auxclick', onMessageNavigationDocumentAuxClick, true)
+  }
+})
 
 
 function clearHighlightedMessage(): void {
@@ -5772,6 +5786,8 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  document.removeEventListener('mousedown', onMessageNavigationDocumentMouseDown, true)
+  document.removeEventListener('auxclick', onMessageNavigationDocumentAuxClick, true)
   clearRenderCaches()
   if (conversationScrollFrame) {
     cancelAnimationFrame(conversationScrollFrame)
