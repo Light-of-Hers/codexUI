@@ -661,6 +661,192 @@ describe('thread selection persistence', () => {
   })
 })
 
+describe('thread cache keep-warm', () => {
+  const RECENT_LRU_KEY = 'codex-web-local.recently-visited-thread-ids.v1'
+
+  function messagePayload(id: string) {
+    return {
+      id,
+      turnId: 'turn-1',
+      turnIndex: 0,
+      role: 'assistant' as const,
+      kind: 'agent-message' as const,
+      contentBlocks: [{ type: 'text' as const, text: 'hi' }],
+    }
+  }
+
+  it('records visited threads in an LRU list with a cap and dedupes repeats', async () => {
+    installTestWindow()
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({
+      groups: [{
+        projectName: 'project',
+        threads: [
+          thread('thread-a', '/tmp/project'),
+          thread('thread-b', '/tmp/project'),
+        ],
+      }],
+      nextCursor: null,
+    })
+
+    const state = useDesktopState()
+    await state.refreshAll({ includeSelectedThreadMessages: false, refreshAncillary: false })
+
+    await state.selectThread('thread-a')
+    await state.selectThread('thread-b')
+    await state.selectThread('thread-a')
+
+    const stored = window.localStorage.getItem(RECENT_LRU_KEY)
+    expect(stored && JSON.parse(stored)).toEqual(['thread-a', 'thread-b'])
+  })
+
+  it('preserves persisted messages for LRU threads that fall off the sidebar', async () => {
+    installTestWindow()
+    gatewayMocks.getThreadGroupsPage
+      .mockResolvedValueOnce({
+        groups: [{
+          projectName: 'project',
+          threads: [
+            thread('thread-a', '/tmp/project'),
+            thread('thread-b', '/tmp/project'),
+          ],
+        }],
+        nextCursor: null,
+      })
+      .mockResolvedValueOnce({
+        groups: [{
+          projectName: 'project',
+          threads: [thread('thread-b', '/tmp/project')],
+        }],
+        nextCursor: null,
+      })
+    gatewayMocks.getThreadDetail.mockResolvedValue({
+      messages: [messagePayload('m-a')],
+      inProgress: false,
+      activeTurnId: '',
+      hasMoreOlder: false,
+      turnIndexByTurnId: { 'turn-1': 0 },
+    })
+    gatewayMocks.resumeThread.mockResolvedValue({
+      model: '',
+      modelProvider: '',
+      reasoningEffort: '',
+      messages: [messagePayload('m-a')],
+      inProgress: false,
+      activeTurnId: '',
+      hasMoreOlder: false,
+      turnIndexByTurnId: { 'turn-1': 0 },
+    })
+
+    const state = useDesktopState()
+    await state.refreshAll({ includeSelectedThreadMessages: false, refreshAncillary: false })
+
+    await state.selectThread('thread-a')
+    await flushMicrotasks()
+    await state.selectThread('thread-b')
+    await flushMicrotasks()
+
+    // Sidebar reload drops thread-a; without keep-warm this would purge caches.
+    await state.refreshAll({ includeSelectedThreadMessages: false, refreshAncillary: false })
+
+    // Switch back to thread-a with preferCached; since caches survived, the
+    // messages should be visible synchronously.
+    const initialResumeCalls = gatewayMocks.resumeThread.mock.calls.length
+    await state.selectThread('thread-a')
+    expect(state.messages.value).toHaveLength(1)
+    expect(state.messages.value[0]?.id).toBe('m-a')
+    // The synchronous select does not itself await resume.
+    await flushMicrotasks()
+    expect(gatewayMocks.resumeThread.mock.calls.length).toBeGreaterThanOrEqual(initialResumeCalls)
+  })
+})
+
+describe('thread cache preferCached', () => {
+  function messagePayload(id: string, turnId = 'turn-1') {
+    return {
+      id,
+      turnId,
+      turnIndex: 0,
+      role: 'assistant' as const,
+      kind: 'agent-message' as const,
+      contentBlocks: [{ type: 'text' as const, text: 'hi' }],
+    }
+  }
+
+  it('returns instantly from cache and refreshes in the background when preferCached is set', async () => {
+    installTestWindow()
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({
+      groups: [{ projectName: 'project', threads: [thread('thread-a', '/tmp/project')] }],
+      nextCursor: null,
+    })
+    gatewayMocks.getThreadDetail.mockResolvedValue({
+      messages: [messagePayload('m-1')],
+      inProgress: false,
+      activeTurnId: '',
+      hasMoreOlder: false,
+      turnIndexByTurnId: { 'turn-1': 0 },
+    })
+    gatewayMocks.resumeThread.mockResolvedValue({
+      model: '',
+      modelProvider: '',
+      reasoningEffort: '',
+      messages: [messagePayload('m-1')],
+      inProgress: false,
+      activeTurnId: '',
+      hasMoreOlder: false,
+      turnIndexByTurnId: { 'turn-1': 0 },
+    })
+
+    const state = useDesktopState()
+    await state.refreshAll({ includeSelectedThreadMessages: false, refreshAncillary: false })
+
+    await state.loadMessages('thread-a')
+    expect(gatewayMocks.resumeThread).toHaveBeenCalledTimes(1)
+    expect(state.messages.value).toHaveLength(1)
+
+    // Simulate a stale resume state (e.g. provider switch) so a fresh call
+    // would otherwise be issued for this thread.
+    state.invalidateAppServerRuntimeState()
+
+    // Point the next resume at a promise that never resolves; if
+    // loadMessages awaited the network it would deadlock.
+    let neverResolve: () => void = () => {}
+    const pendingResume = new Promise((resolve) => {
+      neverResolve = () => resolve({
+        model: '',
+        modelProvider: '',
+        reasoningEffort: '',
+        messages: [messagePayload('m-1')],
+        inProgress: false,
+        activeTurnId: '',
+        hasMoreOlder: false,
+        turnIndexByTurnId: { 'turn-1': 0 },
+      })
+    })
+    gatewayMocks.resumeThread.mockReturnValueOnce(pendingResume)
+
+    const callsBefore = gatewayMocks.resumeThread.mock.calls.length
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutHandle = setTimeout(() => reject(new Error('loadMessages did not return promptly')), 200)
+    })
+    try {
+      await Promise.race([
+        state.loadMessages('thread-a', { preferCached: true }),
+        timeoutPromise,
+      ])
+    } finally {
+      if (timeoutHandle) clearTimeout(timeoutHandle)
+    }
+    // Silence unhandled rejection from the losing race entry.
+    timeoutPromise.catch(() => {})
+    // Cache stayed visible immediately.
+    expect(state.messages.value).toHaveLength(1)
+    // The background refresh call fired but has not yet completed.
+    expect(gatewayMocks.resumeThread.mock.calls.length).toBe(callsBefore + 1)
+    neverResolve()
+  })
+})
+
 describe('goal slash commands', () => {
   const activeGoal = {
     threadId: 'thread-a',

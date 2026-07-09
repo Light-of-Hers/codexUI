@@ -5934,7 +5934,10 @@ export function useDesktopState() {
   }
 
 
-  async function loadMessages(threadId: string, options: { silent?: boolean; force?: boolean } = {}) {
+  async function loadMessages(
+    threadId: string,
+    options: { silent?: boolean; force?: boolean; preferCached?: boolean } = {},
+  ) {
     if (!threadId) {
       return
     }
@@ -5946,8 +5949,27 @@ export function useDesktopState() {
     }
 
     const alreadyLoaded = loadedMessagesByThreadId.value[threadId] === true
-    const shouldShowLoading = options.silent !== true && !alreadyLoaded
     const forceReload = options.force === true
+    const preferCached = options.preferCached === true
+    const persisted = persistedMessagesByThreadId.value[threadId] ?? []
+    const hasCachedMessages = alreadyLoaded && persisted.length > 0
+    const canServeFromCache =
+      preferCached &&
+      !forceReload &&
+      hasCachedMessages &&
+      inProgressById.value[threadId] !== true
+
+    // Cached-first render: hand the caller the persisted messages
+    // immediately and refresh in the background so provider/model
+    // switches, page reloads, or LRU-restored threads never block the
+    // UI on a network round-trip.
+    if (canServeFromCache) {
+      markThreadAsRead(threadId)
+      void loadMessages(threadId, { silent: true }).catch(() => {})
+      return
+    }
+
+    const shouldShowLoading = options.silent !== true && !alreadyLoaded
     if (shouldShowLoading) {
       loadingMessagesByThreadId.value = {
         ...loadingMessagesByThreadId.value,
@@ -6288,7 +6310,10 @@ export function useDesktopState() {
     // clicking another thread is not blocked on the previous thread's
     // pending network work. Per-thread loading/caching maps guarantee that
     // late-arriving payloads only mutate the correct thread's state.
-    void loadMessages(threadId).catch((unknownError) => {
+    // preferCached lets the switch return instantly if we already have
+    // this thread's messages in memory; a silent refresh is scheduled
+    // internally so the view converges to the latest server state.
+    void loadMessages(threadId, { preferCached: true }).catch((unknownError) => {
       error.value = unknownError instanceof Error ? unknownError.message : 'Unknown application error'
     })
     if (threadId) {

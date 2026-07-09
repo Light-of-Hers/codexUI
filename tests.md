@@ -7089,3 +7089,39 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - Revert `THREAD_RESPONSE_TURN_LIMIT` back to 10 and drop `backfillOlderTurnsInBackground`, `loadThreadTurnWindow` prop, plus the `turnId` field on `UserMessageNavigationItem` to restore the previous behavior.
+
+### Feature: Thread cache keep-warm and cached-first render
+
+#### Prerequisites
+- App server is running from this repository.
+- Several threads are available in the sidebar; at least one has enough turns that a fresh load is visibly slower than a cached one.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Run `pnpm exec vitest run`.
+2. Run `pnpm exec vue-tsc --noEmit`.
+3. Open thread A, wait for it to load, then switch to thread B and back to A. Confirm the switch back to A shows the messages immediately without a loading spinner.
+4. Load enough threads (or scroll / filter the sidebar) so that thread A pages out of `projectGroups` (e.g. use workspace root filtering to hide its project). Trigger a sidebar refresh (`Cmd/Ctrl+R` or via the refresh button) so `pruneThreadScopedState` runs.
+5. Re-select thread A from any navigation entry point (URL, breadcrumb, or after re-adding its workspace root). Confirm the persisted messages are still there instantly, without hitting `thread/read` synchronously.
+6. Switch the active provider (e.g. `codex` → moon) so `invalidateAppServerRuntimeState` runs. Re-open a previously visited thread. Confirm the messages appear immediately and a `thread/resume` fires silently in the background (Network tab shows no blocking wait).
+7. Reload the tab, then re-open a thread that was in the LRU list before the reload. Confirm the LRU list itself was restored from `localStorage` (`codex-web-local.recently-visited-thread-ids.v1`), though the messages will need to be fetched once because in-memory caches do not persist.
+8. Repeat step 3 in both light and dark theme.
+
+#### Expected Results
+- Repeated switches between recently visited threads render messages synchronously — `isLoadingMessages` stays `false` and no spinner appears.
+- Threads that were paged out of the sidebar retain their persisted messages when they had been visited recently, up to `RECENT_THREAD_LRU_LIMIT` (30 threads).
+- After provider switches or other resume-invalidation events, cached messages remain visible; the background `thread/resume` + `thread/read` refresh reconciles quietly.
+- The recently-visited thread list is persisted across page reloads via `localStorage`; visiting the same thread multiple times moves it back to the front instead of appending duplicates.
+- Light and dark theme render identically.
+
+#### Performance Audit
+- `setSelectedThreadId` now calls `recordRecentlyVisitedThreadId`, which maintains a de-duplicated LRU array of up to 30 entries and persists it to `codex-web-local.recently-visited-thread-ids.v1`. The write happens only on selection changes.
+- `pruneThreadScopedState` merges `recentlyVisitedThreadIds.value` into `activeThreadIds` before filtering the per-thread maps. This adds an O(N=30) union but avoids the O(K) rebuild of persisted/loaded/turn/live caches that used to trigger a full reload on subsequent visits.
+- `loadMessages` accepts a new `preferCached` option. When cached messages exist, are not force-reloaded, and no turn is in progress, it returns synchronously after `markThreadAsRead` and fires a silent `loadMessages(..., { silent: true })` in the background. The background call goes through the normal path (respecting the `loadMessagePromiseByThreadId` guard) so `thread/resume` + `thread/read` still reconcile server state without blocking the caller.
+- `selectThread` opts into `preferCached`, so user-driven session switches no longer pay for a `thread/resume` round-trip when the messages are already in memory. Programmatic callers (`forkThreadById`, `refreshDesktopState`, `ensureThreadMessagesLoaded`, silent refreshes) keep the previous behavior because they omit the flag.
+- No profiling run was executed in this session because the LRU + preferCached gains are only visible on repeated switches to threads that had been paged out or invalidated. Next measurement: sample `performance.now()` around `selectThread` on a large thread before/after provider switch and confirm the synchronous path (~<5ms) stays flat while the background resume still fires.
+
+#### Rollback/Cleanup
+- Remove `recordRecentlyVisitedThreadId`, the `recentlyVisitedThreadIds` ref, the LRU load/save helpers, and drop the LRU union from `pruneThreadScopedState`.
+- Drop the `preferCached` branch in `loadMessages` and revert `selectThread` to pass no options.
+- Delete `RECENT_THREAD_LRU_STORAGE_KEY` and `RECENT_THREAD_LRU_LIMIT` constants.
