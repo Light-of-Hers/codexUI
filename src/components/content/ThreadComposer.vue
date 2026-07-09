@@ -2179,7 +2179,19 @@ onMounted(() => {
   window.addEventListener('blur', onWindowDragCleanup)
   void reloadPrompts()
   queueComposerOverflowMeasurement()
+  void warmFileMentionResources()
 })
+
+async function warmFileMentionResources(): Promise<void> {
+  void loadComposerFileMentionsModule()
+  const cwd = (props.cwd ?? '').trim()
+  if (!cwd) return
+  try {
+    await searchComposerFiles(cwd, '', FILE_MENTION_BACKEND_LIMIT)
+  } catch {
+    // Warmup is best-effort; ignore failures.
+  }
+}
 
 defineExpose<ThreadComposerExposed>({
   hydrateDraft,
@@ -2232,6 +2244,7 @@ watch(
   () => props.cwd,
   () => {
     clearFileMentionSuggestionCache()
+    void warmFileMentionResources()
     if (isFileMentionOpen.value) {
       void queueFileMentionSearch()
     }

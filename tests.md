@@ -6977,3 +6977,27 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - No persistent cleanup is required.
+
+### Feature: Composer file mention warm start
+
+#### Prerequisites
+- App server is running from this repository.
+- The composer receives a valid `cwd` prop when a thread is opened.
+
+#### Steps
+1. Run `pnpm exec vitest run src/server/composerFileSearch.test.ts src/components/content/composerFileMentions.test.ts`.
+2. Run `pnpm exec vue-tsc --noEmit`.
+3. Open a fresh session and, before typing anything, wait a few seconds.
+4. Type `@codexui` and observe the mention suggestion latency.
+
+#### Expected Results
+- The `composerFileMentions` module chunk is fetched during the composer mount, so the first `@` keystroke does not have to wait for it.
+- The backend `composer-file-search` cache for the current `cwd` is warm, so the first query returns quickly (comparable to the hot p50, around 30-40ms locally).
+- Behavior with unset `cwd` or with unreachable servers is unchanged; warmup errors are swallowed.
+
+#### Performance Audit
+- Warmup uses one best-effort backend call per `cwd` change and one dynamic module import; no polling.
+- No new caches, only the existing 30s server-side path cache is being primed.
+
+#### Rollback/Cleanup
+- No persistent cleanup is required.

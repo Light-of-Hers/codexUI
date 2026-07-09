@@ -778,7 +778,15 @@
       >
         <div class="message-nav-header">
           <span>User messages</span>
-          <span>{{ isMessageNavigationLoading ? 'Loading…' : `${userMessageNavigationItems.length} total` }}</span>
+          <span>
+            {{
+              isMessageNavigationLoading
+                ? (userMessageNavigationItems.length > 0
+                  ? `Loading earlier… (${userMessageNavigationItems.length} so far)`
+                  : 'Loading…')
+                : `${userMessageNavigationItems.length} total`
+            }}
+          </span>
         </div>
         <ul ref="messageNavigationListRef" class="message-nav-list" @scroll="onMessageNavigationScroll">
           <li v-if="isMessageNavigationLoading && userMessageNavigationItems.length === 0" class="message-nav-empty">
@@ -5184,20 +5192,42 @@ function closeMessageNavigation(): void {
   isMessageNavigationOpen.value = false
 }
 
+function scrollMessageNavigationToBottom(): void {
+  const totalHeight = userMessageNavigationItems.value.length * MESSAGE_NAV_ITEM_HEIGHT_PX
+  // Pre-seed the virtualization window so the tail (latest) rows render on first paint.
+  messageNavigationScrollTop.value = totalHeight
+  void nextTick(() => {
+    const el = messageNavigationListRef.value
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+    messageNavigationScrollTop.value = el.scrollTop
+  })
+}
+
 function toggleMessageNavigation(): void {
   isMessageNavigationOpen.value = !isMessageNavigationOpen.value
   if (isMessageNavigationOpen.value) {
-    const totalHeight = userMessageNavigationItems.value.length * MESSAGE_NAV_ITEM_HEIGHT_PX
-    // Pre-seed the virtualization window so the tail (latest) rows render on first paint.
-    messageNavigationScrollTop.value = totalHeight
-    void nextTick(() => {
-      const el = messageNavigationListRef.value
-      if (!el) return
-      el.scrollTop = el.scrollHeight
-      messageNavigationScrollTop.value = el.scrollTop
-    })
+    scrollMessageNavigationToBottom()
   }
 }
+
+// While the full history is still loading in the background, items may keep
+// appending to the front of the list. Since the newest messages are always at
+// the tail (append-only), and we open the panel at the bottom, pin to the
+// bottom only if the user has not scrolled away yet.
+const MESSAGE_NAV_STICK_TO_BOTTOM_THRESHOLD_PX = MESSAGE_NAV_ITEM_HEIGHT_PX * 2
+function isMessageNavigationScrolledToBottom(): boolean {
+  const el = messageNavigationListRef.value
+  if (!el) return true
+  const delta = el.scrollHeight - el.scrollTop - el.clientHeight
+  return delta <= MESSAGE_NAV_STICK_TO_BOTTOM_THRESHOLD_PX
+}
+watch(() => userMessageNavigationItems.value.length, () => {
+  if (!isMessageNavigationOpen.value) return
+  if (!isMessageNavigationLoading.value) return
+  if (!isMessageNavigationScrolledToBottom()) return
+  scrollMessageNavigationToBottom()
+})
 
 function onMessageNavigationScroll(): void {
   messageNavigationScrollTop.value = messageNavigationListRef.value?.scrollTop ?? 0

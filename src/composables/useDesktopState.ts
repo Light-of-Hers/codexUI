@@ -1990,10 +1990,9 @@ export function useDesktopState() {
       return fullHistory
     }
 
-    if (hasMoreOlderMessagesByThreadId.value[threadId] === true) {
-      return []
-    }
-
+    // While the full history is still loading, show whatever is currently
+    // loaded. This keeps the navigation dropdown responsive on large threads
+    // instead of leaving it stuck on a loading placeholder.
     return messages.value
   })
   const hasMoreOlderMessages = computed(() => {
