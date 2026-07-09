@@ -7001,3 +7001,31 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - No persistent cleanup is required.
+
+### Feature: Lazy full-history loading on session switch
+
+#### Prerequisites
+- App server is running from this repository (`pnpm run dev --host 127.0.0.1 --port 4173`).
+- At least two threads with many historical turns (e.g. 50+ user messages each), one of which has `hasMoreOlder === true` (older turns beyond the initial `thread/read` page).
+
+#### Steps
+1. Run `pnpm exec vitest run src/composables/useDesktopState.test.ts`.
+2. Run `pnpm exec vue-tsc --noEmit`.
+3. Open thread A (large history) in the browser, then switch to thread B (large history) and back to A repeatedly.
+4. While viewing a large thread, click the user-message navigation toggle (the badge above the message list) to open the dropdown.
+5. Repeat steps 3-4 in both light and dark theme.
+
+#### Expected Results
+- Switching between large threads is noticeably faster and no longer blocks the UI while the complete message history is parsed. The main thread is not stalled by a large `thread-message-history` JSON parse + normalization on every switch.
+- The user-message navigation badge shows the authoritative total count immediately (warmed from the lightweight `thread-user-message-count` endpoint), even before the full history is loaded.
+- Opening the navigation dropdown triggers the full-history load on demand (`ensureFullHistoryLoaded`), so the list eventually populates with every user message, not just the most recent `thread/read` page.
+- Scrolling up in the main view still loads older turns via the paged `thread-turn-page` endpoint; jumping to a specific message via `ensureMessageLoaded` still loads full history on demand.
+- Light theme and dark theme render the dropdown and badge identically (no theme-specific surface issues).
+
+#### Performance Audit
+- Before: `loadMessages` fired `void loadFullHistoryMessages(threadId)` on every thread switch whenever `detail.hasMoreOlder === true`, synchronously blocking the main thread with a large JSON parse (`thread-message-history`) plus `normalizeThreadMessagesV2` over the entire history, even when the message navigation dropdown was never opened.
+- After: `loadMessages` only sets `fullHistoryMessages` when there is no older history (`hasMoreOlder !== true`); full history loads lazily when the dropdown opens via the restored `:ensure-full-history-loaded="loadFullHistoryMessages"` binding. The lightweight `thread-user-message-count` endpoint (session-file scan with size/mtime cache) supplies the badge total without pulling the full payload.
+- No profiling run was executed in this session because no large real thread was available; the optimization is grounded in code-path analysis of the removed eager fetch + parse. Next measurement: run `PROFILE_ROUTE='#/thread/<large-thread-id>' pnpm run profile:browser` before/after to confirm the `thread-message-history` request and its parse cost no longer appear on the switch path.
+
+#### Rollback/Cleanup
+- No persistent cleanup is required. Reverting the `loadMessages` change restores the eager full-history load; reverting the `App.vue` binding removal restores the dropdown on-demand load.
