@@ -14,6 +14,8 @@ describe('code language mapping', () => {
     expect(getEditorModeForPath('/tmp/Dockerfile')).toBe('dockerfile')
     expect(getEditorModeForPath('/tmp/CMakeLists.txt')).toBe('cmake')
     expect(getEditorModeForPath('/tmp/main.cpp')).toBe('c_cpp')
+    expect(getEditorModeForPath('/tmp/kernel.cu')).toBe('c_cpp')
+    expect(getEditorModeForPath('/tmp/kernel.cuh')).toBe('c_cpp')
     expect(getEditorModeForPath('/tmp/style.scss')).toBe('scss')
   })
 
@@ -24,6 +26,8 @@ describe('code language mapping', () => {
     expect(getHighlightLanguageForPath('/tmp/Dockerfile')).toBe('dockerfile')
     expect(getHighlightLanguageForPath('/tmp/CMakeLists.txt')).toBe('cmake')
     expect(getHighlightLanguageForPath('/tmp/main.cpp')).toBe('cpp')
+    expect(getHighlightLanguageForPath('/tmp/kernel.cu')).toBe('cpp')
+    expect(getHighlightLanguageForPath('/tmp/kernel.cuh')).toBe('cpp')
     expect(getHighlightLanguageForPath('/tmp/style.scss')).toBe('scss')
   })
 
@@ -35,6 +39,7 @@ describe('code language mapping', () => {
     expect(normalizeHighlightLanguage('typescriptreact')).toBe('typescript')
     expect(normalizeHighlightLanguage('ps1')).toBe('powershell')
     expect(normalizeHighlightLanguage('toml')).toBe('ini')
+    expect(normalizeHighlightLanguage('cuda')).toBe('cpp')
   })
 
   it('exposes rehype-highlight aliases in language-to-alias direction', () => {
