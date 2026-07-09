@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  EDITOR_LANGUAGE_OPTIONS,
   HIGHLIGHT_LANGUAGE_ALIASES,
+  getEditorLanguageLabel,
   getEditorModeForPath,
   getHighlightLanguageForPath,
   normalizeHighlightLanguage,
@@ -50,5 +52,33 @@ describe('code language mapping', () => {
     expect(HIGHLIGHT_LANGUAGE_ALIASES.xml).toEqual(expect.arrayContaining(['html', 'htm', 'vue', 'svelte', 'astro']))
     expect(HIGHLIGHT_LANGUAGE_ALIASES.dos).toEqual(expect.arrayContaining(['bat', 'cmd', 'batchfile']))
     expect(HIGHLIGHT_LANGUAGE_ALIASES.ini).toContain('toml')
+  })
+
+  it('exposes editor language options covering detected modes including CUDA', () => {
+    const optionModes = new Set(EDITOR_LANGUAGE_OPTIONS.map((option) => option.mode))
+    for (const pathValue of [
+      '/tmp/k.cu',
+      '/tmp/k.cuh',
+      '/tmp/k.cpp',
+      '/tmp/k.h',
+      '/tmp/k.rs',
+      '/tmp/k.py',
+      '/tmp/k.ts',
+      '/tmp/k.sh',
+      '/tmp/k.bat',
+      '/tmp/k.toml',
+      '/tmp/k.vue',
+      '/tmp/k.zig',
+      '/tmp/k.nim',
+      '/tmp/Dockerfile',
+      '/tmp/k.scala',
+      '/tmp/k.dart',
+    ]) {
+      expect(optionModes).toContain(getEditorModeForPath(pathValue))
+    }
+    expect(getEditorLanguageLabel('rust')).toBe('Rust')
+    expect(getEditorLanguageLabel('c_cpp')).toBe('C / C++')
+    expect(getEditorLanguageLabel('plaintext')).toBe('Plain text')
+    expect(getEditorLanguageLabel('unknown_mode')).toBe('unknown_mode')
   })
 })

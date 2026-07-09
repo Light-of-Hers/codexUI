@@ -166,7 +166,21 @@ describe('local browse markdown preview', () => {
     const editorHtml = await createTextEditorHtml(rustPath)
 
     expect(editorHtml).toContain("editor.session.setMode('ace/mode/rust')")
-    expect(editorHtml).toContain('· rust')
+    expect(editorHtml).toContain('id="languageLabel">Rust<')
+  })
+
+  it('renders a language selector with the detected mode selected', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'codexui-lang-select-'))
+    const cuPath = join(tempDir, 'kernel.cu')
+    await writeFile(cuPath, '__global__ void k() {}\n', 'utf8')
+
+    const editorHtml = await createTextEditorHtml(cuPath)
+
+    expect(editorHtml).toContain('id="langSelect"')
+    expect(editorHtml).toContain('value="c_cpp" selected')
+    expect(editorHtml).toContain('>C / C++<')
+    expect(editorHtml).toContain('id="languageLabel">C / C++<')
+    expect(editorHtml).toContain("editor.session.setMode('ace/mode/' + langSelect.value)")
   })
 
   it('uses GitHub-style syntax colors in local editor pages', async () => {

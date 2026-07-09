@@ -365,3 +365,69 @@ export function normalizeHighlightLanguage(language: string): string {
   if (!token) return ''
   return HIGHLIGHT_LANGUAGE_CANONICAL_BY_ALIAS[token] ?? token
 }
+
+export interface EditorLanguageOption {
+  label: string
+  mode: string
+}
+
+export const EDITOR_LANGUAGE_OPTIONS: EditorLanguageOption[] = [
+  { label: 'Plain text', mode: 'plaintext' },
+  { label: 'Batch', mode: 'batchfile' },
+  { label: 'C / C++', mode: 'c_cpp' },
+  { label: 'C#', mode: 'csharp' },
+  { label: 'Clojure', mode: 'clojure' },
+  { label: 'CMake', mode: 'cmake' },
+  { label: 'CoffeeScript', mode: 'coffee' },
+  { label: 'CSS', mode: 'css' },
+  { label: 'Dart', mode: 'dart' },
+  { label: 'Dockerfile', mode: 'dockerfile' },
+  { label: 'Elixir', mode: 'elixir' },
+  { label: 'Erlang', mode: 'erlang' },
+  { label: 'F#', mode: 'fsharp' },
+  { label: 'Go', mode: 'golang' },
+  { label: 'Gradle', mode: 'gradle' },
+  { label: 'GraphQL', mode: 'graphql' },
+  { label: 'Groovy', mode: 'groovy' },
+  { label: 'Haskell', mode: 'haskell' },
+  { label: 'HTML', mode: 'html' },
+  { label: 'INI', mode: 'ini' },
+  { label: 'Java', mode: 'java' },
+  { label: 'JavaScript', mode: 'javascript' },
+  { label: 'JSON', mode: 'json' },
+  { label: 'Julia', mode: 'julia' },
+  { label: 'Kotlin', mode: 'kotlin' },
+  { label: 'LaTeX', mode: 'latex' },
+  { label: 'Less', mode: 'less' },
+  { label: 'Lua', mode: 'lua' },
+  { label: 'Makefile', mode: 'makefile' },
+  { label: 'Markdown', mode: 'markdown' },
+  { label: 'Nginx', mode: 'nginx' },
+  { label: 'Nim', mode: 'nim' },
+  { label: 'Objective-C', mode: 'objectivec' },
+  { label: 'Perl', mode: 'perl' },
+  { label: 'PHP', mode: 'php' },
+  { label: 'PowerShell', mode: 'powershell' },
+  { label: 'Protobuf', mode: 'protobuf' },
+  { label: 'Python', mode: 'python' },
+  { label: 'R', mode: 'r' },
+  { label: 'Ruby', mode: 'ruby' },
+  { label: 'Rust', mode: 'rust' },
+  { label: 'Sass', mode: 'sass' },
+  { label: 'Scala', mode: 'scala' },
+  { label: 'SCSS', mode: 'scss' },
+  { label: 'Shell / Bash', mode: 'sh' },
+  { label: 'SQL', mode: 'sql' },
+  { label: 'Swift', mode: 'swift' },
+  { label: 'TOML', mode: 'toml' },
+  { label: 'TypeScript', mode: 'typescript' },
+  { label: 'VBScript', mode: 'vbscript' },
+  { label: 'Vue', mode: 'vue' },
+  { label: 'XML', mode: 'xml' },
+  { label: 'YAML', mode: 'yaml' },
+  { label: 'Zig', mode: 'zig' },
+]
+
+export function getEditorLanguageLabel(mode: string): string {
+  return EDITOR_LANGUAGE_OPTIONS.find((option) => option.mode === mode)?.label ?? mode
+}

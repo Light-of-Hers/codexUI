@@ -2,7 +2,7 @@ import { basename, dirname, extname, join } from 'node:path'
 import { open, readFile, readdir, mkdir, rm, stat, writeFile } from 'node:fs/promises'
 import { renderMarkdownContent } from '../components/content/markdownRenderer.js'
 import { KATEX_STYLESHEET_HREF } from './katexAssets.js'
-import { getEditorModeForPath } from '../utils/codeLanguage.js'
+import { EDITOR_LANGUAGE_OPTIONS, getEditorLanguageLabel, getEditorModeForPath } from '../utils/codeLanguage.js'
 
 type DirectoryItem = {
   name: string
@@ -1654,6 +1654,11 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
   const content = await readFile(localPath, 'utf8')
   const parentPath = dirname(localPath)
   const language = getEditorModeForPath(localPath)
+  const languageLabel = getEditorLanguageLabel(language)
+  const languageSelectOptions = EDITOR_LANGUAGE_OPTIONS
+    .map((option) => `<option value="${escapeHtml(option.mode)}"${option.mode === language ? ' selected' : ''}>${escapeHtml(option.label)}</option>`)
+    .join('')
+  const languageSelect = `<label class="lang-label" for="langSelect">Language</label><select id="langSelect" class="lang-select" aria-label="Editor language">${languageSelectOptions}</select>`
   const supportsMarkdownPreview = isMarkdownPath(localPath)
   const escapedEditorPath = escapeForInlineScriptString(localPath)
   const copyReferenceButton = `<button id="copyRefBtn" type="button">Copy ref</button>`
@@ -1770,6 +1775,8 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     button:hover, a:hover { filter: brightness(1.08); }
     button:disabled { opacity: 0.65; cursor: default; }
     button[aria-pressed="true"] { border-color: var(--status-fg); color: var(--status-fg); }
+    .lang-label { font-size: 12px; color: var(--control-fg); white-space: nowrap; }
+    .lang-select { background: var(--control-bg); color: var(--control-fg); border: 1px solid var(--control-border); border-radius: 6px; padding: 5px 8px; font: inherit; font-size: 13px; cursor: pointer; max-width: 60vw; }
     .floating-highlight-action {
       position: fixed;
       z-index: 50;
@@ -1973,10 +1980,11 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       <button id="saveBtn" type="button">Save</button>
       ${copyReferenceButton}
       ${previewButton}
+      ${languageSelect}
       <span id="status"></span>
       <span id="previewStatus"></span>
     </div>
-    <div class="meta">${escapeHtml(localPath)} · ${escapeHtml(language)}</div>
+    <div class="meta">${escapeHtml(localPath)} · <span id="languageLabel">${escapeHtml(languageLabel)}</span></div>
   </div>
   <div id="editorShell" class="editor-shell" data-preview="false">
     <div id="editor"></div>
@@ -1986,6 +1994,8 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
   <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.36.2/ace.js"></script>
   <script>
     const saveBtn = document.getElementById('saveBtn');
+    const langSelect = document.getElementById('langSelect');
+    const languageLabel = document.getElementById('languageLabel');
     const copyRefBtn = document.getElementById('copyRefBtn');
     const previewBtn = document.getElementById('previewBtn');
     const floatingSelectionActions = document.getElementById('floatingSelectionActions');
@@ -2039,6 +2049,15 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       behavioursEnabled: true,
     });
     editor.resize();
+
+    if (langSelect) {
+      langSelect.addEventListener('change', () => {
+        editor.session.setMode('ace/mode/' + langSelect.value);
+        if (languageLabel) {
+          languageLabel.textContent = langSelect.options[langSelect.selectedIndex].text;
+        }
+      });
+    }
 
     const parseRequestedLineRange = () => {
       const raw = new URLSearchParams(location.search).get('line') || '';
