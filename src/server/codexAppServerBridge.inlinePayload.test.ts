@@ -2253,6 +2253,70 @@ describe('backend queue scheduling', () => {
 })
 
 describe('app-server runtime configuration', () => {
+  it('restarts an unhealthy app-server after without-active-item stderr spam when idle', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-self-heal-'))
+    const markerPath = join(tempDir, 'started.marker')
+    const pidLogPath = join(tempDir, 'pids.log')
+    const command = join(tempDir, 'codex-mock')
+    await writeFile(command, `#!/usr/bin/env node
+const fs = require('node:fs')
+const marker = ${JSON.stringify(markerPath)}
+const pidLog = ${JSON.stringify(pidLogPath)}
+const isFirst = !fs.existsSync(marker)
+if (isFirst) fs.writeFileSync(marker, '1')
+fs.appendFileSync(pidLog, process.pid + '\\n')
+process.stdin.setEncoding('utf8')
+let buffer = ''
+process.stdin.on('data', (chunk) => {
+  buffer += chunk
+  let index = buffer.indexOf('\\n')
+  while (index >= 0) {
+    const line = buffer.slice(0, index).trim()
+    buffer = buffer.slice(index + 1)
+    if (line) {
+      const message = JSON.parse(line)
+      const result = message.method === 'turn/start' ? { turn: { id: 'turn-1' } } : {}
+      process.stdout.write(JSON.stringify({ id: message.id, result }) + '\\n')
+      if (isFirst && message.method === 'thread/read') {
+        const line = 'ERROR codex_core::util: OutputTextDelta without active item'
+        process.stderr.write(Array.from({ length: 55 }, () => line).join('\\n') + '\\n')
+      }
+    }
+    index = buffer.indexOf('\\n')
+  }
+})
+`, 'utf8')
+    await chmod(command, 0o755)
+    vi.stubEnv('CODEX_HOME', tempDir)
+    vi.stubEnv('CODEXUI_CODEX_COMMAND', command)
+
+    const middleware = createCodexBridgeMiddleware()
+    try {
+      const first = await invokeBridgeJson(middleware, '/codex-api/rpc', {
+        method: 'thread/read',
+        params: { threadId: 't1' },
+      })
+      expect(first.statusCode).toBe(200)
+
+      // The stderr spam is processed asynchronously; let the self-heal
+      // watchdog dispose the unhealthy process.
+      await new Promise((resolve) => setTimeout(resolve, 300))
+
+      const second = await invokeBridgeJson(middleware, '/codex-api/rpc', {
+        method: 'thread/read',
+        params: { threadId: 't1' },
+      })
+      expect(second.statusCode).toBe(200)
+
+      const pids = (await readFile(pidLogPath, 'utf8')).trim().split('\n')
+      expect(pids.length).toBeGreaterThanOrEqual(2)
+      expect(pids[0]).not.toBe(pids[1])
+    } finally {
+      middleware.dispose()
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
   it('bypasses requests that do not need app-server without resolving the command', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'codexui-non-api-bypass-'))
     const commandPath = join(tempDir, 'codex')

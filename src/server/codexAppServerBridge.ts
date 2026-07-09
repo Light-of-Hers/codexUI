@@ -6287,6 +6287,14 @@ function getAppServerRuntimeSignature(state: FreeModeState): string {
   })
 }
 
+// A codex app-server is considered unhealthy when it emits this many
+// "without active item" stderr errors within the window below. Such errors
+// mean codex_core lost track of the active item, so turns end prematurely
+// without a final agent message. Once unhealthy and idle, the process is
+// restarted so subsequent turns run on a clean runtime.
+const UNHEALTHY_STDERR_WINDOW_MS = 30_000
+const UNHEALTHY_STDERR_THRESHOLD = 50
+
 class AppServerProcess {
   private process: ChildProcessWithoutNullStreams | null = null
   private initialized = false
@@ -6305,6 +6313,9 @@ class AppServerProcess {
   private readonly liveStateCache = new Map<string, { data: unknown; turnCount: number; sessionSize: number }>()
   private chatgptAuthRefreshPromise: Promise<ChatgptAuthTokensRefreshResponse> | null = null
   private freeModeState: FreeModeState = createDefaultFreeModeState()
+  private unhealthy = false
+  private activeTurnCount = 0
+  private recentStderrErrorTimes: number[] = []
 
   getFreeModeState(): FreeModeState {
     return cloneFreeModeState(this.freeModeState)
@@ -6354,6 +6365,10 @@ class AppServerProcess {
       writeDebugLog('app-server-stderr', message.slice(0, 4000), {
         pid: proc.pid ?? -1,
       }).catch(() => {})
+      if (message.includes('without active item')) {
+        const matches = message.match(/without active item/g)
+        this.recordStderrHealthSignal(matches ? matches.length : 1)
+      }
     })
 
     proc.on('exit', () => {
@@ -6441,6 +6456,12 @@ class AppServerProcess {
     if (nThreadId) {
       this.invalidateLiveStateCache(nThreadId)
       this.threadTurnPageReadCacheByThreadId.delete(nThreadId)
+    }
+    if (sanitizedNotification.method === 'turn/started') {
+      this.activeTurnCount += 1
+    } else if (sanitizedNotification.method === 'turn/completed') {
+      this.activeTurnCount = Math.max(0, this.activeTurnCount - 1)
+      this.trySelfHeal()
     }
     for (const listener of this.notificationListeners) {
       listener(sanitizedNotification)
@@ -6795,6 +6816,75 @@ class AppServerProcess {
 
   listPendingServerRequests(): PendingServerRequest[] {
     return Array.from(this.pendingServerRequests.values())
+  }
+
+  private recordStderrHealthSignal(count = 1): void {
+    const now = Date.now()
+    for (let index = 0; index < count; index += 1) {
+      this.recentStderrErrorTimes.push(now)
+    }
+    const cutoff = now - UNHEALTHY_STDERR_WINDOW_MS
+    while (this.recentStderrErrorTimes.length > 0 && this.recentStderrErrorTimes[0] < cutoff) {
+      this.recentStderrErrorTimes.shift()
+    }
+    if (!this.unhealthy && this.recentStderrErrorTimes.length >= UNHEALTHY_STDERR_THRESHOLD) {
+      this.unhealthy = true
+      writeDebugLog('app-server-unhealthy', 'codex app-server marked unhealthy after repeated without-active-item stderr errors', {
+        pid: this.process?.pid ?? -1,
+        errorCount: this.recentStderrErrorTimes.length,
+      }).catch(() => {})
+      this.trySelfHeal()
+    }
+  }
+
+  private trySelfHeal(): void {
+    if (!this.unhealthy) return
+    if (this.activeTurnCount > 0) return
+    if (this.pending.size > 0 || this.pendingServerRequests.size > 0) return
+    this.restartForSelfHeal()
+  }
+
+  private restartForSelfHeal(): void {
+    const proc = this.process
+    writeDebugLog('app-server-self-heal-restart', 'Restarting unhealthy codex app-server while idle', {
+      pid: proc?.pid ?? -1,
+    }).catch(() => {})
+    this.unhealthy = false
+    this.activeTurnCount = 0
+    this.recentStderrErrorTimes = []
+    this.stopping = true
+    this.process = null
+    this.initialized = false
+    this.initializePromise = null
+    this.readBuffer = ''
+    const failure = new Error('codex app-server restarted for self-heal')
+    for (const request of this.pending.values()) {
+      request.reject(failure)
+    }
+    this.pending.clear()
+    this.pendingServerRequests.clear()
+    if (proc) {
+      try {
+        proc.stdin.end()
+      } catch {
+        // ignore close errors during self-heal restart
+      }
+      try {
+        proc.kill('SIGTERM')
+      } catch {
+        // ignore SIGTERM errors during self-heal restart
+      }
+      const selfHealKillTimer = setTimeout(() => {
+        if (!proc.killed) {
+          try {
+            proc.kill('SIGKILL')
+          } catch {
+            // ignore SIGKILL errors during self-heal restart
+          }
+        }
+      }, 1500)
+      selfHealKillTimer.unref()
+    }
   }
 
   dispose(): void {
