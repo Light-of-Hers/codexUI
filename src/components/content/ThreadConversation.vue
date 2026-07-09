@@ -5322,36 +5322,46 @@ watch(() => userMessageNavigationItems.value.length, () => {
 function onMessageNavigationScroll(): void {
   messageNavigationScrollTop.value = messageNavigationListRef.value?.scrollTop ?? 0
 }
-function onMessageNavigationDocumentMouseDown(event: MouseEvent): void {
-  // Middle click on a scrollable region triggers Chrome/Firefox autoscroll
-  // ("cross" cursor mode). Inside the user-message dropdown that is never
-  // useful and it makes the list jump around unexpectedly on the next mouse
-  // movement, so suppress it here.
-  if (event.button !== 1) return
+function isEventInsideMessageNavigation(event: Event): boolean {
   const nav = messageNavigationRef.value
-  if (!nav) return
+  if (!nav) return false
   const target = event.target
-  if (!(target instanceof Node) || !nav.contains(target)) return
+  return target instanceof Node && nav.contains(target)
+}
+
+function onMessageNavigationDocumentPointerDown(event: PointerEvent): void {
+  // Middle button starts Chrome/Firefox autoscroll ("cross" cursor mode) on
+  // scrollable regions. Inside the dropdown that is never useful, so cancel
+  // it as early as possible. Modern Chrome dispatches pointerdown before
+  // mousedown for pointer events, and starts autoscroll at that stage.
+  if (event.button !== 1) return
+  if (!isEventInsideMessageNavigation(event)) return
+  event.preventDefault()
+}
+
+function onMessageNavigationDocumentMouseDown(event: MouseEvent): void {
+  // Belt-and-braces: also handle the classic mousedown path.
+  if (event.button !== 1) return
+  if (!isEventInsideMessageNavigation(event)) return
   event.preventDefault()
 }
 
 function onMessageNavigationDocumentAuxClick(event: MouseEvent): void {
-  // Also swallow the resulting auxclick so browsers do not treat a middle
-  // click on the item buttons as "open in new tab" or similar.
+  // Swallow the follow-up auxclick so browsers do not treat middle click on
+  // item buttons as "open in new tab" or similar.
   if (event.button !== 1) return
-  const nav = messageNavigationRef.value
-  if (!nav) return
-  const target = event.target
-  if (!(target instanceof Node) || !nav.contains(target)) return
+  if (!isEventInsideMessageNavigation(event)) return
   event.preventDefault()
   event.stopPropagation()
 }
 
 watch(isMessageNavigationOpen, (isOpen) => {
   if (isOpen) {
+    document.addEventListener('pointerdown', onMessageNavigationDocumentPointerDown, true)
     document.addEventListener('mousedown', onMessageNavigationDocumentMouseDown, true)
     document.addEventListener('auxclick', onMessageNavigationDocumentAuxClick, true)
   } else {
+    document.removeEventListener('pointerdown', onMessageNavigationDocumentPointerDown, true)
     document.removeEventListener('mousedown', onMessageNavigationDocumentMouseDown, true)
     document.removeEventListener('auxclick', onMessageNavigationDocumentAuxClick, true)
   }
@@ -5786,6 +5796,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', onMessageNavigationDocumentPointerDown, true)
   document.removeEventListener('mousedown', onMessageNavigationDocumentMouseDown, true)
   document.removeEventListener('auxclick', onMessageNavigationDocumentAuxClick, true)
   clearRenderCaches()
