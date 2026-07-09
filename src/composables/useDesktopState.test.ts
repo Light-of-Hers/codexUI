@@ -118,6 +118,20 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+async function flushMicrotasks(times = 20): Promise<void> {
+  for (let index = 0; index < times; index += 1) {
+    await Promise.resolve()
+  }
+}
+
+async function waitForCalls(mock: { mock: { calls: unknown[] } }, minCalls: number): Promise<void> {
+  for (let index = 0; index < 50; index += 1) {
+    if (mock.mock.calls.length >= minCalls) return
+    await Promise.resolve()
+  }
+  throw new Error(`Timed out waiting for ${minCalls} mock invocation(s)`)
+}
+
 describe('filterGroupsByWorkspaceRoots', () => {
   it('keeps projectless chats visible when workspace roots are configured', () => {
     const groups: UiProjectGroup[] = [
@@ -1942,20 +1956,6 @@ describe('active turn state reconciliation', () => {
 })
 
 describe('turn interruption', () => {
-  async function flushMicrotasks(times = 20): Promise<void> {
-    for (let index = 0; index < times; index += 1) {
-      await Promise.resolve()
-    }
-  }
-
-  async function waitForCalls(mock: { mock: { calls: unknown[] } }, minCalls: number): Promise<void> {
-    for (let index = 0; index < 50; index += 1) {
-      if (mock.mock.calls.length >= minCalls) return
-      await Promise.resolve()
-    }
-    throw new Error(`Timed out waiting for ${minCalls} mock invocation(s)`)
-  }
-
   function notification(method: string, params: unknown): RpcNotification {
     return {
       method,
@@ -2072,13 +2072,53 @@ describe('turn interruption', () => {
     // pending on the network.
     expect(state.selectedThreadInProgress.value).toBe(false)
 
+    // The goal lookup runs before the interrupt RPC; wait until the RPC is
+    // actually in flight so releaseInterrupt is bound to its resolver.
+    await waitForCalls(gatewayMocks.interruptThreadTurn, 1)
     releaseInterrupt()
     await interruptCall
-    await waitForCalls(gatewayMocks.interruptThreadTurn, 1)
     await flushMicrotasks()
 
     expect(gatewayMocks.interruptThreadTurn).toHaveBeenCalledWith('thread-a', 'turn-stale')
     expect(state.isInterruptingTurn.value).toBe(false)
+  })
+
+  it('pauses an active goal before interrupting so codex cannot auto-continue', async () => {
+    const { state } = createInterruptHarness()
+    const activeGoal = {
+      threadId: 'thread-a',
+      objective: 'Ship goal support',
+      status: 'active' as const,
+      tokenBudget: null,
+      tokensUsed: 0,
+      timeUsedSeconds: 0,
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    gatewayMocks.getThreadGoal.mockResolvedValueOnce(activeGoal)
+    gatewayMocks.setThreadGoal.mockResolvedValueOnce({ ...activeGoal, status: 'paused' })
+    gatewayMocks.interruptThreadTurn.mockResolvedValueOnce(undefined)
+
+    await state.interruptSelectedThreadTurn()
+    await waitForCalls(gatewayMocks.interruptThreadTurn, 1)
+    await flushMicrotasks()
+
+    expect(gatewayMocks.getThreadGoal).toHaveBeenCalledWith('thread-a')
+    expect(gatewayMocks.setThreadGoal).toHaveBeenCalledWith('thread-a', { status: 'paused' })
+    expect(gatewayMocks.interruptThreadTurn).toHaveBeenCalledWith('thread-a', 'turn-stale')
+  })
+
+  it('skips goal pause when no active goal is set', async () => {
+    const { state } = createInterruptHarness()
+    gatewayMocks.getThreadGoal.mockResolvedValueOnce(null)
+    gatewayMocks.interruptThreadTurn.mockResolvedValueOnce(undefined)
+
+    await state.interruptSelectedThreadTurn()
+    await waitForCalls(gatewayMocks.interruptThreadTurn, 1)
+    await flushMicrotasks()
+
+    expect(gatewayMocks.setThreadGoal).not.toHaveBeenCalled()
+    expect(gatewayMocks.interruptThreadTurn).toHaveBeenCalledWith('thread-a', 'turn-stale')
   })
 })
 
@@ -2201,6 +2241,7 @@ describe('live turn rendering', () => {
     expect(state.selectedLiveOverlay.value?.activityLabel).toBe('Writing response')
 
     await state.interruptSelectedThreadTurn()
+    await waitForCalls(gatewayMocks.interruptThreadTurn, 1)
 
     expect(gatewayMocks.interruptThreadTurn).toHaveBeenCalledWith('thread-a', 'turn-1')
   })
@@ -2219,6 +2260,8 @@ describe('live turn rendering', () => {
     expect(state.selectedLiveOverlay.value?.activityLabel).toBe('Thinking')
 
     await state.interruptSelectedThreadTurn()
+    await waitForCalls(gatewayMocks.interruptThreadTurn, 1)
+    await flushMicrotasks()
 
     expect(gatewayMocks.interruptThreadTurn).toHaveBeenCalledWith('thread-a', 'turn-1')
     expect(state.selectedThread.value?.inProgress).toBe(false)

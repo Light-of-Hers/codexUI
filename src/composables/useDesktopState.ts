@@ -6954,6 +6954,19 @@ export function useDesktopState() {
     isInterruptingTurn.value = true
     void (async () => {
       try {
+        // Pause an active goal first so codex does not auto-continue the
+        // turn after we interrupt it. The objective is preserved; resume
+        // later with `/goal status active`.
+        try {
+          const goal = await getThreadGoal(threadId)
+          if (goal && goal.status === 'active') {
+            const paused = await setThreadGoal(threadId, { status: 'paused' })
+            setThreadNoticeForThread(threadId, goalNoticeForGoal(paused))
+          }
+        } catch {
+          // best-effort; do not block the interrupt on goal pause failure
+        }
+
         let turnId = cachedTurnId
         if (!turnId) {
           const refreshed = await refreshActiveTurnStateForThread(threadId)
