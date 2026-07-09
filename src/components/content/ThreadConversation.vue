@@ -1694,8 +1694,30 @@ const emit = defineEmits<{
 }>()
 
 const messageNavigationSourceMessages = computed(() => props.messageNavigationMessages ?? props.messages)
-const userMessageNavigationItems = computed(() => buildUserMessageNavigationItems(messageNavigationSourceMessages.value))
+const rawUserMessageNavigationItems = computed(() =>
+  buildUserMessageNavigationItems(messageNavigationSourceMessages.value),
+)
 const isMessageNavigationLoading = computed(() => props.isMessageNavigationLoading === true)
+// Ordinal offset applied while the full history is still loading. The main
+// view loads the newest messages first, so the currently-loaded items should
+// be treated as the *tail* of the eventual list and numbered from
+// (total - loaded + 1) upwards. Once the full history is in place the offset
+// is 0 and ordinals match array position.
+const userMessageNavigationOrdinalOffset = computed(() => {
+  const loaded = rawUserMessageNavigationItems.value.length
+  const totalProp = props.userMessageNavigationTotal
+  if (typeof totalProp !== 'number' || totalProp <= 0) return 0
+  const total = Math.max(totalProp, loaded)
+  return Math.max(0, total - loaded)
+})
+const userMessageNavigationItems = computed(() => {
+  const offset = userMessageNavigationOrdinalOffset.value
+  if (offset === 0) return rawUserMessageNavigationItems.value
+  return rawUserMessageNavigationItems.value.map((item) => ({
+    ...item,
+    ordinal: item.ordinal + offset,
+  }))
+})
 const messageNavigationCountLabel = computed(() => {
   const loaded = userMessageNavigationItems.value.length
   const totalProp = props.userMessageNavigationTotal
