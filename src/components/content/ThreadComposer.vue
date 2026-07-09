@@ -416,12 +416,12 @@
             v-if="isTurnInProgress && !hasSubmitContent"
             class="thread-composer-stop"
             type="button"
-            :aria-label="isStopPending ? t('Saving thread before stop is available') : t('Stop')"
-            :title="isStopPending ? t('Saving thread before stop is available') : t('Stop')"
+            :aria-label="isStopPending ? t('Saving thread before stop is available') : isInterruptingTurn ? t('Stopping') : t('Stop')"
+            :title="isStopPending ? t('Saving thread before stop is available') : isInterruptingTurn ? t('Stopping') : t('Stop')"
             :disabled="disabled || !activeThreadId || isInterruptingTurn || isStopPending"
             @click="onInterrupt"
           >
-            <span v-if="isStopPending" class="thread-composer-stop-spinner" aria-hidden="true" />
+            <span v-if="isStopPending || isInterruptingTurn" class="thread-composer-stop-spinner" aria-hidden="true" />
             <IconTablerPlayerStopFilled v-else class="thread-composer-stop-icon" />
           </button>
           <button

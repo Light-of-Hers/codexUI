@@ -2009,6 +2009,7 @@ describe('turn interruption', () => {
 
     await state.interruptSelectedThreadTurn()
     await waitForCalls(gatewayMocks.interruptThreadTurn, 1)
+    await flushMicrotasks()
 
     // Cached activeTurnId from the notification is used directly, so
     // getThreadDetail is not required on the fast path anymore.
@@ -2027,6 +2028,7 @@ describe('turn interruption', () => {
 
     await state.interruptSelectedThreadTurn()
     await waitForCalls(gatewayMocks.interruptThreadTurn, 2)
+    await flushMicrotasks()
 
     expect(gatewayMocks.interruptThreadTurn).toHaveBeenCalledTimes(2)
     expect(gatewayMocks.interruptThreadTurn).toHaveBeenNthCalledWith(1, 'thread-a', 'turn-stale')
@@ -2044,18 +2046,18 @@ describe('turn interruption', () => {
     expect(state.selectedThreadInProgress.value).toBe(true)
 
     await state.interruptSelectedThreadTurn()
-    // UI settles synchronously; the RPC runs in the background.
-    expect(state.selectedThreadInProgress.value).toBe(false)
+    // inProgress stays true until the RPC confirms there is no active turn.
     await waitForCalls(gatewayMocks.interruptThreadTurn, 1)
     await flushMicrotasks()
 
     expect(gatewayMocks.interruptThreadTurn).toHaveBeenCalledTimes(1)
     expect(gatewayMocks.interruptThreadTurn).toHaveBeenCalledWith('thread-a', 'turn-stale')
+    expect(state.selectedThreadInProgress.value).toBe(false)
     expect(state.error.value).toBe('')
     expect(state.isInterruptingTurn.value).toBe(false)
   })
 
-  it('settles UI state synchronously before awaiting the interrupt RPC', async () => {
+  it('keeps showing running with a spinner until the interrupt RPC confirms', async () => {
     const { state } = createInterruptHarness()
     let releaseInterrupt: () => void = () => undefined
     gatewayMocks.interruptThreadTurn.mockImplementationOnce(
@@ -2068,18 +2070,18 @@ describe('turn interruption', () => {
 
     const interruptCall = state.interruptSelectedThreadTurn()
 
-    // Stop button becomes idle immediately, even though the RPC is still
-    // pending on the network.
-    expect(state.selectedThreadInProgress.value).toBe(false)
-
-    // The goal lookup runs before the interrupt RPC; wait until the RPC is
-    // actually in flight so releaseInterrupt is bound to its resolver.
+    // While the interrupt is in flight the UI truthfully keeps showing
+    // "running" and the stop button shows its spinner.
     await waitForCalls(gatewayMocks.interruptThreadTurn, 1)
+    expect(state.selectedThreadInProgress.value).toBe(true)
+    expect(state.isInterruptingTurn.value).toBe(true)
+
     releaseInterrupt()
     await interruptCall
     await flushMicrotasks()
 
     expect(gatewayMocks.interruptThreadTurn).toHaveBeenCalledWith('thread-a', 'turn-stale')
+    expect(state.selectedThreadInProgress.value).toBe(false)
     expect(state.isInterruptingTurn.value).toBe(false)
   })
 

@@ -6923,6 +6923,18 @@ export function useDesktopState() {
     await syncFromNotifications()
   }
 
+  // Synchronous counterpart of settleInterruptedTurnUiState: clears the
+  // running-turn UI state once codex has confirmed the interrupt (RPC
+  // success or "no active turn"). Called only after the backend agrees the
+  // turn is stopped, so the sidebar never reports "done" prematurely.
+  function settleStoppedTurnUiState(threadId: string): void {
+    setThreadInProgress(threadId, false)
+    clearActiveTurnForThread(threadId)
+    setTurnActivityForThread(threadId, null)
+    setTurnErrorForThread(threadId, null)
+    error.value = ''
+  }
+
   async function interruptSelectedThreadTurn(): Promise<void> {
     const threadId = selectedThreadId.value
     console.warn('[DEBUG:interruptSelectedThreadTurn] called — threadId=%s timestamp=%s stack=%s', threadId, new Date().toISOString(), new Error().stack?.split('\n').slice(2, 6).join('\n') || '(no stack)')
@@ -6932,24 +6944,13 @@ export function useDesktopState() {
     if (inProgressById.value[threadId] !== true) { console.warn('[DEBUG:interruptSelectedThreadTurn] skipped — thread not in progress'); return }
     if (interruptBlockedUntilPersistedByThreadId.value[threadId] === true) { console.warn('[DEBUG:interruptSelectedThreadTurn] skipped — interrupt blocked (persistence gate)'); return }
 
-    // Immediately settle the UI so the stop button feels instantaneous.
-    // The interrupt RPC is dispatched in the background; the codex
-    // app-server is shared across sibling threads with the same free-mode
-    // signature, so we intentionally never force-kill it here.
+    // Keep the UI showing "running" until codex confirms the turn actually
+    // stopped. Clearing inProgress here would make the sidebar report
+    // "done" while the backend can still be burning tokens. The stop button
+    // shows a spinner via isInterruptingTurn while we wait for confirmation.
     const cachedTurnId = activeTurnIdByThreadId.value[threadId] ?? ''
     const activeTurnProviderId = activeTurnProviderIdByThreadId.value[threadId]
       || readThreadRpcProviderId(threadId)
-
-    setThreadInProgress(threadId, false)
-    setTurnActivityForThread(threadId, null)
-    setTurnErrorForThread(threadId, null)
-    if (activeTurnIdByThreadId.value[threadId]) {
-      activeTurnIdByThreadId.value = omitKey(activeTurnIdByThreadId.value, threadId)
-    }
-    if (activeTurnProviderIdByThreadId.value[threadId]) {
-      activeTurnProviderIdByThreadId.value = omitKey(activeTurnProviderIdByThreadId.value, threadId)
-    }
-    error.value = ''
 
     isInterruptingTurn.value = true
     void (async () => {
@@ -6975,10 +6976,13 @@ export function useDesktopState() {
         if (turnId) {
           try {
             await interruptActiveTurnWithRefresh(threadId, turnId, activeTurnProviderId || undefined)
+            settleStoppedTurnUiState(threadId)
           } catch (rpcError) {
-            if (!isNoActiveTurnToInterruptError(rpcError)) {
+            if (isNoActiveTurnToInterruptError(rpcError)) {
+              settleStoppedTurnUiState(threadId)
+            } else {
               const message = rpcError instanceof Error ? rpcError.message : 'Failed to interrupt active turn'
-              console.warn('[DEBUG:interruptSelectedThreadTurn] soft interrupt RPC failed — threadId=%s error=%s', threadId, message)
+              console.warn('[DEBUG:interruptSelectedThreadTurn] soft interrupt RPC failed - threadId=%s error=%s', threadId, message)
               fetch('/codex-api/debug-log', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -6990,11 +6994,15 @@ export function useDesktopState() {
               }).catch(() => {})
             }
           }
+        } else {
+          settleStoppedTurnUiState(threadId)
         }
         pendingThreadMessageRefresh.add(threadId)
         pendingThreadsRefresh = true
         await syncFromNotifications()
       } finally {
+        // If the interrupt never confirmed, inProgress is left alone so the
+        // sidebar keeps truthfully showing "running" instead of "done".
         isInterruptingTurn.value = false
       }
     })()
