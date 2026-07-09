@@ -909,6 +909,7 @@
                     :is-loading-persisted-above="isLoadingOlderMessages"
                     :load-earlier-messages="loadOlderMessages"
                     :ensure-message-loaded="ensureMessageLoaded"
+                    :load-thread-turn-window="loadThreadMessageWindow"
                     :ensure-full-history-loaded="loadFullHistoryMessages"
                     :user-message-navigation-total="userMessageNavigationTotal"
                     :ensure-user-message-navigation-total="ensureUserMessageCountLoaded"

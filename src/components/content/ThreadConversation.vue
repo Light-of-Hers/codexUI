@@ -1680,6 +1680,7 @@ const props = defineProps<{
   isLoadingPersistedAbove?: boolean
   loadEarlierMessages?: (threadId: string) => Promise<void>
   ensureMessageLoaded?: (threadId: string, messageId: string) => Promise<void>
+  loadThreadTurnWindow?: (threadId: string, turnId: string) => Promise<void>
   ensureFullHistoryLoaded?: (threadId: string) => Promise<void>
   userMessageNavigationTotal?: number | null
   ensureUserMessageNavigationTotal?: (threadId: string) => void
@@ -5337,6 +5338,15 @@ async function jumpToUserMessage(item: UserMessageNavigationItem): Promise<void>
   autoFollowOutput.value = false
 
   let targetIndex = props.messages.findIndex((message) => message.id === item.id)
+  if (targetIndex < 0 && item.turnId && props.loadThreadTurnWindow) {
+    try {
+      await props.loadThreadTurnWindow(props.activeThreadId, item.turnId)
+    } catch {
+      // fall through to the full-history path below
+    }
+    await nextTick()
+    targetIndex = props.messages.findIndex((message) => message.id === item.id)
+  }
   if (targetIndex < 0 && props.ensureMessageLoaded) {
     await props.ensureMessageLoaded(props.activeThreadId, item.id)
     await nextTick()

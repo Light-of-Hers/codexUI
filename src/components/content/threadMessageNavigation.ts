@@ -2,6 +2,7 @@ import type { UiMessage } from '../../types/codex'
 
 export type UserMessageNavigationItem = {
   id: string
+  turnId: string
   ordinal: number
   messageIndex: number
   preview: string
@@ -58,6 +59,7 @@ export function buildUserMessageNavigationItems(
     const title = messageNavigationText(message)
     items.push({
       id: message.id,
+      turnId: message.turnId?.trim() ?? '',
       ordinal: items.length + 1,
       messageIndex,
       preview: truncateText(title, previewLength),

@@ -2159,6 +2159,60 @@ export function useDesktopState() {
     }
   }
 
+  // Eager: how many recent turns are pulled synchronously as part of the
+  // main thread/read RPC (kept in sync with THREAD_RESPONSE_TURN_LIMIT on
+  // the server). Lazy: the target window size after the background
+  // backfill. -3..+3 around the latest turn = 7 turns.
+  const EAGER_TURN_LIMIT = 3
+  const LAZY_TURN_LIMIT = 7
+  const backgroundOlderBackfillByThreadId = new Map<string, Promise<void>>()
+
+  async function backfillOlderTurnsInBackground(threadId: string): Promise<void> {
+    if (!threadId) return
+    if (backgroundOlderBackfillByThreadId.has(threadId)) return
+    if (hasMoreOlderMessagesByThreadId.value[threadId] !== true) return
+    if (loadingOlderMessagesByThreadId.value[threadId] === true) return
+
+    const persisted = persistedMessagesByThreadId.value[threadId] ?? []
+    const distinctTurnIds = new Set<string>()
+    for (const message of persisted) {
+      const turnId = message.turnId?.trim() ?? ''
+      if (turnId) distinctTurnIds.add(turnId)
+    }
+    const missing = LAZY_TURN_LIMIT - distinctTurnIds.size
+    if (missing <= 0) return
+
+    const beforeTurnId = getFirstPersistedTurnId(threadId)
+    if (!beforeTurnId) return
+
+    const backfillPromise = (async () => {
+      try {
+        const page = await getOlderThreadMessages(threadId, beforeTurnId, missing)
+        const previousPersisted = persistedMessagesByThreadId.value[threadId] ?? []
+        const mergedMessages = mergeMessages(page.messages, previousPersisted, { preserveMissing: true })
+        setPersistedMessagesForThread(threadId, mergedMessages)
+        replaceTurnIndexLookupForThread(threadId, {
+          ...(turnIndexByTurnIdByThreadId.value[threadId] ?? {}),
+          ...page.turnIndexByTurnId,
+        })
+        rebindLiveFileChangeTurnIndices(threadId)
+        hasMoreOlderMessagesByThreadId.value = {
+          ...hasMoreOlderMessagesByThreadId.value,
+          [threadId]: page.hasMoreOlder,
+        }
+        if (page.hasMoreOlder === false) {
+          setFullHistoryMessagesForThread(threadId, mergedMessages)
+        }
+      } catch {
+        // Background prefetch is best-effort; the user can still trigger
+        // loadOlderMessages by scrolling up.
+      }
+    })().finally(() => {
+      backgroundOlderBackfillByThreadId.delete(threadId)
+    })
+    backgroundOlderBackfillByThreadId.set(threadId, backfillPromise)
+  }
+
   function shouldResumeThread(threadId: string, forceReload = false): boolean {
     const normalizedThreadId = threadId.trim()
     if (!normalizedThreadId) return false
@@ -5862,6 +5916,8 @@ export function useDesktopState() {
         }
         if (detail.hasMoreOlder !== true) {
           setFullHistoryMessagesForThread(threadId, mergedMessages)
+        } else {
+          void backfillOlderTurnsInBackground(threadId)
         }
         if (!appliedTurnState.inProgress) {
           clearCompletedTurnLiveState(threadId)
@@ -5936,7 +5992,7 @@ export function useDesktopState() {
     if (!normalizedThreadId || !normalizedCenterTurnId) return
 
     try {
-      const page = await getThreadTurnWindow(normalizedThreadId, normalizedCenterTurnId)
+      const page = await getThreadTurnWindow(normalizedThreadId, normalizedCenterTurnId, 3, 3)
       const previousPersisted = persistedMessagesByThreadId.value[normalizedThreadId] ?? []
       const mergedMessages = sortMessagesByThreadPosition(
         mergeMessages(previousPersisted, page.messages, { preserveMissing: true }),

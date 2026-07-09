@@ -7058,3 +7058,34 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - No persistent cleanup is required. Reverting the change makes `selectThread` await `loadMessages` again, restoring the previous serialized behavior.
+
+### Feature: Tighter eager turn window with lazy backfill
+
+#### Prerequisites
+- App server is running from this repository.
+- A thread with 10+ turns worth of history so the backfill path is exercised.
+
+#### Steps
+1. Run `pnpm exec vitest run`.
+2. Run `pnpm exec vue-tsc --noEmit`.
+3. Hard-refresh the app, open a large thread, and confirm only ~3 latest turns render initially. Scroll up briefly and confirm the surrounding turns fill in without a spinner (background backfill has already extended the window to ~7 turns).
+4. Open the user-message navigation dropdown and jump to a mid-thread user message. Confirm the surrounding turns render without pulling the full history payload.
+5. Scroll to the top of the conversation and confirm the "load earlier" pagination still works (10 turns per page).
+6. Repeat steps 3-4 in both light and dark theme.
+
+#### Expected Results
+- Initial thread render only materializes 3 turns (eager window). The main pane is quicker to become interactive on large threads.
+- Within a few hundred milliseconds after render, up to 4 additional older turns arrive via `/codex-api/thread-turn-page` and merge into the persisted list, extending the visible window to 7 turns silently (no spinner).
+- Jumping to a mid-thread user message pulls a 3-before/3-after window via `/codex-api/thread-turn-window` and merges it into the persisted list. The full history is only fetched when the user opens the navigation dropdown for the total count, and it no longer floods the main pane.
+- Manual "load earlier" (scroll to top) still requests 10 turns per page.
+- Light and dark theme render both loading and loaded states identically.
+
+#### Performance Audit
+- Server side: `THREAD_RESPONSE_TURN_LIMIT` dropped from 10 to 3. This trims every `thread/read`, `thread/resume`, `thread/fork`, and `thread/rollback` response to the last 3 turns before it hits the wire.
+- Client side: after `loadMessages` persists the eager window it fires `backfillOlderTurnsInBackground(threadId)`, which uses the existing `/thread-turn-page` endpoint to fetch just enough older turns to reach 7 distinct turns in `persistedMessagesByThreadId[threadId]`. The backfill is guarded by `backgroundOlderBackfillByThreadId` to prevent duplicate work and cancels itself when `hasMoreOlder === false`.
+- User-message navigation jumps prefer `loadThreadMessageWindow(threadId, turnId)` (before=3, after=3) over the previous "merge full history into persisted" path. The full-history fetch remains restricted to the dropdown open action so the badge total can be shown.
+- Manual `loadOlderMessages` still asks the gateway for the default 10-turn page since users triggering scroll-up expect a bigger jump.
+- No profiling run was executed in this session because a large real thread is needed to observe the payload delta. Next measurement: capture a network waterfall on a fresh switch to a 100-turn thread and confirm `thread/read` returns ~3 turns while `thread-turn-page` fires once with `limit=4` in the background.
+
+#### Rollback/Cleanup
+- Revert `THREAD_RESPONSE_TURN_LIMIT` back to 10 and drop `backfillOlderTurnsInBackground`, `loadThreadTurnWindow` prop, plus the `turnId` field on `UserMessageNavigationItem` to restore the previous behavior.
