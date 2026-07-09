@@ -3197,18 +3197,31 @@ describe('thread turn window bounds', () => {
 })
 
 describe('session user message counter', () => {
-  it('counts only user role response_item message rows', () => {
+  it('counts distinct turns that contain any user message, not raw rows', () => {
+    // Turn t1 has three user response_item rows (AGENTS.md preamble, files
+    // mentioned, and the actual prompt) but should count as one, since the
+    // app-server merges them into a single userMessage ThreadItem.
     const log = [
       JSON.stringify({ type: 'turn_context', payload: { turn_id: 't1' } }),
+      JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '# AGENTS.md preamble' }] } }),
+      JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '# Files mentioned by the user' }] } }),
       JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] } }),
       JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'text', text: 'hello' }] } }),
       JSON.stringify({ type: 'response_item', payload: { type: 'function_call', name: 'exec_command', arguments: '{}', call_id: 'c1' } }),
       JSON.stringify({ type: 'event_msg', payload: { type: 'task_started', turn_id: 't2' } }),
+      JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '<environment_context>' }] } }),
       JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'follow up' }] } }),
       '',
       'not json',
     ].join('\n')
     expect(countSessionUserMessages(log)).toBe(2)
+  })
+
+  it('falls back to a synthetic turn key when turn context is missing', () => {
+    const log = [
+      JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'orphaned' }] } }),
+    ].join('\n')
+    expect(countSessionUserMessages(log)).toBe(1)
   })
 
   it('returns 0 for an empty or malformed log', () => {

@@ -448,7 +448,16 @@ async function readCachedSessionModelState(sessionPath: string): Promise<Session
 }
 
 export function countSessionUserMessages(sessionLogRaw: string): number {
-  let count = 0
+  // Count *turns* that contain at least one user message, not raw
+  // response_item rows. The frontend renders one user UiMessage per user
+  // ThreadItem, and codex app-server merges every user response_item inside
+  // the same turn (including synthetic AGENTS.md preambles, files-mentioned
+  // sections, <environment_context>, <turn_aborted> markers, and the
+  // real prompt) into a single ThreadItem. Counting rows here would
+  // overcount by the number of synthetic blocks each turn contains.
+  let currentTurnId = ''
+  let orphanTurnKey = 0
+  const turnsWithUser = new Set<string>()
   for (const line of sessionLogRaw.split('\n')) {
     if (!line.trim()) continue
     let row: Record<string, unknown> | null = null
@@ -457,12 +466,29 @@ export function countSessionUserMessages(sessionLogRaw: string): number {
     } catch {
       continue
     }
-    if (row.type !== 'response_item') continue
     const payload = asRecord(row.payload)
+    if (row.type === 'turn_context') {
+      currentTurnId = readNonEmptyString(payload?.turn_id) || currentTurnId
+      continue
+    }
+    if (row.type === 'event_msg') {
+      if (payload?.type === 'task_started') {
+        currentTurnId = readNonEmptyString(payload.turn_id) || currentTurnId
+      } else if (payload?.type === 'task_complete') {
+        currentTurnId = ''
+      }
+      continue
+    }
+    if (row.type !== 'response_item') continue
     if (payload?.type !== 'message' || payload.role !== 'user') continue
-    count += 1
+    let turnKey = currentTurnId
+    if (!turnKey) {
+      orphanTurnKey += 1
+      turnKey = `__orphan-${orphanTurnKey}`
+    }
+    turnsWithUser.add(turnKey)
   }
-  return count
+  return turnsWithUser.size
 }
 
 async function readCachedSessionUserMessageCount(sessionPath: string): Promise<number> {
