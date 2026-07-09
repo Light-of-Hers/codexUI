@@ -775,6 +775,8 @@
         class="message-nav-panel"
         role="menu"
         aria-label="User messages"
+        @mousedown="onMessageNavigationMouseDown"
+        @auxclick="onMessageNavigationAuxClick"
       >
         <div class="message-nav-header">
           <span>User messages</span>
@@ -5322,6 +5324,25 @@ watch(() => userMessageNavigationItems.value.length, () => {
 function onMessageNavigationScroll(): void {
   messageNavigationScrollTop.value = messageNavigationListRef.value?.scrollTop ?? 0
 }
+function onMessageNavigationMouseDown(event: MouseEvent): void {
+  // Middle click on a scrollable region triggers Chrome/Firefox autoscroll
+  // ("cross" cursor mode). Inside the user-message dropdown that is never
+  // useful and it makes the list jump around unexpectedly on the next mouse
+  // movement, so suppress it here.
+  if (event.button === 1) {
+    event.preventDefault()
+  }
+}
+
+function onMessageNavigationAuxClick(event: MouseEvent): void {
+  // Also swallow the resulting auxclick so browsers do not treat a middle
+  // click on the item buttons as "open in new tab" or similar.
+  if (event.button === 1) {
+    event.preventDefault()
+    event.stopPropagation()
+  }
+}
+
 
 function clearHighlightedMessage(): void {
   highlightedMessageId.value = ''
