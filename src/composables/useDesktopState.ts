@@ -1733,6 +1733,7 @@ export function useDesktopState() {
   const fullHistoryMessagesByThreadId = ref<Record<string, UiMessage[]>>({})
   const loadedFullHistoryByThreadId = ref<Record<string, boolean>>({})
   const loadingFullHistoryByThreadId = ref<Record<string, boolean>>({})
+  const loadingMessagesByThreadId = ref<Record<string, boolean>>({})
   const userMessageCountByThreadId = ref<Record<string, number>>({})
   const loadingUserMessageCountByThreadId = ref<Record<string, boolean>>({})
   const livePlanMessagesByThreadId = ref<Record<string, UiMessage[]>>({})
@@ -1826,7 +1827,6 @@ export function useDesktopState() {
   const accountRateLimitSnapshots = ref<UiRateLimitSnapshot[]>([])
 
   const isLoadingThreads = ref(false)
-  const isLoadingMessages = ref(false)
   const isThreadListFullyLoaded = ref(false)
   const isSendingMessage = ref(false)
   const isInterruptingTurn = ref(false)
@@ -2013,6 +2013,10 @@ export function useDesktopState() {
     if (!threadId) return null
     const value = userMessageCountByThreadId.value[threadId]
     return typeof value === 'number' ? value : null
+  })
+  const isLoadingMessages = computed(() => {
+    const threadId = selectedThreadId.value
+    return threadId ? loadingMessagesByThreadId.value[threadId] === true : false
   })
   const isLoadingOlderMessages = computed(() => {
     const threadId = selectedThreadId.value
@@ -3048,6 +3052,7 @@ export function useDesktopState() {
       saveReadStateMap(nextReadState)
     }
     loadedMessagesByThreadId.value = pruneThreadStateMap(loadedMessagesByThreadId.value, activeThreadIds)
+    loadingMessagesByThreadId.value = pruneThreadStateMap(loadingMessagesByThreadId.value, activeThreadIds)
     loadedVersionByThreadId.value = pruneThreadStateMap(loadedVersionByThreadId.value, activeThreadIds)
     resumedThreadById.value = pruneThreadStateMap(resumedThreadById.value, activeThreadIds)
     resumedThreadProviderIdByThreadId.value = pruneThreadStateMap(resumedThreadProviderIdByThreadId.value, activeThreadIds)
@@ -5765,7 +5770,10 @@ export function useDesktopState() {
     const shouldShowLoading = options.silent !== true && !alreadyLoaded
     const forceReload = options.force === true
     if (shouldShowLoading) {
-      isLoadingMessages.value = true
+      loadingMessagesByThreadId.value = {
+        ...loadingMessagesByThreadId.value,
+        [threadId]: true,
+      }
     }
 
     const loadPromise = (async () => {
@@ -5861,7 +5869,10 @@ export function useDesktopState() {
         markThreadAsRead(threadId)
       } finally {
         if (shouldShowLoading) {
-          isLoadingMessages.value = false
+          loadingMessagesByThreadId.value = {
+            ...loadingMessagesByThreadId.value,
+            [threadId]: false,
+          }
         }
       }
     })().finally(() => {
@@ -6092,15 +6103,17 @@ export function useDesktopState() {
   async function selectThread(threadId: string) {
     setSelectedThreadId(threadId)
 
-    try {
-      await Promise.all([
-        loadMessages(threadId),
-        threadId ? processQueuedMessages(threadId) : Promise.resolve(),
-      ])
-      void refreshSkills()
-    } catch (unknownError) {
+    // Fire the message + queue fetches in the background so quickly
+    // clicking another thread is not blocked on the previous thread's
+    // pending network work. Per-thread loading/caching maps guarantee that
+    // late-arriving payloads only mutate the correct thread's state.
+    void loadMessages(threadId).catch((unknownError) => {
       error.value = unknownError instanceof Error ? unknownError.message : 'Unknown application error'
+    })
+    if (threadId) {
+      void processQueuedMessages(threadId).catch(() => {})
     }
+    void refreshSkills()
   }
 
   async function archiveThreadById(threadId: string) {

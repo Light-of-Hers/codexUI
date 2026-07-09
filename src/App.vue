@@ -4550,7 +4550,7 @@ async function syncThreadSelectionWithRoute(): Promise<void> {
       if (route.name === 'home' || route.name === 'skills' || route.name === 'automations') {
         if (selectedThreadId.value !== '') {
           await selectThread('')
-          await applySelectedProviderState().catch(() => {})
+          void applySelectedProviderState().catch(() => {})
         }
         continue
       }
@@ -4560,7 +4560,7 @@ async function syncThreadSelectionWithRoute(): Promise<void> {
         if (!threadId) continue
 
         await selectThread(threadId)
-        await applySelectedProviderState().catch(() => {})
+        void applySelectedProviderState().catch(() => {})
       }
     } while (hasPendingRouteSync)
 

@@ -7029,3 +7029,32 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - No persistent cleanup is required. Reverting the `loadMessages` change restores the eager full-history load; reverting the `App.vue` binding removal restores the dropdown on-demand load.
+
+### Feature: Non-blocking session switch
+
+#### Prerequisites
+- App server is running from this repository.
+- Two threads whose message history has not yet been loaded in this browser tab (e.g. large sessions freshly opened after a hard refresh).
+
+#### Steps
+1. Run `pnpm exec vitest run src/composables/useDesktopState.test.ts`.
+2. Run `pnpm exec vue-tsc --noEmit`.
+3. Hard-refresh the app, then in the sidebar click thread A.
+4. Before A's spinner disappears, immediately click thread B.
+5. Click back to A while B is still fetching.
+6. Repeat steps 3-5 in both light and dark theme.
+
+#### Expected Results
+- Clicking B while A is still loading switches the main conversation pane to B immediately; the sidebar highlight, header, composer, and message list stop showing A's state.
+- If B was previously loaded (cache hit), B's messages render on the first frame with no spinner.
+- If B was never loaded (cache miss), B shows its own `Loading messages...` state; A's spinner does not linger over B's content.
+- Clicking back to A while B is still loading swaps the pane to A instantly; both fetches finish in the background and each writes only into its own thread's cache (`persistedMessagesByThreadId[threadId]`).
+- Light theme and dark theme render identical layouts in both loading and loaded states.
+
+#### Performance Audit
+- Before: `syncThreadSelectionWithRoute` did `await selectThread(threadId)` which itself did `await Promise.all([loadMessages, processQueuedMessages])`, followed by `await applySelectedProviderState()`. A second click while the first `loadMessages` was in flight only set `hasPendingRouteSync = true` and had to wait for the entire chain to resolve, blocking the visible switch on network latency.
+- After: `selectThread` fires `loadMessages`, `processQueuedMessages`, and `refreshSkills` as background work and returns immediately after `setSelectedThreadId`. `syncThreadSelectionWithRoute` no longer awaits `applySelectedProviderState`. `isLoadingMessages` becomes a per-thread computed backed by `loadingMessagesByThreadId`, so the spinner is scoped to whichever thread is currently loading rather than to the last click. Existing per-thread caches (`persistedMessagesByThreadId`, `fullHistoryMessagesByThreadId`, `loadedMessagesByThreadId`) already deduplicate concurrent fetches via `loadMessagePromiseByThreadId`, so late writes cannot corrupt whichever thread the user has since switched to.
+- No profiling run was executed in this session because reproducing the interactive stall requires two large uncached sessions and human clicks. The optimization is grounded in code-path analysis of the removed `await` chain in `syncThreadSelectionWithRoute`. Next measurement: capture a DevTools performance trace of switching A→B→A on a fresh tab and confirm there are no long tasks blocking the pointer/click handler between the two clicks.
+
+#### Rollback/Cleanup
+- No persistent cleanup is required. Reverting the change makes `selectThread` await `loadMessages` again, restoring the previous serialized behavior.
