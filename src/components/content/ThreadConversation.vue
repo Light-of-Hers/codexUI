@@ -790,7 +790,7 @@
             :style="{ height: `${messageNavigationTopSpacerHeight}px` }"
             aria-hidden="true"
           />
-          <li v-for="item in visibleUserMessageNavigationItems" :key="item.id" class="message-nav-list-item">
+          <li v-for="item in visibleUserMessageNavigationItems" :key="item.turnId || item.id || `ord-${item.ordinal}`" class="message-nav-list-item">
             <button
               type="button"
               class="message-nav-item"
@@ -5322,50 +5322,6 @@ watch(() => userMessageNavigationItems.value.length, () => {
 function onMessageNavigationScroll(): void {
   messageNavigationScrollTop.value = messageNavigationListRef.value?.scrollTop ?? 0
 }
-function isEventInsideMessageNavigation(event: Event): boolean {
-  const nav = messageNavigationRef.value
-  if (!nav) return false
-  const target = event.target
-  return target instanceof Node && nav.contains(target)
-}
-
-function onMessageNavigationDocumentPointerDown(event: PointerEvent): void {
-  // Middle button starts Chrome/Firefox autoscroll ("cross" cursor mode) on
-  // scrollable regions. Inside the dropdown that is never useful, so cancel
-  // it as early as possible. Modern Chrome dispatches pointerdown before
-  // mousedown for pointer events, and starts autoscroll at that stage.
-  if (event.button !== 1) return
-  if (!isEventInsideMessageNavigation(event)) return
-  event.preventDefault()
-}
-
-function onMessageNavigationDocumentMouseDown(event: MouseEvent): void {
-  // Belt-and-braces: also handle the classic mousedown path.
-  if (event.button !== 1) return
-  if (!isEventInsideMessageNavigation(event)) return
-  event.preventDefault()
-}
-
-function onMessageNavigationDocumentAuxClick(event: MouseEvent): void {
-  // Swallow the follow-up auxclick so browsers do not treat middle click on
-  // item buttons as "open in new tab" or similar.
-  if (event.button !== 1) return
-  if (!isEventInsideMessageNavigation(event)) return
-  event.preventDefault()
-  event.stopPropagation()
-}
-
-watch(isMessageNavigationOpen, (isOpen) => {
-  if (isOpen) {
-    document.addEventListener('pointerdown', onMessageNavigationDocumentPointerDown, true)
-    document.addEventListener('mousedown', onMessageNavigationDocumentMouseDown, true)
-    document.addEventListener('auxclick', onMessageNavigationDocumentAuxClick, true)
-  } else {
-    document.removeEventListener('pointerdown', onMessageNavigationDocumentPointerDown, true)
-    document.removeEventListener('mousedown', onMessageNavigationDocumentMouseDown, true)
-    document.removeEventListener('auxclick', onMessageNavigationDocumentAuxClick, true)
-  }
-})
 
 
 function clearHighlightedMessage(): void {
@@ -5796,9 +5752,6 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  document.removeEventListener('pointerdown', onMessageNavigationDocumentPointerDown, true)
-  document.removeEventListener('mousedown', onMessageNavigationDocumentMouseDown, true)
-  document.removeEventListener('auxclick', onMessageNavigationDocumentAuxClick, true)
   clearRenderCaches()
   if (conversationScrollFrame) {
     cancelAnimationFrame(conversationScrollFrame)
