@@ -1990,9 +1990,10 @@ export function useDesktopState() {
       return fullHistory
     }
 
-    // While the full history is still loading, show whatever is currently
-    // loaded. This keeps the navigation dropdown responsive on large threads
-    // instead of leaving it stuck on a loading placeholder.
+    // Full history is still loading. Fall back to whatever is already loaded
+    // in the main view so the dropdown can render immediately, and rely on
+    // isLoadingMessageNavigation to convey that more messages are still coming.
+    // Once the full history arrives, this computed swaps to the complete list.
     return messages.value
   })
   const hasMoreOlderMessages = computed(() => {
@@ -7484,6 +7485,7 @@ export function useDesktopState() {
     loadThreadMessageWindow,
     ensureThreadMessagesLoaded,
     ensureMessageLoaded,
+    loadFullHistoryMessages,
     setThreadTerminalOpen,
     toggleSelectedThreadTerminal,
     archiveThreadById,

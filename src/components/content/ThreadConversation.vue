@@ -1688,6 +1688,7 @@ const props = defineProps<{
   isLoadingPersistedAbove?: boolean
   loadEarlierMessages?: (threadId: string) => Promise<void>
   ensureMessageLoaded?: (threadId: string, messageId: string) => Promise<void>
+  ensureFullHistoryLoaded?: (threadId: string) => Promise<void>
 }>()
 
 const emit = defineEmits<{
@@ -5208,6 +5209,13 @@ function toggleMessageNavigation(): void {
   isMessageNavigationOpen.value = !isMessageNavigationOpen.value
   if (isMessageNavigationOpen.value) {
     scrollMessageNavigationToBottom()
+    // Kick off the full-history load so the dropdown eventually shows every
+    // user message, not just the ones currently in the main view window.
+    const ensureFull = props.ensureFullHistoryLoaded
+    const threadId = props.activeThreadId
+    if (ensureFull && threadId) {
+      void ensureFull(threadId).catch(() => {})
+    }
   }
 }
 

@@ -909,6 +909,7 @@
                     :is-loading-persisted-above="isLoadingOlderMessages"
                     :load-earlier-messages="loadOlderMessages"
                     :ensure-message-loaded="ensureMessageLoaded"
+                    :ensure-full-history-loaded="loadFullHistoryMessages"
                     @fork-thread="onForkThreadFromMessage"
                     @rollback="onRollback"
                     @implement-plan="onImplementPlan"
@@ -1333,6 +1334,7 @@ const {
   loadMessages,
   ensureThreadMessagesLoaded,
   ensureMessageLoaded,
+  loadFullHistoryMessages,
   loadOlderMessages,
   loadThreadMessageWindow,
   setThreadTerminalOpen,
