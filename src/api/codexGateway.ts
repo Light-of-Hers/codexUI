@@ -1047,6 +1047,39 @@ export async function getThreadUserMessageCount(threadId: string): Promise<numbe
   }
 }
 
+export type ThreadUserMessageIndexEntry = {
+  turnId: string
+  ordinal: number
+  preview: string
+  title: string
+}
+
+export async function getThreadUserMessageIndex(threadId: string): Promise<ThreadUserMessageIndexEntry[]> {
+  try {
+    const params = new URLSearchParams({ threadId })
+    const response = await fetch(`/codex-api/thread-user-message-index?${params.toString()}`)
+    if (!response.ok) {
+      throw new Error(`Thread user message index request failed with ${response.status}`)
+    }
+    const payload = await response.json() as { entries?: unknown }
+    if (!Array.isArray(payload.entries)) return []
+    const entries: ThreadUserMessageIndexEntry[] = []
+    for (const raw of payload.entries) {
+      if (!raw || typeof raw !== 'object') continue
+      const record = raw as Record<string, unknown>
+      const turnId = typeof record.turnId === 'string' ? record.turnId : ''
+      const ordinal = typeof record.ordinal === 'number' ? Math.max(0, Math.floor(record.ordinal)) : 0
+      const preview = typeof record.preview === 'string' ? record.preview : ''
+      const title = typeof record.title === 'string' ? record.title : preview
+      if (!turnId || !ordinal) continue
+      entries.push({ turnId, ordinal, preview, title })
+    }
+    return entries
+  } catch (error) {
+    throw normalizeCodexApiError(error, `Failed to load user message index for thread ${threadId}`, 'thread/read')
+  }
+}
+
 export async function getFullThreadMessages(threadId: string): Promise<ThreadTurnPage> {
   try {
     const params = new URLSearchParams({ threadId })

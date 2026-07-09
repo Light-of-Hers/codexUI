@@ -8,6 +8,7 @@ import {
   BackendQueueProcessor,
   buildAppServerConfigForState,
   buildSessionModelState,
+  buildSessionUserMessageIndex,
   countSessionUserMessages,
   createCodexBridgeMiddleware,
   getThreadTurnWindowBounds,
@@ -3227,5 +3228,50 @@ describe('session user message counter', () => {
   it('returns 0 for an empty or malformed log', () => {
     expect(countSessionUserMessages('')).toBe(0)
     expect(countSessionUserMessages('not json\n{invalid')).toBe(0)
+  })
+})
+
+
+describe('session user message index', () => {
+  it('produces one entry per user turn with a preview drawn from the actual prompt', () => {
+    const log = [
+      JSON.stringify({ type: 'turn_context', payload: { turn_id: 't1' } }),
+      JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '# AGENTS.md preamble' }] } }),
+      JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '# Files mentioned by the user\n\n## codexUI: repos/codexUI\n\n## My request for Codex:\n\nhello there' }] } }),
+      JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'text', text: 'hi' }] } }),
+      JSON.stringify({ type: 'event_msg', payload: { type: 'task_started', turn_id: 't2' } }),
+      JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '<environment_context>' }] } }),
+      JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'follow up question' }] } }),
+    ].join('\n')
+    const entries = buildSessionUserMessageIndex(log)
+    expect(entries).toHaveLength(2)
+    expect(entries[0]).toMatchObject({ turnId: 't1', ordinal: 1 })
+    expect(entries[0]!.preview).toContain('hello there')
+    expect(entries[1]).toMatchObject({ turnId: 't2', ordinal: 2 })
+    expect(entries[1]!.preview).toContain('follow up question')
+  })
+
+  it('falls back to raw text when no My-request-for-Codex marker is present', () => {
+    const log = JSON.stringify({
+      type: 'response_item',
+      payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '   just a plain prompt   ' }] },
+    })
+    const entries = buildSessionUserMessageIndex(log)
+    expect(entries).toHaveLength(1)
+    expect(entries[0]!.preview).toBe('just a plain prompt')
+    expect(entries[0]!.title).toBe('just a plain prompt')
+  })
+
+  it('truncates long previews and titles', () => {
+    const longText = 'x'.repeat(500)
+    const log = JSON.stringify({
+      type: 'response_item',
+      payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: longText }] },
+    })
+    const entries = buildSessionUserMessageIndex(log)
+    expect(entries).toHaveLength(1)
+    expect(entries[0]!.preview.length).toBeLessThan(longText.length)
+    expect(entries[0]!.preview.endsWith('…')).toBe(true)
+    expect(entries[0]!.title.endsWith('…')).toBe(true)
   })
 })

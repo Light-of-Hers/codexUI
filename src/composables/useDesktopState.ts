@@ -16,6 +16,8 @@ import {
   getThreadDetail,
   getFullThreadMessages,
   getThreadUserMessageCount,
+  getThreadUserMessageIndex,
+  type ThreadUserMessageIndexEntry,
   getOlderThreadMessages,
   getThreadTurnWindow,
   getBackgroundThreadListLimit,
@@ -94,6 +96,7 @@ const UNREAD_CUTOFF_STORAGE_KEY = 'codex-web-local.thread-unread-cutoff.v1'
 const THREAD_TOKEN_USAGE_STORAGE_KEY = 'codex-web-local.thread-token-usage.v1'
 const THREAD_TERMINAL_OPEN_STORAGE_KEY = 'codex-web-local.thread-terminal-open.v1'
 const SELECTED_THREAD_STORAGE_KEY = 'codex-web-local.selected-thread-id.v1'
+const RECENT_THREAD_LRU_STORAGE_KEY = 'codex-web-local.recently-visited-thread-ids.v1'
 const SELECTED_MODEL_BY_CONTEXT_STORAGE_KEY = 'codex-web-local.selected-model-by-context.v1'
 const LEGACY_SELECTED_MODEL_STORAGE_KEY = 'codex-web-local.selected-model-id.v1'
 const SELECTED_REASONING_EFFORT_BY_CONTEXT_STORAGE_KEY = 'codex-web-local.reasoning-effort-by-context.v1'
@@ -112,6 +115,9 @@ const MODEL_CONFIG_FETCH_TIMEOUT_MS = 2_000
 const ANCILLARY_REFRESH_TIMEOUT_MS = 6_000
 const TURN_START_FOLLOW_UP_SYNC_DELAY_MS = 3000
 const RECENT_THREAD_MESSAGE_LOAD_REUSE_MS = 2000
+// Keep in-memory caches for at least this many recently-visited threads
+// even if they scroll out of the sidebar's paged thread list.
+const RECENT_THREAD_LRU_LIMIT = 30
 const REASONING_EFFORT_OPTIONS: ReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
 const GLOBAL_SERVER_REQUEST_SCOPE = '__global__'
 const MODEL_FALLBACK_ID = 'gpt-5.4-mini'
@@ -749,6 +755,44 @@ function saveSelectedThreadId(threadId: string): void {
   }
   window.localStorage.setItem(SELECTED_THREAD_STORAGE_KEY, threadId)
 }
+
+function loadRecentlyVisitedThreadIds(): string[] {
+  if (typeof window === 'undefined') return []
+  try {
+    const raw = window.localStorage.getItem(RECENT_THREAD_LRU_STORAGE_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    const seen = new Set<string>()
+    const result: string[] = []
+    for (const entry of parsed) {
+      if (typeof entry !== 'string') continue
+      const normalized = entry.trim()
+      if (!normalized || seen.has(normalized)) continue
+      seen.add(normalized)
+      result.push(normalized)
+      if (result.length >= RECENT_THREAD_LRU_LIMIT) break
+    }
+    return result
+  } catch {
+    return []
+  }
+}
+
+function saveRecentlyVisitedThreadIds(ids: string[]): void {
+  if (typeof window === 'undefined') return
+  try {
+    if (ids.length === 0) {
+      window.localStorage.removeItem(RECENT_THREAD_LRU_STORAGE_KEY)
+      return
+    }
+    window.localStorage.setItem(RECENT_THREAD_LRU_STORAGE_KEY, JSON.stringify(ids))
+  } catch {
+    // Best-effort persistence: dropping the LRU list only means keep-warm
+    // is skipped after a reload; runtime behavior is unaffected.
+  }
+}
+
 
 function loadProjectOrder(): string[] {
   if (typeof window === 'undefined') return []
@@ -1729,6 +1773,7 @@ export function useDesktopState() {
   const projectGroups = ref<UiProjectGroup[]>([])
   const sourceGroups = ref<UiProjectGroup[]>([])
   const selectedThreadId = ref(loadSelectedThreadId())
+  const recentlyVisitedThreadIds = ref<string[]>(loadRecentlyVisitedThreadIds())
   const persistedMessagesByThreadId = ref<Record<string, UiMessage[]>>({})
   const fullHistoryMessagesByThreadId = ref<Record<string, UiMessage[]>>({})
   const loadedFullHistoryByThreadId = ref<Record<string, boolean>>({})
@@ -1736,6 +1781,8 @@ export function useDesktopState() {
   const loadingMessagesByThreadId = ref<Record<string, boolean>>({})
   const userMessageCountByThreadId = ref<Record<string, number>>({})
   const loadingUserMessageCountByThreadId = ref<Record<string, boolean>>({})
+  const userMessageIndexByThreadId = ref<Record<string, ThreadUserMessageIndexEntry[]>>({})
+  const loadingUserMessageIndexByThreadId = ref<Record<string, boolean>>({})
   const livePlanMessagesByThreadId = ref<Record<string, UiMessage[]>>({})
   const liveAgentMessagesByThreadId = ref<Record<string, UiMessage[]>>({})
   const liveReasoningTextByThreadId = ref<Record<string, string>>({})
@@ -1874,6 +1921,7 @@ export function useDesktopState() {
   const loadMessagePromiseByThreadId = new Map<string, Promise<void>>()
   const loadFullHistoryPromiseByThreadId = new Map<string, Promise<void>>()
   const loadUserMessageCountPromiseByThreadId = new Map<string, Promise<void>>()
+  const loadUserMessageIndexPromiseByThreadId = new Map<string, Promise<void>>()
   let refreshSkillsPromise: Promise<void> | null = null
   let rateLimitRefreshPromise: Promise<void> | null = null
   let pendingThreadsRefresh = false
@@ -2013,6 +2061,15 @@ export function useDesktopState() {
     if (!threadId) return null
     const value = userMessageCountByThreadId.value[threadId]
     return typeof value === 'number' ? value : null
+  })
+  const userMessageNavigationIndex = computed<ThreadUserMessageIndexEntry[]>(() => {
+    const threadId = selectedThreadId.value
+    if (!threadId) return []
+    return userMessageIndexByThreadId.value[threadId] ?? []
+  })
+  const isLoadingUserMessageNavigationIndex = computed(() => {
+    const threadId = selectedThreadId.value
+    return threadId ? loadingUserMessageIndexByThreadId.value[threadId] === true : false
   })
   const isLoadingMessages = computed(() => {
     const threadId = selectedThreadId.value
@@ -2237,12 +2294,27 @@ export function useDesktopState() {
     }
   }
 
+  function recordRecentlyVisitedThreadId(threadId: string): void {
+    const normalized = threadId.trim()
+    if (!normalized) return
+    const current = recentlyVisitedThreadIds.value
+    if (current[0] === normalized) return
+    const filtered = current.filter((id) => id !== normalized)
+    filtered.unshift(normalized)
+    if (filtered.length > RECENT_THREAD_LRU_LIMIT) {
+      filtered.length = RECENT_THREAD_LRU_LIMIT
+    }
+    recentlyVisitedThreadIds.value = filtered
+    saveRecentlyVisitedThreadIds(filtered)
+  }
+
   function setSelectedThreadId(nextThreadId: string): void {
     const sameThread = selectedThreadId.value === nextThreadId
     if (!sameThread) {
       selectedThreadId.value = nextThreadId
       saveSelectedThreadId(nextThreadId)
     }
+    recordRecentlyVisitedThreadId(nextThreadId)
     selectedModelId.value = readModelIdForThread(nextThreadId)
     ensureAvailableModelIds(selectedModelId.value)
     selectedReasoningEffort.value = readReasoningEffortForThread(nextThreadId)
@@ -3063,6 +3135,13 @@ export function useDesktopState() {
     if (currentThreadId) {
       activeThreadIds.add(currentThreadId)
     }
+    // Preserve caches for recently-visited threads even if the sidebar
+    // paged them out; this is the LRU keep-warm that avoids re-fetching
+    // messages when the user hops back to a hot thread.
+    for (const recentThreadId of recentlyVisitedThreadIds.value) {
+      const normalized = recentThreadId.trim()
+      if (normalized) activeThreadIds.add(normalized)
+    }
     const nextSelectedModelMap = pruneThreadContextStateMap(selectedModelIdByContext.value, activeThreadIds)
     if (nextSelectedModelMap !== selectedModelIdByContext.value) {
       selectedModelIdByContext.value = nextSelectedModelMap
@@ -3117,6 +3196,8 @@ export function useDesktopState() {
     loadingFullHistoryByThreadId.value = pruneThreadStateMap(loadingFullHistoryByThreadId.value, activeThreadIds)
     userMessageCountByThreadId.value = pruneThreadStateMap(userMessageCountByThreadId.value, activeThreadIds)
     loadingUserMessageCountByThreadId.value = pruneThreadStateMap(loadingUserMessageCountByThreadId.value, activeThreadIds)
+    userMessageIndexByThreadId.value = pruneThreadStateMap(userMessageIndexByThreadId.value, activeThreadIds)
+    loadingUserMessageIndexByThreadId.value = pruneThreadStateMap(loadingUserMessageIndexByThreadId.value, activeThreadIds)
     liveAgentMessagesByThreadId.value = pruneThreadStateMap(liveAgentMessagesByThreadId.value, activeThreadIds)
     liveReasoningTextByThreadId.value = pruneThreadStateMap(liveReasoningTextByThreadId.value, activeThreadIds)
     liveCommandsByThreadId.value = pruneThreadStateMap(liveCommandsByThreadId.value, activeThreadIds)
@@ -5808,6 +5889,50 @@ export function useDesktopState() {
     void loadUserMessageCount(normalizedThreadId).catch(() => {})
   }
 
+  async function loadUserMessageIndex(threadId: string, options: { force?: boolean } = {}): Promise<void> {
+    if (!threadId) return
+    if (options.force !== true && Array.isArray(userMessageIndexByThreadId.value[threadId])) return
+
+    const existing = loadUserMessageIndexPromiseByThreadId.get(threadId)
+    if (existing) {
+      await existing
+      return
+    }
+
+    loadingUserMessageIndexByThreadId.value = {
+      ...loadingUserMessageIndexByThreadId.value,
+      [threadId]: true,
+    }
+
+    const loadPromise = (async () => {
+      try {
+        const entries = await getThreadUserMessageIndex(threadId)
+        userMessageIndexByThreadId.value = {
+          ...userMessageIndexByThreadId.value,
+          [threadId]: entries,
+        }
+      } catch {
+        // Best-effort; leave any previously known entries in place.
+      } finally {
+        loadingUserMessageIndexByThreadId.value = {
+          ...loadingUserMessageIndexByThreadId.value,
+          [threadId]: false,
+        }
+      }
+    })().finally(() => {
+      loadUserMessageIndexPromiseByThreadId.delete(threadId)
+    })
+
+    loadUserMessageIndexPromiseByThreadId.set(threadId, loadPromise)
+    await loadPromise
+  }
+
+  function ensureUserMessageIndexLoaded(threadId: string): void {
+    const normalizedThreadId = threadId.trim()
+    if (!normalizedThreadId) return
+    void loadUserMessageIndex(normalizedThreadId).catch(() => {})
+  }
+
 
   async function loadMessages(threadId: string, options: { silent?: boolean; force?: boolean } = {}) {
     if (!threadId) {
@@ -7613,6 +7738,8 @@ export function useDesktopState() {
     isLoadingMessages,
     isLoadingMessageNavigation,
     userMessageNavigationTotal,
+    userMessageNavigationIndex,
+    isLoadingUserMessageNavigationIndex,
     isLoadingOlderMessages,
     isSendingMessage,
     isInterruptingTurn,
@@ -7634,6 +7761,8 @@ export function useDesktopState() {
     loadFullHistoryMessages,
     loadUserMessageCount,
     ensureUserMessageCountLoaded,
+    loadUserMessageIndex,
+    ensureUserMessageIndexLoaded,
     setThreadTerminalOpen,
     toggleSelectedThreadTerminal,
     archiveThreadById,

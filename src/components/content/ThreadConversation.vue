@@ -752,7 +752,7 @@
     </ul>
 
     <div
-      v-if="!isLoading && (isMessageNavigationLoading || userMessageNavigationItems.length > 0)"
+      v-if="!isLoading && (isMessageNavigationLoading || userMessageNavigationItems.length > 0 || isLoadingUserMessageNavigationIndex || (typeof userMessageNavigationTotal === 'number' && userMessageNavigationTotal > 0))"
       ref="messageNavigationRef"
       class="message-nav"
     >
@@ -781,7 +781,7 @@
           <span>{{ messageNavigationHeaderStatus }}</span>
         </div>
         <ul ref="messageNavigationListRef" class="message-nav-list" @scroll="onMessageNavigationScroll">
-          <li v-if="isMessageNavigationLoading && userMessageNavigationItems.length === 0" class="message-nav-empty">
+          <li v-if="(isMessageNavigationLoading || isLoadingUserMessageNavigationIndex) && userMessageNavigationItems.length === 0" class="message-nav-empty">
             Loading user messages…
           </li>
           <li
@@ -1020,7 +1020,7 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { UiFileChange, UiLiveOverlay, UiMessage, UiPlanStep, UiServerRequest, UiServerRequestReply } from '../../types/codex'
-import { searchFileLinkPaths, type FileLinkSearchSuggestion } from '../../api/codexGateway'
+import { searchFileLinkPaths, type FileLinkSearchSuggestion, type ThreadUserMessageIndexEntry } from '../../api/codexGateway'
 import { useFeedbackDiagnostics } from '../../composables/useFeedbackDiagnostics'
 import { useMobile } from '../../composables/useMobile'
 import { useUiLanguage } from '../../composables/useUiLanguage'
@@ -1684,6 +1684,9 @@ const props = defineProps<{
   ensureFullHistoryLoaded?: (threadId: string) => Promise<void>
   userMessageNavigationTotal?: number | null
   ensureUserMessageNavigationTotal?: (threadId: string) => void
+  userMessageNavigationIndex?: ThreadUserMessageIndexEntry[]
+  isLoadingUserMessageNavigationIndex?: boolean
+  ensureUserMessageNavigationIndex?: (threadId: string) => void
 }>()
 
 const emit = defineEmits<{
@@ -1694,29 +1697,48 @@ const emit = defineEmits<{
 }>()
 
 const messageNavigationSourceMessages = computed(() => props.messageNavigationMessages ?? props.messages)
-const rawUserMessageNavigationItems = computed(() =>
+const loadedUserMessageNavigationItems = computed(() =>
   buildUserMessageNavigationItems(messageNavigationSourceMessages.value),
 )
 const isMessageNavigationLoading = computed(() => props.isMessageNavigationLoading === true)
-// Ordinal offset applied while the full history is still loading. The main
-// view loads the newest messages first, so the currently-loaded items should
-// be treated as the *tail* of the eventual list and numbered from
-// (total - loaded + 1) upwards. Once the full history is in place the offset
-// is 0 and ordinals match array position.
-const userMessageNavigationOrdinalOffset = computed(() => {
-  const loaded = rawUserMessageNavigationItems.value.length
+
+// When the session-derived index is available, use it as the authoritative
+// source: it covers every turn without waiting on the (potentially very
+// large) full-history payload. Otherwise fall back to whatever messages the
+// main view already has loaded, applying the tail-alignment offset so
+// ordinals stay stable once the full history streams in.
+const userMessageNavigationItems = computed<UserMessageNavigationItem[]>(() => {
+  const sessionEntries = props.userMessageNavigationIndex ?? []
+  const loadedItems = loadedUserMessageNavigationItems.value
+
+  if (sessionEntries.length > 0) {
+    // Build a turnId -> loaded UiMessage id map so clicks can still jump to
+    // the exact rendered message when it happens to be loaded already.
+    const idByTurnId = new Map<string, string>()
+    for (const item of loadedItems) {
+      if (item.turnId && item.id && !idByTurnId.has(item.turnId)) {
+        idByTurnId.set(item.turnId, item.id)
+      }
+    }
+    return sessionEntries.map((entry) => ({
+      id: idByTurnId.get(entry.turnId) ?? '',
+      turnId: entry.turnId,
+      ordinal: entry.ordinal,
+      messageIndex: -1,
+      preview: entry.preview,
+      title: entry.title,
+    }))
+  }
+
   const totalProp = props.userMessageNavigationTotal
-  if (typeof totalProp !== 'number' || totalProp <= 0) return 0
-  const total = Math.max(totalProp, loaded)
-  return Math.max(0, total - loaded)
-})
-const userMessageNavigationItems = computed(() => {
-  const offset = userMessageNavigationOrdinalOffset.value
-  if (offset === 0) return rawUserMessageNavigationItems.value
-  return rawUserMessageNavigationItems.value.map((item) => ({
-    ...item,
-    ordinal: item.ordinal + offset,
-  }))
+  if (typeof totalProp === 'number' && totalProp > 0) {
+    const total = Math.max(totalProp, loadedItems.length)
+    const offset = Math.max(0, total - loadedItems.length)
+    if (offset !== 0) {
+      return loadedItems.map((item) => ({ ...item, ordinal: item.ordinal + offset }))
+    }
+  }
+  return loadedItems
 })
 const messageNavigationCountLabel = computed(() => {
   const loaded = userMessageNavigationItems.value.length
@@ -1727,10 +1749,23 @@ const messageNavigationCountLabel = computed(() => {
   return loaded
 })
 const messageNavigationHeaderStatus = computed(() => {
-  const loaded = userMessageNavigationItems.value.length
+  const items = userMessageNavigationItems.value
+  const loaded = items.length
+  const sessionEntries = props.userMessageNavigationIndex ?? []
+  const usingSessionIndex = sessionEntries.length > 0
   const totalProp = props.userMessageNavigationTotal
   const total = typeof totalProp === 'number' && totalProp >= 0 ? totalProp : null
-  // Prefer the authoritative session-file count when it is known.
+  const isIndexLoading = props.isLoadingUserMessageNavigationIndex === true
+
+  if (usingSessionIndex) {
+    // Session index is authoritative: every user turn is already listed.
+    return `${loaded} total`
+  }
+
+  if (isIndexLoading && loaded === 0) {
+    return total !== null ? `Loading… (${total} total)` : 'Loading…'
+  }
+
   const totalKnown = total !== null ? Math.max(total, loaded) : null
   if (isMessageNavigationLoading.value) {
     if (totalKnown !== null) {
@@ -5253,13 +5288,13 @@ function toggleMessageNavigation(): void {
   if (isMessageNavigationOpen.value) {
     scrollMessageNavigationToBottom()
     const threadId = props.activeThreadId
-    // Kick off the full-history load so the dropdown eventually shows every
-    // user message, not just the ones currently in the main view window.
-    const ensureFull = props.ensureFullHistoryLoaded
-    if (ensureFull && threadId) {
-      void ensureFull(threadId).catch(() => {})
+    // Load the lightweight user-message index that lists every user turn from
+    // the session file. This is the authoritative data source for the
+    // dropdown and avoids the very expensive full-history payload path.
+    if (threadId && props.ensureUserMessageNavigationIndex) {
+      props.ensureUserMessageNavigationIndex(threadId)
     }
-    // Ensure the total is ready so the "N total" label is not blank.
+    // Total is also handy for the badge before the index resolves.
     if (threadId && props.ensureUserMessageNavigationTotal) {
       props.ensureUserMessageNavigationTotal(threadId)
     }
@@ -5359,7 +5394,23 @@ async function jumpToUserMessage(item: UserMessageNavigationItem): Promise<void>
   closeMessageNavigation()
   autoFollowOutput.value = false
 
-  let targetIndex = props.messages.findIndex((message) => message.id === item.id)
+  function findTargetIndex(): number {
+    // Prefer id match when we have it (main-view UiMessage id === ThreadItem
+    // id from app-server). Fall back to turnId, which is what the session
+    // index uses when the corresponding UiMessage has not been loaded yet.
+    if (item.id) {
+      const byId = props.messages.findIndex((message) => message.id === item.id)
+      if (byId >= 0) return byId
+    }
+    if (item.turnId) {
+      return props.messages.findIndex(
+        (message) => message.role === 'user' && (message.turnId ?? '') === item.turnId,
+      )
+    }
+    return -1
+  }
+
+  let targetIndex = findTargetIndex()
   if (targetIndex < 0 && item.turnId && props.loadThreadTurnWindow) {
     try {
       await props.loadThreadTurnWindow(props.activeThreadId, item.turnId)
@@ -5367,23 +5418,25 @@ async function jumpToUserMessage(item: UserMessageNavigationItem): Promise<void>
       // fall through to the full-history path below
     }
     await nextTick()
-    targetIndex = props.messages.findIndex((message) => message.id === item.id)
+    targetIndex = findTargetIndex()
   }
-  if (targetIndex < 0 && props.ensureMessageLoaded) {
+  if (targetIndex < 0 && item.id && props.ensureMessageLoaded) {
     await props.ensureMessageLoaded(props.activeThreadId, item.id)
     await nextTick()
-    targetIndex = props.messages.findIndex((message) => message.id === item.id)
+    targetIndex = findTargetIndex()
   }
   if (targetIndex < 0) return
 
+  const resolvedMessage = props.messages[targetIndex]
+  const resolvedId = resolvedMessage?.id ?? item.id
   setRenderWindowAroundIndex(targetIndex)
 
   await nextTick()
-  const element = findRenderedMessageElement(item.id)
+  const element = findRenderedMessageElement(resolvedId)
   if (!element) return
 
   scrollMessageElementIntoView(element)
-  highlightMessage(item.id)
+  highlightMessage(resolvedId)
 }
 
 async function loadMoreAbove(): Promise<void> {
@@ -5650,8 +5703,11 @@ watch(
     expandedResponseSourceIds.value = new Set()
     // Apply immediately for cached threads where isLoading never toggles.
     setRenderWindowToLatest()
-    // Warm the user-message total so the dropdown can show it the moment the
-    // user opens the panel, without waiting for the full history load.
+    // Warm the user-message index + total so the dropdown can show them the
+    // moment the user opens the panel, without waiting for the full history.
+    if (threadId && props.ensureUserMessageNavigationIndex) {
+      props.ensureUserMessageNavigationIndex(threadId)
+    }
     if (threadId && props.ensureUserMessageNavigationTotal) {
       props.ensureUserMessageNavigationTotal(threadId)
     }
@@ -5684,8 +5740,11 @@ onMounted(() => {
   window.addEventListener('pointerdown', onWindowPointerDownForFileLinkContextMenu)
   window.addEventListener('blur', onWindowBlurForFileLinkContextMenu)
   window.addEventListener('keydown', onWindowKeydownForFileLinkContextMenu)
-  // Warm the user-message total so the dropdown shows it immediately.
+  // Warm the user-message index + total so the dropdown shows them immediately.
   const threadId = props.activeThreadId
+  if (threadId && props.ensureUserMessageNavigationIndex) {
+    props.ensureUserMessageNavigationIndex(threadId)
+  }
   if (threadId && props.ensureUserMessageNavigationTotal) {
     props.ensureUserMessageNavigationTotal(threadId)
   }

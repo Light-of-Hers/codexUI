@@ -913,6 +913,9 @@
                     :ensure-full-history-loaded="loadFullHistoryMessages"
                     :user-message-navigation-total="userMessageNavigationTotal"
                     :ensure-user-message-navigation-total="ensureUserMessageCountLoaded"
+                    :user-message-navigation-index="userMessageNavigationIndex"
+                    :is-loading-user-message-navigation-index="isLoadingUserMessageNavigationIndex"
+                    :ensure-user-message-navigation-index="ensureUserMessageIndexLoaded"
                     @fork-thread="onForkThreadFromMessage"
                     @rollback="onRollback"
                     @implement-plan="onImplementPlan"
@@ -1326,6 +1329,8 @@ const {
   isLoadingMessages,
   isLoadingMessageNavigation,
   userMessageNavigationTotal,
+  userMessageNavigationIndex,
+  isLoadingUserMessageNavigationIndex,
   isLoadingOlderMessages,
   isSendingMessage,
   isInterruptingTurn,
@@ -1340,6 +1345,7 @@ const {
   ensureMessageLoaded,
   loadFullHistoryMessages,
   ensureUserMessageCountLoaded,
+  ensureUserMessageIndexLoaded,
   loadOlderMessages,
   loadThreadMessageWindow,
   setThreadTerminalOpen,

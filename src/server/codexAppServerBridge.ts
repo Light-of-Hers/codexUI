@@ -512,6 +512,154 @@ async function readCachedSessionUserMessageCount(sessionPath: string): Promise<n
   return count
 }
 
+type SessionUserMessageIndexEntry = {
+  turnId: string
+  ordinal: number
+  preview: string
+  title: string
+}
+
+type SessionUserMessageIndexCacheEntry = {
+  size: number
+  mtimeMs: number
+  entries: SessionUserMessageIndexEntry[]
+}
+
+const SESSION_USER_MESSAGE_INDEX_CACHE_LIMIT = 128
+const sessionUserMessageIndexCache = new Map<string, SessionUserMessageIndexCacheEntry>()
+
+const USER_MESSAGE_PREVIEW_TITLE_MAX_LENGTH = 320
+const USER_MESSAGE_PREVIEW_TEXT_MAX_LENGTH = 88
+
+function normalizeSessionUserMessageText(value: string): string {
+  return value.replace(/\s+/gu, ' ').trim()
+}
+
+function truncateForPreview(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value
+  if (maxLength <= 1) return '…'
+  return `${value.slice(0, maxLength - 1).trimEnd()}…`
+}
+
+const USER_MESSAGE_MARKER_REGEX = /(?:^|\n)\s{0,3}#{0,6}\s*my request for codex\s*:?\s*/giu
+
+function extractSessionUserMessageBody(text: string): string {
+  const trimmed = text.trim()
+  if (!trimmed) return ''
+  // Strip the same "# My request for Codex:" preamble the frontend removes
+  // so the dropdown preview matches what the user actually typed.
+  const matches = Array.from(trimmed.matchAll(USER_MESSAGE_MARKER_REGEX))
+  if (matches.length === 0) return trimmed
+  const lastMatch = matches[matches.length - 1]
+  if (!lastMatch || typeof lastMatch.index !== 'number') return trimmed
+  return trimmed.slice(lastMatch.index + lastMatch[0].length).trim()
+}
+
+function readSessionUserMessageText(payload: Record<string, unknown>): string {
+  // Like readSessionMessageText, but also accepts input_text blocks, which
+  // are what user response_item rows actually use in the rollout log.
+  const content = payload.content
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+
+  const parts: string[] = []
+  for (const block of content) {
+    const blockRecord = asRecord(block)
+    const text = typeof blockRecord?.text === 'string' ? blockRecord.text : ''
+    if (!text) continue
+    const type = typeof blockRecord?.type === 'string' ? blockRecord.type : ''
+    if (type && type !== 'text' && type !== 'input_text' && type !== 'output_text') continue
+    parts.push(text)
+  }
+  return parts.join('')
+}
+
+export function buildSessionUserMessageIndex(sessionLogRaw: string): SessionUserMessageIndexEntry[] {
+  // Produce one entry per turn that contains at least one user message.
+  // Preview text is drawn from the *last* user response_item in the turn,
+  // which matches how codex app-server merges them: the final block is the
+  // actual user prompt after AGENTS.md preambles / files-mentioned sections.
+  let currentTurnId = ''
+  let orphanTurnKey = 0
+  const orderedTurns: string[] = []
+  const textByTurn = new Map<string, string>()
+
+  for (const line of sessionLogRaw.split('\n')) {
+    if (!line.trim()) continue
+    let row: Record<string, unknown> | null = null
+    try {
+      row = JSON.parse(line) as Record<string, unknown>
+    } catch {
+      continue
+    }
+    const payload = asRecord(row.payload)
+    if (row.type === 'turn_context') {
+      currentTurnId = readNonEmptyString(payload?.turn_id) || currentTurnId
+      continue
+    }
+    if (row.type === 'event_msg') {
+      if (payload?.type === 'task_started') {
+        currentTurnId = readNonEmptyString(payload.turn_id) || currentTurnId
+      } else if (payload?.type === 'task_complete') {
+        currentTurnId = ''
+      }
+      continue
+    }
+    if (row.type !== 'response_item') continue
+    if (payload?.type !== 'message' || payload.role !== 'user') continue
+
+    let turnKey = currentTurnId
+    if (!turnKey) {
+      orphanTurnKey += 1
+      turnKey = `__orphan-${orphanTurnKey}`
+    }
+    if (!textByTurn.has(turnKey)) orderedTurns.push(turnKey)
+    const text = readSessionUserMessageText(payload)
+    const body = extractSessionUserMessageBody(text)
+    if (body) {
+      textByTurn.set(turnKey, body)
+    } else if (!textByTurn.get(turnKey)) {
+      // Only fall back to the raw text if nothing better has been seen yet.
+      textByTurn.set(turnKey, text.trim())
+    }
+  }
+
+  return orderedTurns.map((turnKey, index) => {
+    const rawTitle = textByTurn.get(turnKey) ?? ''
+    const normalized = normalizeSessionUserMessageText(rawTitle) || '(empty message)'
+    const title = truncateForPreview(normalized, USER_MESSAGE_PREVIEW_TITLE_MAX_LENGTH)
+    const preview = truncateForPreview(normalized, USER_MESSAGE_PREVIEW_TEXT_MAX_LENGTH)
+    return {
+      turnId: turnKey,
+      ordinal: index + 1,
+      preview,
+      title,
+    }
+  })
+}
+
+async function readCachedSessionUserMessageIndex(sessionPath: string): Promise<SessionUserMessageIndexEntry[]> {
+  const sessionStat = await stat(sessionPath)
+  const cached = sessionUserMessageIndexCache.get(sessionPath)
+  if (cached && cached.size === sessionStat.size && cached.mtimeMs === sessionStat.mtimeMs) {
+    return cached.entries
+  }
+
+  const sessionLogRaw = await readFile(sessionPath, 'utf8')
+  const entries = buildSessionUserMessageIndex(sessionLogRaw)
+  sessionUserMessageIndexCache.set(sessionPath, {
+    size: sessionStat.size,
+    mtimeMs: sessionStat.mtimeMs,
+    entries,
+  })
+  if (sessionUserMessageIndexCache.size > SESSION_USER_MESSAGE_INDEX_CACHE_LIMIT) {
+    const oldestKey = sessionUserMessageIndexCache.keys().next().value
+    if (oldestKey) sessionUserMessageIndexCache.delete(oldestKey)
+  }
+  return entries
+}
+
+
 export async function mergeSessionModelStateIntoThreadResult(result: unknown): Promise<unknown> {
   const record = asRecord(result)
   const thread = asRecord(record?.thread)
@@ -8876,7 +9024,39 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         return
       }
 
-      if (req.method === 'GET' && url.pathname === '/codex-api/thread-user-message-count') {
+      if (req.method === 'GET' && url.pathname === '/codex-api/thread-user-message-index') {
+        try {
+          const threadId = url.searchParams.get('threadId')?.trim() ?? ''
+          if (!threadId) {
+            setJson(res, 400, { error: 'Missing threadId' })
+            return
+          }
+
+          const metaResult = await appServer.rpc('thread/read', {
+            threadId,
+            includeTurns: false,
+          })
+          const metaRecord = asRecord(metaResult)
+          const threadRecord = asRecord(metaRecord?.thread)
+          const sessionPath = readNonEmptyString(threadRecord?.path)
+          if (!sessionPath || !isAbsolute(sessionPath)) {
+            setJson(res, 200, { entries: [] })
+            return
+          }
+
+          try {
+            const entries = await readCachedSessionUserMessageIndex(sessionPath)
+            setJson(res, 200, { entries })
+          } catch {
+            setJson(res, 200, { entries: [] })
+          }
+        } catch (error) {
+          setJson(res, 500, { error: getErrorMessage(error, 'Failed to load thread user message index') })
+        }
+        return
+      }
+
+            if (req.method === 'GET' && url.pathname === '/codex-api/thread-user-message-count') {
         try {
           const threadId = url.searchParams.get('threadId')?.trim() ?? ''
           if (!threadId) {
