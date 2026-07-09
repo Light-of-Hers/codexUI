@@ -351,8 +351,16 @@ type SessionSkillInputCacheEntry = {
 
 const SESSION_MODEL_STATE_CACHE_LIMIT = 256
 const SESSION_SKILL_INPUT_CACHE_LIMIT = 64
+const SESSION_USER_MESSAGE_COUNT_CACHE_LIMIT = 256
 const sessionModelStateCache = new Map<string, SessionModelStateCacheEntry>()
 const sessionSkillInputCache = new Map<string, SessionSkillInputCacheEntry>()
+const sessionUserMessageCountCache = new Map<string, SessionUserMessageCountCacheEntry>()
+
+type SessionUserMessageCountCacheEntry = {
+  size: number
+  mtimeMs: number
+  count: number
+}
 
 function normalizeSessionReasoningEffort(value: unknown): ReasoningEffort | '' {
   const normalized = readNonEmptyString(value).trim().toLowerCase()
@@ -437,6 +445,45 @@ async function readCachedSessionModelState(sessionPath: string): Promise<Session
     if (oldestKey) sessionModelStateCache.delete(oldestKey)
   }
   return modelState
+}
+
+export function countSessionUserMessages(sessionLogRaw: string): number {
+  let count = 0
+  for (const line of sessionLogRaw.split('\n')) {
+    if (!line.trim()) continue
+    let row: Record<string, unknown> | null = null
+    try {
+      row = JSON.parse(line) as Record<string, unknown>
+    } catch {
+      continue
+    }
+    if (row.type !== 'response_item') continue
+    const payload = asRecord(row.payload)
+    if (payload?.type !== 'message' || payload.role !== 'user') continue
+    count += 1
+  }
+  return count
+}
+
+async function readCachedSessionUserMessageCount(sessionPath: string): Promise<number> {
+  const sessionStat = await stat(sessionPath)
+  const cached = sessionUserMessageCountCache.get(sessionPath)
+  if (cached && cached.size === sessionStat.size && cached.mtimeMs === sessionStat.mtimeMs) {
+    return cached.count
+  }
+
+  const sessionLogRaw = await readFile(sessionPath, 'utf8')
+  const count = countSessionUserMessages(sessionLogRaw)
+  sessionUserMessageCountCache.set(sessionPath, {
+    size: sessionStat.size,
+    mtimeMs: sessionStat.mtimeMs,
+    count,
+  })
+  if (sessionUserMessageCountCache.size > SESSION_USER_MESSAGE_COUNT_CACHE_LIMIT) {
+    const oldestKey = sessionUserMessageCountCache.keys().next().value
+    if (oldestKey) sessionUserMessageCountCache.delete(oldestKey)
+  }
+  return count
 }
 
 export async function mergeSessionModelStateIntoThreadResult(result: unknown): Promise<unknown> {
@@ -8803,7 +8850,39 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         return
       }
 
-      if (req.method === 'GET' && url.pathname === '/codex-api/thread-message-history') {
+      if (req.method === 'GET' && url.pathname === '/codex-api/thread-user-message-count') {
+        try {
+          const threadId = url.searchParams.get('threadId')?.trim() ?? ''
+          if (!threadId) {
+            setJson(res, 400, { error: 'Missing threadId' })
+            return
+          }
+
+          const metaResult = await appServer.rpc('thread/read', {
+            threadId,
+            includeTurns: false,
+          })
+          const metaRecord = asRecord(metaResult)
+          const threadRecord = asRecord(metaRecord?.thread)
+          const sessionPath = readNonEmptyString(threadRecord?.path)
+          if (!sessionPath || !isAbsolute(sessionPath)) {
+            setJson(res, 200, { count: 0 })
+            return
+          }
+
+          try {
+            const count = await readCachedSessionUserMessageCount(sessionPath)
+            setJson(res, 200, { count })
+          } catch {
+            setJson(res, 200, { count: 0 })
+          }
+        } catch (error) {
+          setJson(res, 500, { error: getErrorMessage(error, 'Failed to count thread user messages') })
+        }
+        return
+      }
+
+            if (req.method === 'GET' && url.pathname === '/codex-api/thread-message-history') {
         try {
           const threadId = url.searchParams.get('threadId')?.trim() ?? ''
           if (!threadId) {

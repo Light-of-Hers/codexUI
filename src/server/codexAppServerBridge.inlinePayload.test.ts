@@ -8,6 +8,7 @@ import {
   BackendQueueProcessor,
   buildAppServerConfigForState,
   buildSessionModelState,
+  countSessionUserMessages,
   createCodexBridgeMiddleware,
   getThreadTurnWindowBounds,
   mergeExplicitModelStateIntoThreadResult,
@@ -3192,5 +3193,26 @@ describe('thread turn window bounds', () => {
 
   it('returns null when the center turn is missing', () => {
     expect(getThreadTurnWindowBounds(turns, 'missing-turn', 1, 1)).toBeNull()
+  })
+})
+
+describe('session user message counter', () => {
+  it('counts only user role response_item message rows', () => {
+    const log = [
+      JSON.stringify({ type: 'turn_context', payload: { turn_id: 't1' } }),
+      JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] } }),
+      JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'text', text: 'hello' }] } }),
+      JSON.stringify({ type: 'response_item', payload: { type: 'function_call', name: 'exec_command', arguments: '{}', call_id: 'c1' } }),
+      JSON.stringify({ type: 'event_msg', payload: { type: 'task_started', turn_id: 't2' } }),
+      JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'follow up' }] } }),
+      '',
+      'not json',
+    ].join('\n')
+    expect(countSessionUserMessages(log)).toBe(2)
+  })
+
+  it('returns 0 for an empty or malformed log', () => {
+    expect(countSessionUserMessages('')).toBe(0)
+    expect(countSessionUserMessages('not json\n{invalid')).toBe(0)
   })
 })

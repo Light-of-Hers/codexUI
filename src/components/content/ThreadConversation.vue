@@ -766,7 +766,7 @@
         @click="toggleMessageNavigation"
       >
         <span class="message-nav-toggle-label">User messages</span>
-        <span class="message-nav-count">{{ isMessageNavigationLoading && userMessageNavigationItems.length === 0 ? '…' : userMessageNavigationItems.length }}</span>
+        <span class="message-nav-count">{{ messageNavigationCountLabel }}</span>
         <IconTablerChevronDown class="message-nav-chevron" />
       </button>
 
@@ -778,15 +778,7 @@
       >
         <div class="message-nav-header">
           <span>User messages</span>
-          <span>
-            {{
-              isMessageNavigationLoading
-                ? (userMessageNavigationItems.length > 0
-                  ? `Loading earlier… (${userMessageNavigationItems.length} so far)`
-                  : 'Loading…')
-                : `${userMessageNavigationItems.length} total`
-            }}
-          </span>
+          <span>{{ messageNavigationHeaderStatus }}</span>
         </div>
         <ul ref="messageNavigationListRef" class="message-nav-list" @scroll="onMessageNavigationScroll">
           <li v-if="isMessageNavigationLoading && userMessageNavigationItems.length === 0" class="message-nav-empty">
@@ -1689,6 +1681,8 @@ const props = defineProps<{
   loadEarlierMessages?: (threadId: string) => Promise<void>
   ensureMessageLoaded?: (threadId: string, messageId: string) => Promise<void>
   ensureFullHistoryLoaded?: (threadId: string) => Promise<void>
+  userMessageNavigationTotal?: number | null
+  ensureUserMessageNavigationTotal?: (threadId: string) => void
 }>()
 
 const emit = defineEmits<{
@@ -1701,6 +1695,32 @@ const emit = defineEmits<{
 const messageNavigationSourceMessages = computed(() => props.messageNavigationMessages ?? props.messages)
 const userMessageNavigationItems = computed(() => buildUserMessageNavigationItems(messageNavigationSourceMessages.value))
 const isMessageNavigationLoading = computed(() => props.isMessageNavigationLoading === true)
+const messageNavigationCountLabel = computed(() => {
+  const loaded = userMessageNavigationItems.value.length
+  const totalProp = props.userMessageNavigationTotal
+  const total = typeof totalProp === 'number' && totalProp >= 0 ? Math.max(totalProp, loaded) : null
+  if (total !== null) return total
+  if (isMessageNavigationLoading.value && loaded === 0) return '…'
+  return loaded
+})
+const messageNavigationHeaderStatus = computed(() => {
+  const loaded = userMessageNavigationItems.value.length
+  const totalProp = props.userMessageNavigationTotal
+  const total = typeof totalProp === 'number' && totalProp >= 0 ? totalProp : null
+  // Prefer the authoritative session-file count when it is known.
+  const totalKnown = total !== null ? Math.max(total, loaded) : null
+  if (isMessageNavigationLoading.value) {
+    if (totalKnown !== null) {
+      return loaded > 0
+        ? `Loading earlier… (${loaded} of ${totalKnown} loaded)`
+        : `Loading… (${totalKnown} total)`
+    }
+    return loaded > 0
+      ? `Loading earlier… (${loaded} so far)`
+      : 'Loading…'
+  }
+  return `${totalKnown ?? loaded} total`
+})
 const messageNavigationViewportRowCount = computed(() => {
   const height = messageNavigationListRef.value?.clientHeight ?? 352
   return Math.max(1, Math.ceil(height / MESSAGE_NAV_ITEM_HEIGHT_PX))
@@ -5209,12 +5229,16 @@ function toggleMessageNavigation(): void {
   isMessageNavigationOpen.value = !isMessageNavigationOpen.value
   if (isMessageNavigationOpen.value) {
     scrollMessageNavigationToBottom()
+    const threadId = props.activeThreadId
     // Kick off the full-history load so the dropdown eventually shows every
     // user message, not just the ones currently in the main view window.
     const ensureFull = props.ensureFullHistoryLoaded
-    const threadId = props.activeThreadId
     if (ensureFull && threadId) {
       void ensureFull(threadId).catch(() => {})
+    }
+    // Ensure the total is ready so the "N total" label is not blank.
+    if (threadId && props.ensureUserMessageNavigationTotal) {
+      props.ensureUserMessageNavigationTotal(threadId)
     }
   }
 }
@@ -5583,7 +5607,7 @@ watch(
 
 watch(
   () => props.activeThreadId,
-  async () => {
+  async (threadId) => {
     autoFollowOutput.value = true
     modalImageUrl.value = ''
     closeMessageNavigation()
@@ -5594,6 +5618,11 @@ watch(
     expandedResponseSourceIds.value = new Set()
     // Apply immediately for cached threads where isLoading never toggles.
     setRenderWindowToLatest()
+    // Warm the user-message total so the dropdown can show it the moment the
+    // user opens the panel, without waiting for the full history load.
+    if (threadId && props.ensureUserMessageNavigationTotal) {
+      props.ensureUserMessageNavigationTotal(threadId)
+    }
     await scheduleConversationScroll()
   },
   { flush: 'post' },
@@ -5623,6 +5652,11 @@ onMounted(() => {
   window.addEventListener('pointerdown', onWindowPointerDownForFileLinkContextMenu)
   window.addEventListener('blur', onWindowBlurForFileLinkContextMenu)
   window.addEventListener('keydown', onWindowKeydownForFileLinkContextMenu)
+  // Warm the user-message total so the dropdown shows it immediately.
+  const threadId = props.activeThreadId
+  if (threadId && props.ensureUserMessageNavigationTotal) {
+    props.ensureUserMessageNavigationTotal(threadId)
+  }
 })
 
 onBeforeUnmount(() => {

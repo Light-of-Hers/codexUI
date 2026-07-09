@@ -1032,6 +1032,21 @@ export async function getThreadTurnWindow(threadId: string, centerTurnId: string
   }
 }
 
+export async function getThreadUserMessageCount(threadId: string): Promise<number> {
+  try {
+    const params = new URLSearchParams({ threadId })
+    const response = await fetch(`/codex-api/thread-user-message-count?${params.toString()}`)
+    if (!response.ok) {
+      throw new Error(`Thread user message count request failed with ${response.status}`)
+    }
+    const payload = await response.json() as { count?: unknown }
+    const count = typeof payload.count === 'number' ? payload.count : 0
+    return Math.max(0, Math.floor(count))
+  } catch (error) {
+    throw normalizeCodexApiError(error, `Failed to count user messages for thread ${threadId}`, 'thread/read')
+  }
+}
+
 export async function getFullThreadMessages(threadId: string): Promise<ThreadTurnPage> {
   try {
     const params = new URLSearchParams({ threadId })
