@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process'
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
+import { realpathSync } from 'node:fs'
 
 const MAX_VERSION_BYTES = 2 * 1024 * 1024
 const HISTORY_LIMIT = 30
@@ -235,12 +236,13 @@ export async function getLocalBrowseGitDiff(
   requestedBase = 'index',
   requestedCompare = 'worktree',
 ): Promise<GitFileDiff> {
-  const gitRoot = await requireGitRoot(localPath)
-  const gitPath = relativeGitPath(gitRoot, localPath)
+  const realLocalPath = realpathSync(localPath)
+  const gitRoot = await requireGitRoot(realLocalPath)
+  const gitPath = relativeGitPath(gitRoot, realLocalPath)
   const [versions, baseContent, compareContent] = await Promise.all([
     listVersions(gitRoot, gitPath),
-    readVersionContent(gitRoot, gitPath, localPath, requestedBase),
-    readVersionContent(gitRoot, gitPath, localPath, requestedCompare),
+    readVersionContent(gitRoot, gitPath, realLocalPath, requestedBase),
+    readVersionContent(gitRoot, gitPath, realLocalPath, requestedCompare),
   ])
   const allowedVersionIds = new Set(versions.map((version) => version.id))
   if (!allowedVersionIds.has(requestedBase) || !allowedVersionIds.has(requestedCompare)) {
