@@ -1,10 +1,14 @@
 import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
+import { execFile as execFileCallback } from 'node:child_process'
+import { promisify } from 'node:util'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Server as HttpServer } from 'node:http'
 import { existsSync } from 'node:fs'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createServer } from './httpServer'
+
+const execFile = promisify(execFileCallback)
 
 let tempDir = ''
 let httpServer: HttpServer | null = null
@@ -49,6 +53,10 @@ async function startServer(): Promise<string> {
   }
 
   return `http://127.0.0.1:${String(address.port)}`
+}
+
+async function runGit(cwd: string, ...args: string[]): Promise<void> {
+  await execFile('git', args, { cwd })
 }
 
 describe('local browse redirect behavior', () => {
@@ -158,5 +166,56 @@ describe('local browse file mutations', () => {
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual({ ok: true })
     expect(existsSync(dirPath)).toBe(false)
+  })
+})
+
+describe('local browse Git file diff', () => {
+  it('compares staged, unstaged, and commit versions of a file', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'codexui-http-server-git-diff-'))
+    const filePath = join(tempDir, 'note.txt')
+    await runGit(tempDir, 'init')
+    await runGit(tempDir, 'config', 'user.email', 'test@example.com')
+    await runGit(tempDir, 'config', 'user.name', 'Test User')
+    await writeFile(filePath, 'first version\n', 'utf8')
+    await runGit(tempDir, 'add', 'note.txt')
+    await runGit(tempDir, 'commit', '-m', 'add note')
+    await writeFile(filePath, 'staged version\n', 'utf8')
+    await runGit(tempDir, 'add', 'note.txt')
+    await writeFile(filePath, 'unstaged version\n', 'utf8')
+
+    const baseUrl = await startServer()
+    const stagedResponse = await fetch(`${baseUrl}/codex-local-git-diff${encodeURI(filePath)}?base=index&compare=worktree`)
+    expect(stagedResponse.status).toBe(200)
+    const stagedPayload = await stagedResponse.json() as { data: { baseContent: string; compareContent: string; diff: string; rows: Array<{ kind: string; oldLine: number | null; newLine: number | null; oldText: string; newText: string }>; versions: Array<{ id: string }> } }
+    expect(stagedPayload.data.diff).toContain('-staged version')
+    expect(stagedPayload.data.diff).toContain('+unstaged version')
+    expect(stagedPayload.data.baseContent).toBe('staged version\n')
+    expect(stagedPayload.data.compareContent).toBe('unstaged version\n')
+    expect(stagedPayload.data.rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'change', oldLine: 1, newLine: 1, oldText: 'staged version', newText: 'unstaged version' }),
+    ]))
+    expect(stagedPayload.data.versions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'worktree' }),
+      expect.objectContaining({ id: 'index' }),
+    ]))
+    const commitVersion = stagedPayload.data.versions.find((version) => version.id.startsWith('commit:'))
+    expect(commitVersion).toBeDefined()
+
+    const historyResponse = await fetch(`${baseUrl}/codex-local-git-diff${encodeURI(filePath)}?base=${encodeURIComponent(commitVersion?.id ?? '')}&compare=index`)
+    expect(historyResponse.status).toBe(200)
+    const historyPayload = await historyResponse.json() as { data: { diff: string } }
+    expect(historyPayload.data.diff).toContain('-first version')
+    expect(historyPayload.data.diff).toContain('+staged version')
+  })
+
+  it('rejects Git diffs outside a repository', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'codexui-http-server-no-git-diff-'))
+    const filePath = join(tempDir, 'note.txt')
+    await writeFile(filePath, 'plain text\n', 'utf8')
+
+    const baseUrl = await startServer()
+    const response = await fetch(`${baseUrl}/codex-local-git-diff${encodeURI(filePath)}`)
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual({ error: 'This file is not inside a Git repository.' })
   })
 })

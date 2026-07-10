@@ -135,6 +135,7 @@ describe('local browse markdown preview', () => {
     const inlineScript = markdownEditorHtml.match(/<script>\s*([\s\S]*?)\s*<\/script>\s*<\/body>/u)?.[1] ?? ''
     expect(inlineScript).toContain('const saveBtn = document.getElementById')
     expect(() => new Function(inlineScript)).not.toThrow()
+    expect(inlineScript.indexOf('let lineWrapEnabled = true;')).toBeLessThan(inlineScript.indexOf('editor.session.setUseWrapMode(lineWrapEnabled);'))
     const referenceHelperIndex = markdownEditorHtml.indexOf('const createEditorReferenceText =')
     expect(referenceHelperIndex).toBeGreaterThan(-1)
     expect(referenceHelperIndex).toBeLessThan(markdownEditorHtml.indexOf('return createEditorReferenceText('))
@@ -211,6 +212,70 @@ describe('local browse markdown preview', () => {
     expect(editorHtml).toContain('event.stopPropagation()')
     expect(editorHtml).toContain('capture: true')
     expect(editorHtml).toContain('saveEditorContent();')
+  })
+
+  it('handles non-JSON Git diff responses with an actionable error', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'codexui-local-git-diff-editor-'))
+    const textPath = join(tempDir, 'note.txt')
+    await writeFile(textPath, 'hello\n', 'utf8')
+
+    const editorHtml = await createTextEditorHtml(textPath)
+
+    expect(editorHtml).toContain("const responseText = await response.text();")
+    expect(editorHtml).toContain('payload = JSON.parse(responseText);')
+    expect(editorHtml).toContain('Restart CodexUI to load the latest server routes.')
+  })
+
+  it('renders side-by-side read-only Git version editors with copyable references', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'codexui-local-git-diff-view-'))
+    const textPath = join(tempDir, 'note.txt')
+    await writeFile(textPath, 'hello\n', 'utf8')
+
+    const editorHtml = await createTextEditorHtml(textPath)
+
+    expect(editorHtml).toContain('id="gitDiffBaseEditor"')
+    expect(editorHtml).toContain('id="gitDiffCompareEditor"')
+    expect(editorHtml).toContain("gitDiffBaseEditor = ace.edit('gitDiffBaseEditor')")
+    expect(editorHtml).toContain('readOnly: true')
+    expect(editorHtml).toContain('baseContent || \'\'')
+    expect(editorHtml).toContain('compareContent || \'\'')
+    expect(editorHtml).toContain('copyActiveGitDiffReference')
+    expect(editorHtml).toContain('activeGitDiffEditor.getSelectionRange()')
+    expect(editorHtml).toContain("data.base === 'worktree'")
+    expect(editorHtml).toContain("data.compare === 'worktree'")
+    expect(editorHtml).toContain('gitDiffBaseEditor.setReadOnly(!baseEditable)')
+    expect(editorHtml).toContain('gitDiffCompareEditor.setReadOnly(!compareEditable)')
+    expect(editorHtml).toContain('const saveActiveGitDiffEditor = async () =>')
+    expect(editorHtml).toContain('Saved working tree and refreshed Git diff')
+    expect(editorHtml).toContain('git-diff-added-line')
+    expect(editorHtml).toContain('git-diff-removed-line')
+    expect(editorHtml).toContain('git-diff-empty-line')
+    expect(editorHtml).toContain('const aligned = [];')
+    expect(editorHtml).toContain('aligned.map((row) => row.baseText)')
+    expect(editorHtml).toContain('aligned.map((row) => row.compareText)')
+    expect(editorHtml).toContain('gitDiffAlignedRows = aligned')
+    expect(editorHtml).toContain('row.baseLine !== null : row.compareLine !== null')
+  })
+
+  it('embeds Git diff beside the editor with matching wrap and range copy controls', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'codexui-local-git-diff-split-'))
+    const textPath = join(tempDir, 'note.txt')
+    await writeFile(textPath, 'hello\n', 'utf8')
+
+    const editorHtml = await createTextEditorHtml(textPath)
+
+    expect(editorHtml).toContain('id="wrapBtn"')
+    expect(editorHtml).toContain('editor.session.setUseWrapMode(lineWrapEnabled)')
+    expect(editorHtml).toContain('editor-shell[data-diff="true"] .git-diff-panel')
+    expect(editorHtml).toContain('id="copyGitDiffRefBtn"')
+    expect(editorHtml).toContain('gitDiffBaseEditor.session.setUseWrapMode(lineWrapEnabled)')
+    expect(editorHtml).toContain('gitDiffCompareEditor.session.setUseWrapMode(lineWrapEnabled)')
+    expect(editorHtml).toContain('const syncGitDiffScroll = (sourceEditor, targetEditor) =>')
+    expect(editorHtml).toContain('targetEditor.session.setScrollTop(sourceEditor.session.getScrollTop())')
+    expect(editorHtml).toContain("gitDiffBaseEditor.session.on('changeScrollTop'")
+    expect(editorHtml).toContain("gitDiffCompareEditor.session.on('changeScrollTop'")
+    expect(editorHtml).toContain('if (previewVisible) setPreviewVisible(false)')
+    expect(editorHtml).toContain('setGitDiffVisible(false);')
   })
 
   it('renders markdown preview HTML with local links, images, and code blocks', () => {

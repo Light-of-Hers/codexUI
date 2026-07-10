@@ -2,6 +2,7 @@ import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 import { createCodexBridgeMiddleware } from "./src/server/codexAppServerBridge";
 import { LocalBrowseMutationError, createDirectoryListingHtml, createLocalBrowseEntry, createMarkdownPreviewHtml, createTextEditorHtml, decodeBrowsePath, deleteLocalBrowseEntry, getLocalDirectoryListing, isTextEditableFile, normalizeLocalPath, toEditHref } from "./src/server/localBrowseUi";
+import { LocalBrowseGitError, getLocalBrowseGitDiff } from "./src/server/localBrowseGit";
 import { getKatexAssetContentType, KATEX_ASSET_ROUTE, resolveKatexAssetPath } from "./src/server/katexAssets";
 import tailwindcss from "@tailwindcss/vite";
 import { spawnSync } from "node:child_process";
@@ -308,6 +309,26 @@ export default defineConfig({
             res.statusCode = 404;
             res.setHeader("Content-Type", "application/json");
             res.end(JSON.stringify({ error: "Directory not found." }));
+          }
+        });
+        server.middlewares.use(async (req, res, next) => {
+          if (!req.url || (req.method !== "GET" && req.method !== "HEAD")) return next();
+          const url = new URL(req.url, "http://localhost");
+          if (!url.pathname.startsWith("/codex-local-git-diff/")) return next();
+
+          const localPath = decodeBrowsePath(url.pathname.slice("/codex-local-git-diff".length));
+          if (!localPath || !isAbsolute(localPath)) {
+            sendJson(res, 400, { error: "Expected absolute local file path." });
+            return;
+          }
+
+          const base = url.searchParams.get("base") ?? "index";
+          const compare = url.searchParams.get("compare") ?? "worktree";
+          try {
+            sendJson(res, 200, { data: await getLocalBrowseGitDiff(localPath, base, compare) });
+          } catch (error) {
+            const gitError = error instanceof LocalBrowseGitError ? error : null;
+            sendJson(res, gitError?.statusCode ?? 500, { error: gitError?.message ?? "Could not load the Git file diff." });
           }
         });
         server.middlewares.use(async (req, res, next) => {

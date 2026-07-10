@@ -7,6 +7,7 @@ import express, { type Express } from 'express'
 import { createCodexBridgeMiddleware } from './codexAppServerBridge.js'
 import { createAuthSession } from './authMiddleware.js'
 import { LocalBrowseMutationError, createDirectoryListingHtml, createLocalBrowseEntry, createMarkdownPreviewHtml, createTextEditorHtml, decodeBrowsePath, deleteLocalBrowseEntry, getLocalDirectoryListing, isTextEditableFile, normalizeLocalPath, toEditHref } from './localBrowseUi.js'
+import { LocalBrowseGitError, getLocalBrowseGitDiff } from './localBrowseGit.js'
 import { getKatexAssetContentType, KATEX_ASSET_ROUTE, resolveKatexAssetPath } from './katexAssets.js'
 import { WebSocketServer, type WebSocket } from 'ws'
 
@@ -298,6 +299,24 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
       res.status(200).json({ ok: true })
     } catch {
       res.status(404).json({ error: 'File not found.' })
+    }
+  })
+
+  app.get('/codex-local-git-diff/*path', async (req, res) => {
+    const rawPath = readWildcardPathParam(req.params.path)
+    const localPath = decodeBrowsePath(`/${rawPath}`)
+    if (!localPath || !isAbsolute(localPath)) {
+      res.status(400).json({ error: 'Expected absolute local file path.' })
+      return
+    }
+
+    const base = typeof req.query.base === 'string' ? req.query.base : 'index'
+    const compare = typeof req.query.compare === 'string' ? req.query.compare : 'worktree'
+    try {
+      res.status(200).json({ data: await getLocalBrowseGitDiff(localPath, base, compare) })
+    } catch (error) {
+      const gitError = error instanceof LocalBrowseGitError ? error : null
+      res.status(gitError?.statusCode ?? 500).json({ error: gitError?.message ?? 'Could not load the Git file diff.' })
     }
   })
 

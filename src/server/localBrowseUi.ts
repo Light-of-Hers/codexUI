@@ -1662,6 +1662,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
   const supportsMarkdownPreview = isMarkdownPath(localPath)
   const escapedEditorPath = escapeForInlineScriptString(localPath)
   const copyReferenceButton = `<button id="copyRefBtn" type="button">Copy ref</button>`
+  const gitDiffButton = '<button id="gitDiffBtn" type="button">Git diff</button>'
   const previewButton = supportsMarkdownPreview
     ? '<button id="previewBtn" type="button" aria-pressed="false">Preview</button>'
     : ''
@@ -1777,6 +1778,25 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     button[aria-pressed="true"] { border-color: var(--status-fg); color: var(--status-fg); }
     .lang-label { font-size: 12px; color: var(--control-fg); white-space: nowrap; }
     .lang-select { background: var(--control-bg); color: var(--control-fg); border: 1px solid var(--control-border); border-radius: 6px; padding: 5px 8px; font: inherit; font-size: 13px; cursor: pointer; max-width: 60vw; }
+    .git-diff-panel { display: none; min-width: 0; flex: 1 1 0; flex-direction: column; background: var(--page-bg); }
+    .git-diff-panel[hidden] { display: none; }
+    .editor-shell[data-diff="true"] .git-diff-panel { display: flex; }
+    .editor-shell[data-diff="true"] #editor, .editor-shell[data-diff="true"] .preview-splitter, .editor-shell[data-diff="true"] .preview-pane { display: none; }
+    .git-diff-card { min-height: 0; flex: 1; display: flex; flex-direction: column; gap: 10px; padding: 12px; background: var(--toolbar-bg); }
+    .git-diff-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .git-diff-title { margin: 0; font-size: 16px; }
+    .git-diff-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .git-diff-label { font-size: 12px; color: var(--preview-status-fg); }
+    .git-diff-select { min-width: min(360px, 44vw); max-width: 100%; background: var(--control-bg); color: var(--control-fg); border: 1px solid var(--control-border); border-radius: 6px; padding: 6px 8px; font: inherit; }
+    .git-diff-editors { min-height: 0; flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); border: 1px solid var(--toolbar-border); border-radius: 6px; overflow: hidden; }
+    .git-diff-editor-pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+    .git-diff-editor-pane + .git-diff-editor-pane { border-left: 1px solid var(--toolbar-border); }
+    .git-diff-pane-title { padding: 6px 10px; color: var(--preview-status-fg); background: var(--ace-gutter-bg); border-bottom: 1px solid var(--toolbar-border); font-size: 12px; font-weight: 600; }
+    .git-diff-legend { display: inline-flex; gap: 8px; margin-left: auto; font-size: 12px; font-weight: 400; }
+    .git-diff-legend span { padding: 1px 5px; border-radius: 3px; }
+    .git-diff-legend .added { color: var(--syntax-addition-fg); background: var(--syntax-addition-bg); }
+    .git-diff-legend .removed { color: var(--syntax-deletion-fg); background: var(--syntax-deletion-bg); }
+    .git-diff-editor { min-height: 0; flex: 1; }
     .floating-highlight-action {
       position: fixed;
       z-index: 50;
@@ -1858,6 +1878,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       flex: 0 0 calc(var(--preview-editor-ratio) * 100%);
       width: calc(var(--preview-editor-ratio) * 100%);
     }
+    .editor-shell[data-diff="true"] .preview-pane { display: none; }
     .preview-splitter {
       display: none;
       flex: 0 0 12px;
@@ -1884,7 +1905,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     }
     .preview-pane { flex: 1 1 0; min-width: 320px; border: 0; border-left: 1px solid var(--toolbar-border); background: var(--page-bg); }
     .editor-shell[data-preview="false"] .preview-pane { display: none; }
-    .editor-shell[data-preview="false"] .preview-splitter { display: none; }
+    .editor-shell[data-preview="false"][data-diff="false"] .preview-splitter { display: none; }
     .editor-shell[data-preview="true"] .preview-splitter { display: block; }
     #status { margin-left: 8px; color: var(--status-fg); }
     #previewStatus { color: var(--preview-status-fg); font-size: 12px; }
@@ -1897,6 +1918,12 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     .ace_marker-layer .ace_active-line { background: var(--ace-active-line) !important; }
     .ace_marker-layer .ace_selection { background: var(--ace-selection) !important; }
     .ace_marker-layer .ace_selected-word { border: 1px solid var(--ace-selected-word-border) !important; }
+    .ace_marker-layer .git-diff-added-line { position: absolute; background: var(--syntax-addition-bg); }
+    .ace_marker-layer .git-diff-removed-line { position: absolute; background: var(--syntax-deletion-bg); }
+    .ace_marker-layer .git-diff-empty-line { position: absolute; background: repeating-linear-gradient(45deg, var(--toolbar-border), var(--toolbar-border) 3px, transparent 3px, transparent 6px); }
+    .ace_gutter-cell.git-diff-empty-gutter { color: var(--ace-invisible); opacity: 0.5; }
+    .ace_gutter-cell.git-diff-added-gutter { box-shadow: inset 3px 0 0 var(--syntax-addition-fg); }
+    .ace_gutter-cell.git-diff-removed-gutter { box-shadow: inset 3px 0 0 var(--syntax-deletion-fg); }
     .ace_marker-layer .ace_bracket { border: 1px solid var(--ace-bracket-border) !important; margin: -1px 0 0 -1px; }
     .ace_invisible { color: var(--ace-invisible) !important; }
     .ace_print-margin { background: var(--toolbar-border) !important; }
@@ -1960,7 +1987,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
         height: 12px;
         cursor: row-resize;
       }
-      .editor-shell[data-preview="true"] .preview-splitter::before {
+      .editor-shell[data-preview="true"] .preview-splitter::before, .editor-shell[data-diff="true"] .preview-splitter::before {
         top: 50%;
         bottom: auto;
         left: 0;
@@ -1969,6 +1996,8 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
         transform: translateY(-50%);
       }
       .preview-pane { width: 100%; min-width: 0; min-height: 240px; border-left: 0; border-top: 1px solid var(--toolbar-border); }
+      .git-diff-editors { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(240px, 1fr) minmax(240px, 1fr); }
+      .git-diff-editor-pane + .git-diff-editor-pane { border-top: 1px solid var(--toolbar-border); border-left: 0; }
       .ace_editor, .ace_editor * { font-weight: var(--editor-font-weight) !important; font-synthesis: none; }
     }
   </style>
@@ -1979,7 +2008,9 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       <a href="${escapeHtml(toBrowseHref(parentPath))}">Back</a>
       <button id="saveBtn" type="button">Save</button>
       ${copyReferenceButton}
+      ${gitDiffButton}
       ${previewButton}
+      <button id="wrapBtn" type="button" aria-pressed="true">Wrap lines</button>
       ${languageSelect}
       <span id="status"></span>
       <span id="previewStatus"></span>
@@ -1989,6 +2020,14 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
   <div id="editorShell" class="editor-shell" data-preview="false">
     <div id="editor"></div>
     ${previewPane}
+    <section id="gitDiffPanel" class="git-diff-panel" aria-label="Git file diff" hidden>
+      <div class="git-diff-card">
+        <div class="git-diff-header"><h2 id="gitDiffTitle" class="git-diff-title">Git diff</h2><span class="git-diff-legend"><span class="removed">Removed / changed</span><span class="added">Added / changed</span></span><button id="closeGitDiffBtn" type="button">Close</button></div>
+        <div class="git-diff-controls"><label class="git-diff-label" for="gitDiffBase">From</label><select id="gitDiffBase" class="git-diff-select"></select><label class="git-diff-label" for="gitDiffCompare">To</label><select id="gitDiffCompare" class="git-diff-select"></select><button id="copyGitDiffRefBtn" type="button">Copy ref</button></div>
+        <div id="gitDiffStatus" class="meta" aria-live="polite"></div>
+        <div class="git-diff-editors"><section class="git-diff-editor-pane"><div id="gitDiffBaseTitle" class="git-diff-pane-title">From</div><div id="gitDiffBaseEditor" class="git-diff-editor"></div></section><section class="git-diff-editor-pane"><div id="gitDiffCompareTitle" class="git-diff-pane-title">To</div><div id="gitDiffCompareEditor" class="git-diff-editor"></div></section></div>
+      </div>
+    </section>
   </div>
   ${floatingHighlightControls}
   <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.36.2/ace.js"></script>
@@ -1997,6 +2036,16 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     const langSelect = document.getElementById('langSelect');
     const languageLabel = document.getElementById('languageLabel');
     const copyRefBtn = document.getElementById('copyRefBtn');
+    const wrapBtn = document.getElementById('wrapBtn');
+    const gitDiffBtn = document.getElementById('gitDiffBtn');
+    const gitDiffPanel = document.getElementById('gitDiffPanel');
+    const closeGitDiffBtn = document.getElementById('closeGitDiffBtn');
+    const gitDiffBase = document.getElementById('gitDiffBase');
+    const gitDiffCompare = document.getElementById('gitDiffCompare');
+    const gitDiffStatus = document.getElementById('gitDiffStatus');
+    const gitDiffBaseTitle = document.getElementById('gitDiffBaseTitle');
+    const gitDiffCompareTitle = document.getElementById('gitDiffCompareTitle');
+    const copyGitDiffRefBtn = document.getElementById('copyGitDiffRefBtn');
     const previewBtn = document.getElementById('previewBtn');
     const floatingSelectionActions = document.getElementById('floatingSelectionActions');
     const floatingHighlightBtn = document.getElementById('floatingHighlightBtn');
@@ -2023,6 +2072,19 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     const previewFrame = document.getElementById('previewFrame');
     const supportsMarkdownPreview = ${supportsMarkdownPreview ? 'true' : 'false'};
     const editorReferencePath = ${escapedEditorPath};
+    const gitDiffPath = '/codex-local-git-diff' + encodeURI(editorReferencePath);
+    let lineWrapEnabled = true;
+    let diffVisible = false;
+    let gitDiffBaseEditor = null;
+    let gitDiffCompareEditor = null;
+    let gitDiffBaseMarkers = [];
+    let gitDiffCompareMarkers = [];
+    let gitDiffAlignedRows = [];
+    let gitDiffBaseRawContent = '';
+    let gitDiffCompareRawContent = '';
+    let gitDiffBaseVersionId = '';
+    let gitDiffCompareVersionId = '';
+    let gitDiffVersions = [];
     const editor = ace.edit('editor');
     const editorFontFamily = '"CodexLocalEditorLatin", "SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Roboto Mono", "Droid Sans Mono", "Courier New", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif';
     editor.container.classList.add('ace_nobold');
@@ -2048,6 +2110,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       tabSize: 2,
       behavioursEnabled: true,
     });
+    editor.session.setUseWrapMode(lineWrapEnabled);
     editor.resize();
 
     if (langSelect) {
@@ -2158,6 +2221,8 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       if (!editorShell) return false;
       return window.getComputedStyle(editorShell).flexDirection === 'column';
     };
+
+    const isSplitPaneVisible = () => previewVisible || diffVisible;
 
     const getPreviewSplitStorageKey = () => {
       return isStackedPreviewLayout()
@@ -2273,7 +2338,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
 
     const startPreviewDrag = (startEvent) => {
       const primaryPointer = startEvent.button === 0 || startEvent.pointerType === 'touch' || startEvent.pointerType === 'pen';
-      if (!supportsMarkdownPreview || !previewVisible || !editorShell || !previewSplitter || !primaryPointer) return;
+      if (!isSplitPaneVisible() || !editorShell || !previewSplitter || !primaryPointer) return;
       startEvent.preventDefault();
       startEvent.stopPropagation();
       previewSplitter.classList.add('is-dragging');
@@ -2349,6 +2414,39 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       const range = normalizeReferenceLineRange()
       return createEditorReferenceText(editorReferencePath, range.startLine, range.endLine)
     };
+
+    const setLineWrapEnabled = (enabled, persist = true) => {
+      lineWrapEnabled = Boolean(enabled);
+      editor.session.setUseWrapMode(lineWrapEnabled);
+      if (gitDiffBaseEditor && gitDiffCompareEditor) {
+        gitDiffBaseEditor.session.setUseWrapMode(lineWrapEnabled);
+        gitDiffCompareEditor.session.setUseWrapMode(lineWrapEnabled);
+      }
+      if (wrapBtn) {
+        wrapBtn.setAttribute('aria-pressed', lineWrapEnabled ? 'true' : 'false');
+        wrapBtn.textContent = lineWrapEnabled ? 'Wrap lines' : 'No wrap';
+      }
+      if (persist) {
+        try { window.localStorage.setItem('codex.localBrowse.lineWrap.v1:' + editorReferencePath, lineWrapEnabled ? 'true' : 'false'); } catch {}
+      }
+      window.requestAnimationFrame(() => {
+        editor.resize();
+        if (gitDiffBaseEditor && gitDiffCompareEditor) {
+          gitDiffBaseEditor.resize();
+          gitDiffCompareEditor.resize();
+        }
+      });
+    };
+
+    try {
+      setLineWrapEnabled(window.localStorage.getItem('codex.localBrowse.lineWrap.v1:' + editorReferencePath) !== 'false', false);
+    } catch {
+      setLineWrapEnabled(true, false);
+    }
+
+    if (wrapBtn) {
+      wrapBtn.addEventListener('click', () => setLineWrapEnabled(!lineWrapEnabled));
+    }
 
     const writeTextToClipboard = async (text) => {
       if (!text) return false;
@@ -3871,7 +3969,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       detachPreviewScrollSync();
       if (scrollState) {
         previewFrame.addEventListener('load', () => {
-          if (loadToken !== previewLoadToken || !previewVisible) return;
+        if (loadToken !== previewLoadToken || !previewVisible) return;
           window.requestAnimationFrame(() => {
             if (loadToken !== previewLoadToken || !previewVisible) return;
             suppressPreviewScrollSync();
@@ -3952,6 +4050,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       previewBtn.setAttribute('aria-pressed', visible ? 'true' : 'false');
       previewBtn.textContent = visible ? 'Hide Preview' : 'Preview';
       if (visible) {
+        setGitDiffVisible(false);
         pendingPreviewEditorSync = true;
         syncPreviewEditorRatio(false);
       } else {
@@ -3998,14 +4097,30 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       }
     }
 
+    function setGitDiffVisible(visible) {
+      if (!editorShell || !gitDiffPanel || !gitDiffBtn) return;
+      diffVisible = visible;
+      editorShell.dataset.diff = visible ? 'true' : 'false';
+      gitDiffPanel.hidden = !visible;
+      if (previewSplitter) previewSplitter.hidden = !visible;
+      gitDiffBtn.setAttribute('aria-pressed', visible ? 'true' : 'false');
+      gitDiffBtn.textContent = visible ? 'Hide Git diff' : 'Git diff';
+      if (visible) {
+        syncPreviewEditorRatio(false);
+      } else {
+        stopPreviewDrag();
+      }
+      window.requestAnimationFrame(() => editor.resize());
+    }
+
     if (previewSplitter) {
       previewSplitter.addEventListener('pointerdown', startPreviewDrag);
       previewSplitter.addEventListener('dblclick', () => {
-        if (!supportsMarkdownPreview || !previewVisible) return;
+        if (!isSplitPaneVisible()) return;
         applyPreviewEditorRatio(defaultPreviewEditorRatio, true);
       });
       previewSplitter.addEventListener('keydown', (event) => {
-        if (!supportsMarkdownPreview || !previewVisible) return;
+        if (!isSplitPaneVisible()) return;
         const key = event.key;
         const stacked = isStackedPreviewLayout();
         const shrinkKey = stacked ? 'ArrowUp' : 'ArrowLeft';
@@ -4027,7 +4142,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     }
 
     window.addEventListener('resize', () => {
-      if (!supportsMarkdownPreview || !previewVisible) return;
+      if (!isSplitPaneVisible()) return;
       syncPreviewEditorRatio(false);
       hideFloatingHighlightActions();
     });
@@ -4157,9 +4272,15 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       hideFloatingHighlightActions();
     });
 
-    if (copyRefBtn) {
-      copyRefBtn.addEventListener('click', async () => {
-        const referenceText = buildReferenceText();
+   if (copyRefBtn) {
+     copyRefBtn.addEventListener('click', async () => {
+        if (diffVisible) {
+          copyRefBtn.disabled = true;
+          try { await copyActiveGitDiffReference(); } catch { gitDiffStatus.textContent = 'Copy reference failed'; }
+          finally { copyRefBtn.disabled = false; }
+          return;
+        }
+       const referenceText = buildReferenceText();
         if (!referenceText) {
           setStatus('Reference unavailable');
           return;
@@ -4177,7 +4298,285 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       });
     }
 
+    const updateGitVersionOptions = (versions, base, compare) => {
+      const selectedBase = gitDiffBase.value || base;
+      const selectedCompare = gitDiffCompare.value || compare;
+      const options = versions.map((version) => '<option value="' + String(version.id).replace(/&/g, '&amp;').replace(/"/g, '&quot;') + '">' + String(version.label).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</option>').join('');
+      gitDiffBase.innerHTML = options;
+      gitDiffCompare.innerHTML = options;
+      gitDiffBase.value = versions.some((version) => version.id === selectedBase) ? selectedBase : base;
+      gitDiffCompare.value = versions.some((version) => version.id === selectedCompare) ? selectedCompare : compare;
+    };
+
+    gitDiffBaseEditor = ace.edit('gitDiffBaseEditor');
+    gitDiffCompareEditor = ace.edit('gitDiffCompareEditor');
+    let activeGitDiffEditor = gitDiffCompareEditor;
+    let isSyncingGitDiffScroll = false;
+    const configureGitDiffEditor = (diffEditor) => {
+      diffEditor.container.classList.add('ace_nobold');
+      diffEditor.setTheme(colorSchemeQuery.matches ? 'ace/theme/github_dark' : 'ace/theme/github');
+      diffEditor.setOptions({
+        fontSize: '13px',
+        fontFamily: editorFontFamily,
+        wrap: lineWrapEnabled,
+        showPrintMargin: false,
+        readOnly: true,
+        highlightActiveLine: true,
+        highlightGutterLine: true,
+      });
+      diffEditor.session.setUseWrapMode(lineWrapEnabled);
+      diffEditor.on('focus', () => { activeGitDiffEditor = diffEditor; });
+    };
+    const gitDiffGutterRenderer = {
+      getWidth: (session, lastLineNumber, config) => {
+        const maxLine = Math.max(1, ...gitDiffAlignedRows.map((r) => r.baseLine ?? r.compareLine ?? 0));
+        return String(maxLine).length * config.characterWidth;
+      },
+      getText: (session, row) => {
+        if (!gitDiffAlignedRows[row]) return '';
+        const editor = session === gitDiffBaseEditor.session ? gitDiffBaseEditor : gitDiffCompareEditor;
+        const lineNum = editor === gitDiffBaseEditor ? gitDiffAlignedRows[row].baseLine : gitDiffAlignedRows[row].compareLine;
+        return lineNum !== null ? String(lineNum) : '';
+      }
+    };
+    configureGitDiffEditor(gitDiffBaseEditor);
+    configureGitDiffEditor(gitDiffCompareEditor);
+
+    const syncGitDiffScroll = (sourceEditor, targetEditor) => {
+      if (!diffVisible || isSyncingGitDiffScroll) return;
+      isSyncingGitDiffScroll = true;
+      targetEditor.session.setScrollTop(sourceEditor.session.getScrollTop());
+      window.requestAnimationFrame(() => { isSyncingGitDiffScroll = false; });
+    };
+    gitDiffBaseEditor.session.on('changeScrollTop', () => syncGitDiffScroll(gitDiffBaseEditor, gitDiffCompareEditor));
+    gitDiffCompareEditor.session.on('changeScrollTop', () => syncGitDiffScroll(gitDiffCompareEditor, gitDiffBaseEditor));
+
+    const updateGitDiffEditors = (data) => {
+      const versions = data.versions || [];
+      updateGitVersionOptions(versions, data.base, data.compare);
+      const baseLabel = versions.find((version) => version.id === data.base)?.label || data.base;
+      const compareLabel = versions.find((version) => version.id === data.compare)?.label || data.compare;
+      const baseEditable = data.base === 'worktree';
+      const compareEditable = data.compare === 'worktree';
+      gitDiffBaseTitle.textContent = 'From: ' + baseLabel + (baseEditable ? ' (editable)' : '');
+      gitDiffCompareTitle.textContent = 'To: ' + compareLabel + (compareEditable ? ' (editable)' : '');
+      gitDiffBaseEditor.setReadOnly(!baseEditable);
+      gitDiffCompareEditor.setReadOnly(!compareEditable);
+      gitDiffBaseRawContent = data.baseContent || '';
+      gitDiffCompareRawContent = data.compareContent || '';
+      gitDiffBaseVersionId = data.base || '';
+      gitDiffCompareVersionId = data.compare || '';
+      gitDiffVersions = data.versions || [];
+      const aligned = [];
+      if (data.diff) {
+        let oldLine = 0;
+        let newLine = 0;
+        for (const line of data.diff.split('\\n')) {
+          if (line === '') continue;
+          const hunk = line.match(/^@@ -(\\d+)(?:,\\d+)? \\+(\\d+)(?:,\\d+)? @@/);
+          if (hunk) { oldLine = parseInt(hunk[1], 10); newLine = parseInt(hunk[2], 10); continue; }
+          if (!oldLine && !newLine) continue;
+          if (line.startsWith('-') && !line.startsWith('---')) {
+            aligned.push({ baseText: line.slice(1), compareText: '', baseLine: oldLine, compareLine: null, kind: 'remove' });
+            oldLine += 1;
+          } else if (line.startsWith('+') && !line.startsWith('+++')) {
+            aligned.push({ baseText: '', compareText: line.slice(1), baseLine: null, compareLine: newLine, kind: 'add' });
+            newLine += 1;
+          } else if (line.startsWith(' ')) {
+            aligned.push({ baseText: line.slice(1), compareText: line.slice(1), baseLine: oldLine, compareLine: newLine, kind: 'context' });
+            oldLine += 1;
+            newLine += 1;
+          }
+        }
+      }
+      if (aligned.length === 0 && data.baseContent) {
+        const baseLines = data.baseContent.split('\\n');
+        const compareLines = (data.compareContent || '').split('\\n');
+        const maxLines = Math.max(baseLines.length, compareLines.length);
+        for (let i = 0; i < maxLines; i++) {
+          aligned.push({ baseText: baseLines[i] ?? '', compareText: compareLines[i] ?? '', baseLine: i + 1, compareLine: i + 1, kind: 'context' });
+        }
+      }
+      gitDiffBaseEditor.setValue(aligned.map((row) => row.baseText).join('\\n'), -1);
+      gitDiffCompareEditor.setValue(aligned.map((row) => row.compareText).join('\\n'), -1);
+      const Range = ace.require('ace/range').Range;
+      for (const markerId of gitDiffBaseMarkers) gitDiffBaseEditor.session.removeMarker(markerId);
+      for (const markerId of gitDiffCompareMarkers) gitDiffCompareEditor.session.removeMarker(markerId);
+      gitDiffBaseMarkers = [];
+      gitDiffCompareMarkers = [];
+      gitDiffBaseEditor.session.clearBreakpoints();
+      gitDiffCompareEditor.session.clearBreakpoints();
+      aligned.forEach((row, index) => {
+        if (row.kind === 'remove' || row.kind === 'change') {
+          gitDiffBaseMarkers.push(gitDiffBaseEditor.session.addMarker(new Range(index, 0, index + 1, 0), 'git-diff-removed-line', 'fullLine'));
+          gitDiffBaseEditor.session.addGutterDecoration(index, 'git-diff-removed-gutter');
+        }
+        if (row.kind === 'add' || row.kind === 'change') {
+          gitDiffCompareMarkers.push(gitDiffCompareEditor.session.addMarker(new Range(index, 0, index + 1, 0), 'git-diff-added-line', 'fullLine'));
+          gitDiffCompareEditor.session.addGutterDecoration(index, 'git-diff-added-gutter');
+        }
+        if (row.kind === 'add') {
+          gitDiffBaseMarkers.push(gitDiffBaseEditor.session.addMarker(new Range(index, 0, index + 1, 0), 'git-diff-empty-line', 'fullLine'));
+          gitDiffBaseEditor.session.addGutterDecoration(index, 'git-diff-empty-gutter');
+        }
+        if (row.kind === 'remove') {
+          gitDiffCompareMarkers.push(gitDiffCompareEditor.session.addMarker(new Range(index, 0, index + 1, 0), 'git-diff-empty-line', 'fullLine'));
+          gitDiffCompareEditor.session.addGutterDecoration(index, 'git-diff-empty-gutter');
+        }
+      });
+      gitDiffBaseEditor.renderer.updateFull();
+      gitDiffCompareEditor.renderer.updateFull();
+      gitDiffBaseEditor.gotoLine(1, 0, false);
+      gitDiffCompareEditor.gotoLine(1, 0, false);
+      gitDiffAlignedRows = aligned;
+      gitDiffBaseEditor.session.gutterRenderer = gitDiffGutterRenderer;
+      gitDiffCompareEditor.session.gutterRenderer = gitDiffGutterRenderer;
+      gitDiffBaseEditor.renderer.$gutterLayer.update = gitDiffBaseEditor.renderer.$gutterLayer.update;
+      gitDiffStatus.textContent = baseEditable || compareEditable
+        ? 'The Unstaged version is editable. Save to refresh both versions and highlights.'
+        : 'Changed lines are highlighted; select lines in either version, then use Copy ref';
+      window.requestAnimationFrame(() => {
+        gitDiffBaseEditor.resize();
+        gitDiffCompareEditor.resize();
+      });
+    };
+
+    const loadGitDiff = async () => {
+      if (!gitDiffBase || !gitDiffCompare || !gitDiffStatus) return;
+      gitDiffStatus.textContent = 'Loading Git versions…';
+      try {
+        const params = new URLSearchParams({ base: gitDiffBase.value || 'index', compare: gitDiffCompare.value || 'worktree' });
+        const response = await fetch(gitDiffPath + '?' + params.toString(), { cache: 'no-store' });
+        const responseText = await response.text();
+        let payload;
+        try {
+          payload = JSON.parse(responseText);
+        } catch {
+          throw new Error('Git diff endpoint returned an invalid response. Restart CodexUI to load the latest server routes.');
+        }
+        if (!response.ok) throw new Error(payload && payload.error ? payload.error : 'Could not load the Git versions.');
+        updateGitDiffEditors(payload.data);
+      } catch (error) {
+        gitDiffStatus.textContent = error instanceof Error ? error.message : 'Could not load the Git versions.';
+      }
+    };
+
+    const copyActiveGitDiffReference = async () => {
+      if (!gitDiffAlignedRows || gitDiffAlignedRows.length === 0) {
+        gitDiffStatus.textContent = 'No Git diff loaded yet';
+        return;
+      }
+      const range = activeGitDiffEditor.getSelectionRange();
+      const startRow = Math.min(range.start.row, range.end.row);
+      let endRow = Math.max(range.start.row, range.end.row);
+      if (!range.isEmpty() && range.end.row > range.start.row && range.end.column === 0) endRow -= 1;
+      const isBase = activeGitDiffEditor === gitDiffBaseEditor;
+      const editorRows = gitDiffAlignedRows.map((row) => isBase ? row.baseLine : row.compareLine);
+      const findRealLine = (row) => {
+        if (row < 0 || row >= editorRows.length) return null;
+        if (editorRows[row] !== null && editorRows[row] !== undefined) return editorRows[row];
+        for (let i = row; i >= 0; i--) { if (editorRows[i] !== null && editorRows[i] !== undefined) return editorRows[i]; }
+        for (let i = row + 1; i < editorRows.length; i++) { if (editorRows[i] !== null && editorRows[i] !== undefined) return editorRows[i]; }
+        return null;
+      };
+      const realStart = findRealLine(startRow);
+      const realEnd = findRealLine(endRow);
+      if (realStart === null || realEnd === null) {
+        gitDiffStatus.textContent = 'Cannot copy reference for an empty (placeholder) line';
+        return;
+      }
+      const firstLine = Math.min(realStart, realEnd);
+      const lastLine = Math.max(realStart, realEnd);
+      const versionId = isBase ? gitDiffBaseVersionId : gitDiffCompareVersionId;
+      let suffix = '';
+      if (versionId === 'index') suffix = ' (staged)';
+      else if (versionId.startsWith('commit:')) {
+        const ver = gitDiffVersions.find((v) => v.id === versionId);
+        const shortHash = ver ? ver.label.split(' ')[0] : versionId.slice(7, 13);
+        suffix = ' @ ' + shortHash;
+      }
+      const baseRef = createEditorReferenceText(editorReferencePath, firstLine, lastLine);
+      const referenceText = baseRef + suffix;
+      await writeTextToClipboard(referenceText);
+      gitDiffStatus.textContent = 'Reference copied: ' + referenceText;
+    };
+
+    const activeGitDiffIsWorktree = () => {
+      return activeGitDiffEditor === gitDiffBaseEditor
+        ? gitDiffBase.value === 'worktree'
+        : gitDiffCompare.value === 'worktree';
+    };
+
+    const saveActiveGitDiffEditor = async () => {
+      if (!activeGitDiffIsWorktree()) {
+        gitDiffStatus.textContent = 'Select the Unstaged (working tree) version to edit and save it';
+        return false;
+      }
+      gitDiffStatus.textContent = 'Saving working tree…';
+      try {
+      const isBaseEditor = activeGitDiffEditor === gitDiffBaseEditor;
+      const editorValue = activeGitDiffEditor.getValue();
+      const editorLines = editorValue.split('\\n');
+      const filteredLines = gitDiffAlignedRows
+        .filter((row) => isBaseEditor ? row.baseLine !== null : row.compareLine !== null)
+        .map((_, filteredIndex) => {
+          let count = 0;
+          for (let i = 0; i < gitDiffAlignedRows.length; i++) {
+            const match = isBaseEditor ? gitDiffAlignedRows[i].baseLine !== null : gitDiffAlignedRows[i].compareLine !== null;
+            if (match) { if (count === filteredIndex) return editorLines[i] ?? ''; count++; }
+          }
+          return '';
+        });
+      const rawContent = isBaseEditor ? gitDiffBaseRawContent : gitDiffCompareRawContent;
+      const hasTrailingNewline = rawContent.length > 0 && rawContent.endsWith('\\n');
+      const originalContent = filteredLines.join('\\n') + (hasTrailingNewline ? '\\n' : '');
+      const response = await fetch(location.pathname, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+          body: originalContent,
+        });
+        if (!response.ok) throw new Error('Save failed');
+        editor.setValue(originalContent, -1);
+        await loadGitDiff();
+        gitDiffStatus.textContent = 'Saved working tree and refreshed Git diff';
+        return true;
+      } catch {
+        gitDiffStatus.textContent = 'Save failed';
+        return false;
+      }
+    };
+
+    if (gitDiffBtn && gitDiffPanel && closeGitDiffBtn && gitDiffBase && gitDiffCompare) {
+      gitDiffBtn.addEventListener('click', async () => {
+        if (diffVisible) {
+          setGitDiffVisible(false);
+          return;
+        }
+        if (previewVisible) setPreviewVisible(false);
+        setGitDiffVisible(true);
+        await loadGitDiff();
+        gitDiffCompareEditor.focus();
+      });
+      closeGitDiffBtn.addEventListener('click', () => {
+        setGitDiffVisible(false);
+        gitDiffBtn.focus();
+      });
+      gitDiffBase.addEventListener('change', loadGitDiff);
+      gitDiffCompare.addEventListener('change', loadGitDiff);
+      copyGitDiffRefBtn.addEventListener('click', async () => {
+        try {
+          await copyActiveGitDiffReference();
+        } catch {
+          gitDiffStatus.textContent = 'Copy reference failed';
+        }
+      });
+    }
+
     const saveEditorContent = async () => {
+      if (diffVisible) {
+        await saveActiveGitDiffEditor();
+        return;
+      }
       setStatus('Saving...');
       try {
         const response = await fetch(location.pathname, {

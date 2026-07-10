@@ -7125,3 +7125,65 @@ Markdown files opened through the local editor expose a preview button that rend
 - Remove `recordRecentlyVisitedThreadId`, the `recentlyVisitedThreadIds` ref, the LRU load/save helpers, and drop the LRU union from `pruneThreadScopedState`.
 - Drop the `preferCached` branch in `loadMessages` and revert `selectThread` to pass no options.
 - Delete `RECENT_THREAD_LRU_STORAGE_KEY` and `RECENT_THREAD_LRU_LIMIT` constants.
+
+## 本地文件编辑器 Git Diff
+
+### 前置条件
+
+- 使用一个已有 Git 历史的项目目录打开本地文件浏览器。
+- 选择一个文本文件，并准备至少一个历史提交；可额外创建 staged 与 unstaged 修改。
+
+### 操作步骤
+
+1. 在本地文件浏览器中打开该文本文件，进入文件编辑器。
+2. 点击工具栏的 **Git diff**。
+3. 确认默认比较为 `Staged (index)` 到 `Unstaged (working tree)`，并检查补丁中的新增与删除行。
+4. 确认 Diff 替换编辑器主体为两个独立只读版本编辑器：左侧 **From**、右侧 **To**。两侧各自显示所选版本的完整文件内容（而非合并补丁）；Markdown 文件打开 Diff 时，确认 Markdown 预览自动关闭。
+5. 在任一版本编辑器中选中一行或多行，点击 Diff 工具栏的 **Copy ref**，确认剪贴板得到与编辑器一致的 `${文件绝对路径}:${行号}` 或 `${文件绝对路径}:${起始行}-${结束行}`。
+7. 关闭 Diff 后，在编辑器内选择跨多行文本，点击编辑器工具栏的 **Copy ref**，确认复制同样的起止行范围。
+8. 点击 **Wrap lines** 切换换行模式：关闭时，编辑器与 Diff 长文本均可水平滚动；开启时，两者均自动换行。刷新后确认选择状态按文件保留。
+9. 拖动编辑器与 Diff 之间的分隔条，确认分栏大小调整正常；在手机/窄屏下确认其变为上下布局。
+10. 分别在 **From** 与 **To** 下拉框中选择 `Unstaged (working tree)`、`Staged (index)` 及任一带提交短 SHA 的历史版本。
+11. 验证每次变更选择后，差异内容更新，并点击 **Close** 回到仅编辑器视图。
+12. 将系统切换为浅色主题，重复步骤 2–11，检查新增行与删除行的可读性。
+13. 将系统切换为深色主题，重复步骤 2–11，检查差异面板、下拉框和新增/删除行均使用深色配色且清晰可读。
+14. 在非 Git 目录打开一个文本文件并点击 **Git diff**，确认显示“not inside a Git repository”提示且编辑器仍可正常使用。
+15. 通过 `pnpm run dev` 启动开发服务器后重复步骤 2，确认 Git diff 正常加载；若服务端版本不匹配，显示重启 CodexUI 的可操作提示，而非浏览器的 `JSON.parse` 异常。
+
+### 预期结果
+
+- 可比较同一文件的工作区（unstaged）、暂存区（staged）及最近 30 个历史提交版本。
+- 版本差异仅供查看，不会改写工作区、暂存区或 Git 历史。
+- 没有差异时显示明确的无差异提示；超过 2 MB 的版本会显示安全限制提示。
+
+### 清理 / 回滚
+
+- 关闭差异面板即可继续编辑；功能本身不会创建 Git 改动。
+- 如为手动测试创建了 staged 或 unstaged 修改，可按项目惯例执行 `git restore` 或 `git restore --staged` 清理。
+
+### 回归：Git Diff 初始化
+
+- 编辑器初始化必须先建立 `lineWrapEnabled` 等状态，再调用 Ace 的 `setUseWrapMode`；否则 JavaScript 的 temporal dead zone 会中断整个内联脚本，导致包括 **Git diff** 在内的全部工具栏事件没有绑定。
+- 已在 `http://localhost:5373/codex-local-edit/root/work/my-notebook/_notebooks/byte/inbox/aiter-rmsnorm-dual-smoothquant-mr.md` 实测：点击 **Git diff** 后右侧分栏显示，接口渲染 158 行，浏览器控制台无错误。
+
+### Git Diff 视觉高亮
+
+- 两个只读版本编辑器保留完整文件内容，但用红色标记 **From** 侧被删除/替换的行、绿色标记 **To** 侧被新增/替换的行，并在 gutter 显示同色边条。
+- 对发生变更的 hunk 滚动到对应区域，确认可见行具有底色高亮；对于很长的文件，Ace 只渲染可见行，滚动到变化区域后标记会出现。
+
+### Git Diff 垂直滚动同步
+
+- 在任一版本编辑器滚动，另一侧应按相同的垂直像素位置跟随；使用防回环保护，避免滚动事件相互触发。
+- 两侧的横向滚动保持独立，便于查看行宽不同的版本内容。
+
+### Git Diff 中编辑 Unstaged
+
+- 将任一版本下拉框选择为 `Unstaged (working tree)`；该侧标题应显示 `(editable)`，另一个 staged 或历史版本编辑器保持只读。
+- 修改工作区侧内容后，使用 `Ctrl/Cmd+S` 或工具栏 **Save** 保存。确认文件被写回工作区、两个版本编辑器重新加载，且行级红/绿高亮随最新 Diff 更新。
+- 选中非 `Unstaged` 的版本后触发保存，确认不会改写 Git 历史或暂存区，并提示只能保存工作区版本。
+
+### Git Diff 对齐空泡
+
+- 删除行的对面（右侧）应显示斜线纹理空泡占位，新增行的对面（左侧）同样显示空泡。
+- 两侧行数相同，垂直滚动同步，改动行红/绿高亮，上下文行对齐。
+- 在 Unstaged 侧编辑后保存，空泡行被正确剥离，文件内容不含多余空行，尾换行保留。
