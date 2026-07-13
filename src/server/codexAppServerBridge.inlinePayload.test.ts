@@ -2807,7 +2807,7 @@ process.stdin.on('data', (chunk) => {
     }
   })
 
-  it('retries unqualified turn interrupts on a runtime that previously read the thread', async () => {
+  it('routes unqualified turn interrupts to the runtime that previously read the thread', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'codexui-provider-interrupt-fallback-'))
     const commandLogPath = join(tempDir, 'commands.log')
     const cursorCommand = join(tempDir, 'codex-cursor')
@@ -2851,19 +2851,18 @@ process.stdin.on('data', (chunk) => {
 
       expect(interruptResponse.statusCode).toBe(200)
       expect(interruptResponse.payload).toEqual({ result: {} })
-      await waitForLogToContain(commandLogPath, 'moon:turn/interrupt\n')
       await waitForLogToContain(commandLogPath, 'cursor:turn/interrupt\n')
       const log = await readFile(commandLogPath, 'utf8')
       expect(log).toContain('cursor:thread/read\n')
-      expect(log).toContain('moon:turn/interrupt\n')
       expect(log).toContain('cursor:turn/interrupt\n')
+      expect(log).not.toContain('moon:turn/interrupt\n')
     } finally {
       middleware.dispose()
       await rm(tempDir, { recursive: true, force: true })
     }
   })
 
-  it('retries unqualified turn interrupts on a runtime that emitted thread notifications', async () => {
+  it('routes unqualified turn interrupts to the runtime that emitted thread notifications', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'codexui-provider-interrupt-notification-fallback-'))
     const commandLogPath = join(tempDir, 'commands.log')
     const cursorCommand = join(tempDir, 'codex-cursor')
@@ -2907,12 +2906,11 @@ process.stdin.on('data', (chunk) => {
 
       expect(interruptResponse.statusCode).toBe(200)
       expect(interruptResponse.payload).toEqual({ result: {} })
-      await waitForLogToContain(commandLogPath, 'moon:turn/interrupt\n')
       await waitForLogToContain(commandLogPath, 'cursor:turn/interrupt\n')
       const log = await readFile(commandLogPath, 'utf8')
       expect(log).toContain('cursor:config/read\n')
-      expect(log).toContain('moon:turn/interrupt\n')
       expect(log).toContain('cursor:turn/interrupt\n')
+      expect(log).not.toContain('moon:turn/interrupt\n')
       expect(log).not.toContain('cursor:thread/read\n')
     } finally {
       middleware.dispose()

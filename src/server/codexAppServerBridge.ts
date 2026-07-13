@@ -8860,6 +8860,18 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
             turnId,
           }).catch(() => {})
 
+          // Route to the runtime that actually owns this thread. When the
+          // frontend omits modelProvider (provider cache evicted on long
+          // sessions), getRpcRuntime falls back to the active runtime which
+          // may be a different provider than the one running the turn; the
+          // interrupt then no-ops silently. Prefer the runtime that has
+          // thread state for this thread.
+          const threadOwningRuntime = threadId ? findRuntimeWithThreadState(runtimePool, threadId) : null
+          if (threadOwningRuntime && threadOwningRuntime !== effectiveRpcRuntime) {
+            effectiveRpcRuntime = threadOwningRuntime
+            effectiveRpcAppServer = threadOwningRuntime.appServer
+          }
+
           // Fire the soft interrupt in the background so the HTTP response
           // returns immediately and the UI feels instant. We do NOT force-kill
           // the codex app-server here because the same child process is shared
