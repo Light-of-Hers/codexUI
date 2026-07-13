@@ -1,4 +1,4 @@
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import {
   archiveThread,
   clearThreadGoal,
@@ -2071,6 +2071,42 @@ export function useDesktopState() {
     const threadId = selectedThreadId.value
     return threadId ? loadingUserMessageIndexByThreadId.value[threadId] === true : false
   })
+
+  // Keep the user-message index + count in sync as new user turns arrive.
+  // We track the set of user turnIds we have already indexed; whenever a new
+  // one shows up (a fresh prompt was sent), force-refresh both the index and
+  // the total so the dropdown reflects it without a page reload.
+  const knownUserTurnIdsByThreadId = new Map<string, Set<string>>()
+  watch(
+    () => {
+      const threadId = selectedThreadId.value
+      if (!threadId) return { threadId: '', count: 0 }
+      const userMessages = messages.value.filter((message) => message.role === 'user')
+      return { threadId, count: userMessages.length }
+    },
+    ({ threadId }) => {
+      if (!threadId) {
+        knownUserTurnIdsByThreadId.clear()
+        return
+      }
+      const known = knownUserTurnIdsByThreadId.get(threadId)
+      const userTurnIds = new Set<string>()
+      for (const message of messages.value) {
+        if (message.role !== 'user') continue
+        const turnId = message.turnId?.trim() ?? ''
+        if (turnId) userTurnIds.add(turnId)
+      }
+      knownUserTurnIdsByThreadId.set(threadId, userTurnIds)
+      if (!known) {
+        // First time we observe this thread; the initial ensure already ran.
+        return
+      }
+      const hasNew = Array.from(userTurnIds).some((id) => !known.has(id))
+      if (!hasNew) return
+      void loadUserMessageIndex(threadId, { force: true }).catch(() => {})
+      void loadUserMessageCount(threadId, { force: true }).catch(() => {})
+    },
+  )
   const isLoadingMessages = computed(() => {
     const threadId = selectedThreadId.value
     return threadId ? loadingMessagesByThreadId.value[threadId] === true : false
