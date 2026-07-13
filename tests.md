@@ -7187,3 +7187,36 @@ Markdown files opened through the local editor expose a preview button that rend
 - 删除行的对面（右侧）应显示斜线纹理空泡占位，新增行的对面（左侧）同样显示空泡。
 - 两侧行数相同，垂直滚动同步，改动行红/绿高亮，上下文行对齐。
 - 在 Unstaged 侧编辑后保存，空泡行被正确剥离，文件内容不含多余空行，尾换行保留。
+
+### Feature: Sticky bottom scroll while the agent streams
+
+#### Prerequisites
+- App server is running from this repository.
+- A thread where Codex can run a multi-step turn that streams assistant text, runs commands, and keeps producing output for several seconds.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Run `pnpm exec vitest run`.
+2. Run `pnpm exec vue-tsc --noEmit`.
+3. Send a prompt that keeps the agent working for a while (e.g. a multi-file refactor or a long shell pipeline).
+4. While the turn is streaming, scroll all the way down to the bottom of the conversation. Confirm the view stays pinned to the latest output (live overlay + streamed text) instead of snapping back to the top of the in-progress turn.
+5. Scroll up a little to read earlier output, then scroll back down to the bottom. Confirm auto-follow re-engages and the view catches up to the latest message.
+6. While still streaming, click the "jump to latest" button (arrow button in the lower-right). Confirm it lands on the live overlay at the very bottom, with no "Load later messages" button and no empty command-only gap.
+7. Let the turn finish. Confirm the final persisted messages remain visible at the bottom without a jump.
+8. Repeat steps 3-7 in both light and dark theme.
+
+#### Expected Results
+- While streaming, scrolling to the bottom keeps the view pinned to the newest output; it no longer snaps back to the top of the in-progress turn.
+- The live overlay (activity label / reasoning / streamed assistant text) stays visible while pinned to the bottom, because `isRenderingLatest` stays `true`.
+- The "jump to latest" button lands on the live overlay at the very bottom; the spurious "Load later messages" button no longer appears mid-stream, and there is no empty command-only segment with both "Load earlier" and "Load later" buttons.
+- Scrolling up disables auto-follow (jump-to-latest button appears); scrolling back to the bottom re-engages it.
+- Light and dark theme render identically.
+
+#### Performance Audit
+- Root cause: `onConversationScroll` used `autoFollowOutput = isRenderingLatest && isAtBottom`. While the agent streams, `props.messages` grows every frame but `renderWindowEnd` is reconciled asynchronously by the `watch(() => props.messages)` handler, so `isRenderingLatest` (`renderWindowEnd >= messages.length`) was transiently `false`. A scroll event during that gap flipped `autoFollowOutput` off; the watcher then ran `clampRenderWindowToMessages` (clamp only, no advance), freezing the window below the latest messages. That surfaced `hasMoreBelow` ("Load later messages"), hid the live overlay (`v-if="isRenderingLatest && liveOverlay"`), and made `jumpToLatest` re-fail because the same race re-disabled auto-follow on the next scroll.
+- Fix: `onConversationScroll` now calls `resolveAutoFollowAfterScroll(currentAutoFollow, atBottom, isRenderingLatest)` (pure helper in `src/components/content/threadConversationScroll.ts`). Auto-follow is only disabled when the user has genuinely scrolled away from the bottom (`!atBottom`). When at the bottom but the window is transiently behind (`isRenderingLatest` false), the previous value is kept so the watcher can catch up; once it does, `isRenderingLatest` flips true and the next scroll re-affirms auto-follow.
+- No new per-frame work is added: the helper runs only inside the existing scroll handler. `scheduleBottomLock` and the `watch(() => props.liveOverlay)` bottom-lock续命 logic are unchanged and now reliably keep the view pinned because auto-follow no longer gets toggled off mid-stream.
+- No profiling run was executed in this session because the regression is a scroll/event-timing race rather than a throughput issue. Next measurement: during a long streaming turn, log `autoFollowOutput` and `isRenderingLatest` on each scroll event and confirm `autoFollowOutput` never flips to `false` while `isAtBottom` is `true`.
+
+#### Rollback/Cleanup
+- Revert `onConversationScroll` to `autoFollowOutput.value = isRenderingLatest.value && isAtBottom(container)` and delete `src/components/content/threadConversationScroll.ts` plus its test file.

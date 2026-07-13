@@ -1026,6 +1026,7 @@ import { useMobile } from '../../composables/useMobile'
 import { useUiLanguage } from '../../composables/useUiLanguage'
 import { getHighlightLanguageForPath, normalizeHighlightLanguage } from '../../utils/codeLanguage.js'
 import { groupConsecutiveToolCallsByLatestId } from './threadConversationGrouping'
+import { resolveAutoFollowAfterScroll } from './threadConversationScroll'
 import { buildUserMessageNavigationItems, type UserMessageNavigationItem } from './threadMessageNavigation'
 
 import IconTablerArrowUp from '../icons/IconTablerArrowUp.vue'
@@ -5720,7 +5721,18 @@ watch(
 function onConversationScroll(): void {
   const container = conversationListRef.value
   if (!container || props.isLoading) return
-  autoFollowOutput.value = isRenderingLatest.value && isAtBottom(container)
+  // While the agent streams, props.messages grows every frame but the render
+  // window is reconciled asynchronously, so isRenderingLatest can be
+  // transiently false even when the user is parked at the bottom. Only turn
+  // auto-follow off when the user has genuinely scrolled away; otherwise the
+  // bottom lock would break mid-stream and freeze the window below the
+  // latest messages (surfacing a spurious "Load later messages" button and
+  // hiding the live overlay).
+  autoFollowOutput.value = resolveAutoFollowAfterScroll(
+    autoFollowOutput.value,
+    isAtBottom(container),
+    isRenderingLatest.value,
+  )
   if (hasMoreAbove.value && !isLoadingMore.value && container.scrollTop < LOAD_MORE_SCROLL_THRESHOLD_PX) {
     void loadMoreAbove()
   }
