@@ -1026,7 +1026,7 @@ import { useMobile } from '../../composables/useMobile'
 import { useUiLanguage } from '../../composables/useUiLanguage'
 import { getHighlightLanguageForPath, normalizeHighlightLanguage } from '../../utils/codeLanguage.js'
 import { groupConsecutiveToolCallsByLatestId } from './threadConversationGrouping'
-import { resolveAutoFollowAfterScroll } from './threadConversationScroll'
+import { resolveAutoFollowAfterScroll, resolveLatestRenderWindow } from './threadConversationScroll'
 import { buildUserMessageNavigationItems, type UserMessageNavigationItem } from './threadMessageNavigation'
 
 import IconTablerArrowUp from '../icons/IconTablerArrowUp.vue'
@@ -1954,6 +1954,26 @@ const visibleMessages = computed(() => props.messages.slice(renderWindowStart.va
 const hasMoreAbove = computed(() => renderWindowStart.value > 0 || props.hasMorePersistedAbove === true)
 const hasMoreBelow = computed(() => renderWindowEnd.value < props.messages.length)
 const isRenderingLatest = computed(() => renderWindowEnd.value >= props.messages.length)
+
+// Index of the first message of the latest turn, or -1 when it cannot be
+// determined. The render window always covers the whole latest turn (plus a
+// small context buffer) so the streaming text and the latest command output
+// can be on screen at the same time. A single turn can emit hundreds of
+// command messages (each command is its own message); the previous
+// fixed-size window sliced the turn in half and made the text and the
+// latest command mutually exclusive. Commands are grouped/collapsed in the
+// view, so rendering a large turn stays cheap.
+const latestTurnStartIndex = computed(() => {
+  const all = props.messages
+  if (all.length === 0) return -1
+  const turnId = all[all.length - 1].turnId?.trim() ?? ''
+  if (!turnId) return -1
+  for (let index = all.length - 1; index >= 0; index -= 1) {
+    const msgTurnId = all[index].turnId?.trim() ?? ''
+    if (msgTurnId && msgTurnId !== turnId) return index + 1
+  }
+  return 0
+})
 const latestPendingRequest = computed(() => {
   const rows = props.pendingRequests
   return rows.length > 0 ? rows[rows.length - 1] : null
@@ -1974,8 +1994,12 @@ function setRenderWindow(start: number, end: number): void {
 }
 
 function setRenderWindowToLatest(): void {
-  const messageCount = props.messages.length
-  setRenderWindow(Math.max(0, messageCount - RENDER_WINDOW_SIZE), messageCount)
+  const { start, end } = resolveLatestRenderWindow(
+    props.messages.length,
+    latestTurnStartIndex.value,
+    RENDER_WINDOW_SIZE,
+  )
+  setRenderWindow(start, end)
 }
 
 function setRenderWindowAroundIndex(messageIndex: number): void {
@@ -5458,7 +5482,14 @@ async function loadMoreAbove(): Promise<void> {
   try {
     if (renderWindowStart.value > 0) {
       const nextStart = Math.max(0, renderWindowStart.value - LOAD_MORE_CHUNK)
-      const nextEnd = Math.min(renderWindowEnd.value, nextStart + MAX_RENDER_WINDOW_SIZE)
+      // Never shrink the end past the latest turn while paginating upward;
+      // otherwise loading earlier messages would slice off the streaming
+      // text / latest command output the user is trying to read.
+      const latestTurnSize = latestTurnStartIndex.value >= 0
+        ? props.messages.length - latestTurnStartIndex.value
+        : 0
+      const windowCap = MAX_RENDER_WINDOW_SIZE + latestTurnSize
+      const nextEnd = Math.min(renderWindowEnd.value, nextStart + windowCap)
       setRenderWindow(nextStart, nextEnd)
     } else if (props.hasMorePersistedAbove === true) {
       await props.loadEarlierMessages?.(threadIdAtStart)

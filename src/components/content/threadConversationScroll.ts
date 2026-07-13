@@ -21,3 +21,30 @@ export function resolveAutoFollowAfterScroll(
   if (isRenderingLatest) return true
   return currentAutoFollow
 }
+
+// Compute the render window shown when sticking to the latest output.
+//
+// While a turn is streaming (`streamingTurnStart >= 0`), the window must
+// cover the whole in-progress turn so the user can always see the streaming
+// text together with the latest command output. A single turn can emit
+// hundreds of command messages (each command is its own message); the
+// previous fixed-size window (50, capped at 110) sliced the turn in half,
+// so the assistant text and the latest command could never be on screen at
+// the same time, and scrolling to the bottom snapped back to the turn top.
+// The turn's commands are grouped/collapsed in the view, so rendering a
+// large turn is still cheap.
+//
+// `streamingTurnStart` is -1 when no turn is streaming.
+export function resolveLatestRenderWindow(
+  messageCount: number,
+  streamingTurnStart: number,
+  windowSize: number,
+): { start: number; end: number } {
+  if (messageCount <= 0) return { start: 0, end: 0 }
+  const end = messageCount
+  if (streamingTurnStart < 0 || streamingTurnStart >= messageCount) {
+    return { start: Math.max(0, messageCount - windowSize), end }
+  }
+  const start = Math.max(0, streamingTurnStart - windowSize)
+  return { start, end }
+}

@@ -7220,3 +7220,39 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - Revert `onConversationScroll` to `autoFollowOutput.value = isRenderingLatest.value && isAtBottom(container)` and delete `src/components/content/threadConversationScroll.ts` plus its test file.
+
+### Feature: Render window covers the whole latest turn
+
+#### Prerequisites
+- App server is running from this repository.
+- A thread where a single turn runs many commands (100+) so the turn spans more messages than the previous fixed render window (50, capped at 110). Example session: `019f3351-b08d-7850-8843-30a1d358cba1` (turns with 200+ `function_call` items).
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Run `pnpm exec vitest run`.
+2. Run `pnpm exec vue-tsc --noEmit`.
+3. Start a turn that streams assistant text and then runs a long sequence of commands (a multi-file refactor or a long shell pipeline works well).
+4. While the turn is streaming, scroll to the bottom. Confirm the streaming text and the latest command output are visible together, and the view stays pinned to the newest output instead of snapping back to the top of the turn.
+5. Click the "jump to latest" button while streaming. Confirm it lands on the live overlay at the very bottom, with the assistant text still visible above the command list and no empty command-only gap. There should be no "Load later messages" button (the window already reaches the latest message).
+6. Scroll up to read the assistant text, then scroll back down to the bottom. Confirm the latest command output comes back into view together with the text, instead of the text being sliced off when the commands appear.
+7. Click "Load earlier messages" while near the bottom of a large streaming turn. Confirm earlier messages load above without slicing the streaming text / latest command off the bottom.
+8. Let the turn finish. Confirm the just-completed turn's text and commands remain visible together at the bottom (the window still covers the latest turn), then scroll up into older history and back.
+9. Repeat steps 3-8 in both light and dark theme.
+
+#### Expected Results
+- While streaming, the render window covers the entire latest turn (plus a small context buffer of `RENDER_WINDOW_SIZE` messages before it), so the assistant text and the latest command output are on screen at the same time. The view no longer snaps back to the turn top when scrolling to the bottom.
+- The "jump to latest" button lands on the live overlay at the very bottom; the spurious "Load later messages" button no longer appears, and there is no empty command-only segment with both "Load earlier" and "Load later" buttons.
+- Scrolling the assistant text down to the following commands no longer slices the text out of the window; both stay visible because they are inside the same latest-turn window.
+- "Load earlier messages" grows the window upward without shrinking the end past the latest turn, so streaming output is not sliced off while paging up.
+- After the turn completes, the latest turn stays covered (text + commands together); older history remains virtualized behind "Load earlier messages".
+- Light and dark theme render identically.
+
+#### Performance Audit
+- Root cause: `RENDER_WINDOW_SIZE = 50` / `MAX_RENDER_WINDOW_SIZE = 110` sliced `props.messages` by raw message count. A single turn can emit hundreds of command messages (each `commandExecution` is its own `UiMessage`); the example session has turns with 200+ `function_call` items. The fixed window therefore sliced the turn in half: the assistant text and the latest command were always more than 110 messages apart and could never be on screen together. While streaming, `setRenderWindowToLatest` re-anchored the window to the last 50 messages (all commands) every frame, so scrolling to the bottom showed only commands and "Load earlier" paginated through more commands without ever reaching the text.
+- Fix: `latestTurnStartIndex` (computed) finds the first message of the latest turn by scanning backward from the tail until the `turnId` changes (every persisted and live message carries a `turnId`). `setRenderWindowToLatest` now calls `resolveLatestRenderWindow(messageCount, latestTurnStartIndex, RENDER_WINDOW_SIZE)` (pure helper in `src/components/content/threadConversationScroll.ts`): when a latest turn is known, the window starts `RENDER_WINDOW_SIZE` messages before the turn and ends at the very last message, so the whole turn stays in view. When no `turnId` is available it falls back to the previous trailing-50 behavior.
+- `loadMoreAbove` widens its size cap by the latest turn size (`MAX_RENDER_WINDOW_SIZE + latestTurnSize`) so paging upward never shrinks the end past the latest turn and slices off streaming output. `clampRenderWindowToMessages` (used when auto-follow is off, e.g. the user is reading history) is unchanged, so reading older history while the agent streams still keeps the view stable.
+- Rendering cost: commands are grouped/collapsed in the view (`groupedCommandsByLatestId` / `hiddenGroupedCommandIds`), so a turn with hundreds of commands produces only a handful of DOM nodes. `visibleMessages` and the grouping computables are O(turn size) per `props.messages` change, which is acceptable for turns up to a few thousand messages.
+- No profiling run was executed in this session because the regression is a window-slicing correctness issue, not a throughput issue. Next measurement: on the example session, log `latestTurnStartIndex`, `renderWindowStart`, `renderWindowEnd`, and `props.messages.length` during a streaming turn and confirm the window spans `[latestTurnStart - 50, messages.length]` and that `hasMoreBelow` stays `false` while pinned to the bottom.
+
+#### Rollback/Cleanup
+- Revert `setRenderWindowToLatest` to `setRenderWindow(Math.max(0, messageCount - RENDER_WINDOW_SIZE), messageCount)`, revert the `loadMoreAbove` cap to `MAX_RENDER_WINDOW_SIZE`, delete the `latestTurnStartIndex` computed, and drop `resolveLatestRenderWindow` from `src/components/content/threadConversationScroll.ts` and its tests.
