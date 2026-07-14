@@ -900,6 +900,7 @@
               <template v-else>
                 <div class="content-thread">
                   <ThreadConversation ref="threadConversationRef" :messages="filteredMessages" :is-loading="isLoadingMessages"
+                    :is-thread-in-progress="isSelectedThreadInProgress"
                     :message-navigation-messages="filteredMessageNavigationMessages"
                     :is-message-navigation-loading="isLoadingMessageNavigation"
                     :active-thread-id="composerThreadContextId" :cwd="composerCwd"

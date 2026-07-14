@@ -7256,3 +7256,31 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - Revert `setRenderWindowToLatest` to `setRenderWindow(Math.max(0, messageCount - RENDER_WINDOW_SIZE), messageCount)`, revert the `loadMoreAbove` cap to `MAX_RENDER_WINDOW_SIZE`, delete the `latestTurnStartIndex` computed, and drop `resolveLatestRenderWindow` from `src/components/content/threadConversationScroll.ts` and its tests.
+
+### Feature: Render window only expands during in-progress turns
+
+#### Prerequisites
+- App server is running from this repository.
+- A thread whose latest completed turn ran many commands (100+) so the turn spans more messages than the fixed render window (50).
+
+#### Steps
+1. Run `pnpm exec vitest run`.
+2. Run `pnpm exec vue-tsc --noEmit`.
+3. Run a turn that emits 100+ commands, then let it finish.
+4. Switch away to another session and back to the finished session. Confirm the latest messages (this round's user + assistant messages) appear promptly, without the brief freeze that rendering the whole large completed turn would cause.
+5. Start another long streaming turn on the same session and confirm the in-progress behavior from "Render window covers the whole latest turn" still applies (text + latest command visible together while streaming).
+6. Repeat in both light and dark theme.
+
+#### Expected Results
+- Re-entering a finished session renders only the fixed trailing window (~50 messages) so it is as fast as before the turn-expansion change; there is no freeze while collapsed command messages for a large completed turn are materialized.
+- While a turn is in progress, the window still expands to cover the whole latest turn (text + latest command together), preserving the streaming fix.
+- Light and dark theme render identically.
+
+#### Performance Audit
+- Regression cause: `latestTurnStartIndex` (added in "Render window covers the whole latest turn") returned the latest turn start unconditionally, so `setRenderWindowToLatest` covered the whole latest turn even after it completed. Re-entering a finished session whose latest turn had 200+ command messages had to slice/group/render all of them up front, causing a brief freeze that did not happen with the previous fixed 50-message window.
+- Fix: `ThreadConversation` now receives an `isThreadInProgress` prop (App.vue passes `isSelectedThreadInProgress`, which is backed by `inProgressById`). `latestTurnStartIndex` returns -1 unless `isThreadInProgress` is true, so the expansion to cover the whole turn only happens while the turn is actively running. `loadMoreAbove`'s `latestTurnSize` therefore collapses to 0 for finished turns and the cap reverts to `MAX_RENDER_WINDOW_SIZE`.
+- `inProgressById` is the same signal that drives `selectedLiveOverlay`, so it stays stable across command boundaries within a turn (no window flicker between commands) and flips off exactly when the turn completes.
+- No profiling run was executed in this session. Next measurement: time `setRenderWindowToLatest` on re-entry to a finished 200+ command turn and confirm it is back to the pre-expansion cost (a single 50-message slice).
+
+#### Rollback/Cleanup
+- Drop the `isThreadInProgress` prop from `ThreadConversation`, remove the `:is-thread-in-progress` binding in `App.vue`, and revert the `if (props.isThreadInProgress !== true) return -1` guard in `latestTurnStartIndex` to restore unconditional turn expansion.

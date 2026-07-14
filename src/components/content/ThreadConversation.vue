@@ -1675,6 +1675,7 @@ const props = defineProps<{
   pendingRequests: UiServerRequest[]
   liveOverlay: UiLiveOverlay | null
   isLoading: boolean
+  isThreadInProgress?: boolean
   activeThreadId: string
   cwd: string
   hasMorePersistedAbove?: boolean
@@ -1955,17 +1956,21 @@ const hasMoreAbove = computed(() => renderWindowStart.value > 0 || props.hasMore
 const hasMoreBelow = computed(() => renderWindowEnd.value < props.messages.length)
 const isRenderingLatest = computed(() => renderWindowEnd.value >= props.messages.length)
 
-// Index of the first message of the latest turn, or -1 when it cannot be
-// determined. The render window always covers the whole latest turn (plus a
-// small context buffer) so the streaming text and the latest command output
-// can be on screen at the same time. A single turn can emit hundreds of
-// command messages (each command is its own message); the previous
-// fixed-size window sliced the turn in half and made the text and the
-// latest command mutually exclusive. Commands are grouped/collapsed in the
-// view, so rendering a large turn stays cheap.
+// Index of the first message of the latest turn, or -1 when it should not
+// expand the window. While the turn is in progress, the render window
+// covers the whole latest turn (plus a small context buffer) so the
+// streaming text and the latest command output can be on screen at the same
+// time. A single turn can emit hundreds of command messages (each command
+// is its own message); the previous fixed-size window sliced the turn in
+// half and made the text and the latest command mutually exclusive. Once the
+// turn completes we fall back to the fixed trailing window so re-entering a
+// finished session with a large turn does not have to render hundreds of
+// (collapsed) command messages up front. Commands are grouped/collapsed in
+// the view, so rendering a large in-progress turn stays cheap.
 const latestTurnStartIndex = computed(() => {
   const all = props.messages
   if (all.length === 0) return -1
+  if (props.isThreadInProgress !== true) return -1
   const turnId = all[all.length - 1].turnId?.trim() ?? ''
   if (!turnId) return -1
   for (let index = all.length - 1; index >= 0; index -= 1) {
