@@ -7284,3 +7284,35 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - Drop the `isThreadInProgress` prop from `ThreadConversation`, remove the `:is-thread-in-progress` binding in `App.vue`, and revert the `if (props.isThreadInProgress !== true) return -1` guard in `latestTurnStartIndex` to restore unconditional turn expansion.
+
+### Feature: Optimistic user message on send
+
+#### Prerequisites
+- App server is running from this repository.
+- An existing thread the user can send prompts to.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Run `pnpm exec vitest run`.
+2. Run `pnpm exec vue-tsc --noEmit`.
+3. In an existing thread, send a prompt. Confirm the user's message appears in the conversation immediately, before the agent starts replying (no waiting on the app-server round-trip).
+4. Send a prompt while a turn is already in progress (steer). Confirm the steered user message also appears immediately.
+5. Simulate a send failure (e.g. stop the app server or break the connection, then send a prompt). Confirm the user's message still appears, alongside the error state, so the user can see what they sent and retry.
+6. After a successful send, once the agent's reply streams in and the persisted messages refresh, confirm the optimistic message is replaced by the real persisted user message (no duplicate user bubble).
+7. Repeat in both light and dark theme.
+
+#### Expected Results
+- The sent prompt renders instantly as a user message (with a temporary `optimistic-user-*` id) without waiting for `thread/turn/start` + `syncFromNotifications` to round-trip.
+- A steer prompt also renders instantly while a turn is in progress.
+- If `startThreadTurn` / `steerThreadTurn` fails, the optimistic user message remains visible so the user can see what they sent; it is not lost.
+- Once `loadMessages` refreshes and the persisted messages contain a matching user message (same normalized text), the optimistic placeholder is dropped and only the real persisted user message remains (no duplicate).
+- Light and dark theme render identically.
+
+#### Performance Audit
+- Root cause: `startTurnForThread` / `steerActiveTurnForThread` only revealed the user message after `startThreadTurn`/`steerThreadTurn` succeeded and `syncFromNotifications` re-read the thread. So the user bubble was gated on a full app-server round-trip, and if the round-trip errored (e.g. connection error) the message never appeared at all. (The delay was additionally amplified when a `preferCached` background `loadMessages` was still in flight, because `syncFromNotifications`'s `loadMessages` would `await` the existing load promise and return without refreshing.)
+- Fix: `sendMessageToThread` now calls `setOptimisticUserMessage(threadId, text, imageUrls, fileAttachments)` on both the steer and the new-turn paths before kicking off the RPC. The optimistic message lives in `optimisticUserMessageByThreadId` and is injected by the `messages` computed right after the persisted messages (and before the live overlay messages) **only when** the persisted messages do not already contain a matching user message (matched by normalized text). `loadMessages` calls `clearOptimisticUserMessageIfPersisted` after it persists fresh messages, so once the real user message arrives the placeholder is removed. On RPC failure the placeholder is intentionally left in place.
+- Cost: one extra `Record<string, UiMessage>` ref and an O(persisted) text match inside the `messages` computed only while an optimistic message exists for the selected thread. No extra network calls.
+- No profiling run was executed in this session; the change is a latency/correctness fix, not a throughput change. Next measurement: instrument the time between the send click and the first render of the user bubble and confirm it is now ~0ms (synchronous) instead of the previous round-trip latency.
+
+#### Rollback/Cleanup
+- Remove `setOptimisticUserMessage` / `clearOptimisticUserMessage` / `clearOptimisticUserMessageIfPersisted`, the `optimisticUserMessageByThreadId` ref, its injection in the `messages` computed, the two `setOptimisticUserMessage` calls in `sendMessageToThread`, the `clearOptimisticUserMessageIfPersisted` call in `loadMessages`, and the prune/reset lines.

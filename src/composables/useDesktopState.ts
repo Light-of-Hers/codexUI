@@ -1862,6 +1862,10 @@ export function useDesktopState() {
   const interruptBlockedUntilPersistedByThreadId = ref<Record<string, boolean>>({})
   const threadListedByServerById = ref<Record<string, boolean>>({})
   const persistedUserMessageByThreadId = ref<Record<string, boolean>>({})
+  // Optimistic user message shown instantly when the user sends a prompt,
+  // before the app-server round-trip persists the real message. Cleared
+  // once loadMessages sees a matching persisted user message.
+  const optimisticUserMessageByThreadId = ref<Record<string, UiMessage>>({})
   const pendingServerRequestsByThreadId = ref<Record<string, UiServerRequest[]>>({})
   const pendingTurnRequestByThreadId = ref<Record<string, PendingTurnRequest>>({})
   const codexRateLimit = ref<UiRateLimitSnapshot | null>(null)
@@ -2027,7 +2031,19 @@ export function useDesktopState() {
     const liveCommands = liveCommandsByThreadId.value[threadId] ?? []
     const liveFileChanges = liveFileChangeMessagesByThreadId.value[threadId] ?? []
     const liveToolCalls = liveToolCallMessagesByThreadId.value[threadId] ?? []
-    const combined = [...persisted, ...livePlan, ...liveCommands, ...liveFileChanges, ...liveToolCalls, ...liveAgent]
+    const optimistic = optimisticUserMessageByThreadId.value[threadId]
+    let combined: UiMessage[]
+    if (optimistic) {
+      const optimisticText = normalizeMessageText(optimistic.text)
+      const persistedHasOptimistic = optimisticText
+        ? persisted.some((message) => message.role === 'user' && normalizeMessageText(message.text) === optimisticText)
+        : false
+      combined = persistedHasOptimistic
+        ? [...persisted, ...livePlan, ...liveCommands, ...liveFileChanges, ...liveToolCalls, ...liveAgent]
+        : [...persisted, optimistic, ...livePlan, ...liveCommands, ...liveFileChanges, ...liveToolCalls, ...liveAgent]
+    } else {
+      combined = [...persisted, ...livePlan, ...liveCommands, ...liveFileChanges, ...liveToolCalls, ...liveAgent]
+    }
 
     const summary = turnSummaryByThreadId.value[threadId]
     if (!summary) return combined
@@ -3227,6 +3243,7 @@ export function useDesktopState() {
     resumedThreadProviderIdByThreadId.value = pruneThreadStateMap(resumedThreadProviderIdByThreadId.value, activeThreadIds)
     turnIndexByTurnIdByThreadId.value = pruneThreadStateMap(turnIndexByTurnIdByThreadId.value, activeThreadIds)
     persistedMessagesByThreadId.value = pruneThreadStateMap(persistedMessagesByThreadId.value, activeThreadIds)
+    optimisticUserMessageByThreadId.value = pruneThreadStateMap(optimisticUserMessageByThreadId.value, activeThreadIds)
     fullHistoryMessagesByThreadId.value = pruneThreadStateMap(fullHistoryMessagesByThreadId.value, activeThreadIds)
     loadedFullHistoryByThreadId.value = pruneThreadStateMap(loadedFullHistoryByThreadId.value, activeThreadIds)
     loadingFullHistoryByThreadId.value = pruneThreadStateMap(loadingFullHistoryByThreadId.value, activeThreadIds)
@@ -3474,6 +3491,60 @@ export function useDesktopState() {
       }
     }
     maybeUnblockInterruptForPersistedThread(threadId)
+  }
+
+  function setOptimisticUserMessage(
+    threadId: string,
+    text: string,
+    imageUrls: string[] = [],
+    fileAttachments: FileAttachment[] = [],
+  ): void {
+    const normalizedThreadId = threadId.trim()
+    const trimmedText = text.trim()
+    if (!normalizedThreadId) return
+    if (!trimmedText && imageUrls.length === 0 && fileAttachments.length === 0) return
+    const persisted = persistedMessagesByThreadId.value[normalizedThreadId] ?? []
+    let maxTurnIndex = -1
+    for (const message of persisted) {
+      if (typeof message.turnIndex === 'number' && message.turnIndex > maxTurnIndex) {
+        maxTurnIndex = message.turnIndex
+      }
+    }
+    optimisticUserMessageByThreadId.value = {
+      ...optimisticUserMessageByThreadId.value,
+      [normalizedThreadId]: {
+        id: `optimistic-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        role: 'user',
+        text: trimmedText,
+        images: imageUrls.length > 0 ? [...imageUrls] : undefined,
+        fileAttachments: fileAttachments.length > 0 ? fileAttachments.map((file) => ({ ...file })) : undefined,
+        turnIndex: maxTurnIndex + 1,
+      },
+    }
+  }
+
+  function clearOptimisticUserMessage(threadId: string): void {
+    const normalizedThreadId = threadId.trim()
+    if (!normalizedThreadId) return
+    if (!optimisticUserMessageByThreadId.value[normalizedThreadId]) return
+    optimisticUserMessageByThreadId.value = omitKey(optimisticUserMessageByThreadId.value, normalizedThreadId)
+  }
+
+  function clearOptimisticUserMessageIfPersisted(threadId: string): void {
+    const normalizedThreadId = threadId.trim()
+    if (!normalizedThreadId) return
+    const optimistic = optimisticUserMessageByThreadId.value[normalizedThreadId]
+    if (!optimistic) return
+    const optimisticText = normalizeMessageText(optimistic.text)
+    if (!optimisticText) {
+      clearOptimisticUserMessage(normalizedThreadId)
+      return
+    }
+    const persisted = persistedMessagesByThreadId.value[normalizedThreadId] ?? []
+    const persistedHasMatch = persisted.some(
+      (message) => message.role === 'user' && normalizeMessageText(message.text) === optimisticText,
+    )
+    if (persistedHasMatch) clearOptimisticUserMessage(normalizedThreadId)
   }
 
   function markThreadUnreadByEvent(threadId: string): void {
@@ -6070,6 +6141,7 @@ export function useDesktopState() {
           preserveMissing: options.silent === true,
         })
         setPersistedMessagesForThread(threadId, mergedMessages)
+        clearOptimisticUserMessageIfPersisted(threadId)
 
         const previousLiveAgent = liveAgentMessagesByThreadId.value[threadId] ?? []
         if (appliedTurnState.inProgress) {
@@ -6623,6 +6695,7 @@ export function useDesktopState() {
       shouldAutoScrollOnNextAgentEvent = true
       error.value = ''
       setTurnErrorForThread(threadId, null)
+      setOptimisticUserMessage(threadId, nextText, imageUrls, fileAttachments)
       void steerActiveTurnForThread(
         threadId,
         nextText,
@@ -6680,6 +6753,7 @@ export function useDesktopState() {
     )
     setTurnErrorForThread(threadId, null)
     setThreadInProgress(threadId, true)
+    setOptimisticUserMessage(threadId, nextText, imageUrls, fileAttachments)
 
     try {
       await startTurnForThread(
@@ -7660,6 +7734,7 @@ export function useDesktopState() {
     interruptBlockedUntilPersistedByThreadId.value = {}
     threadListedByServerById.value = {}
     persistedUserMessageByThreadId.value = {}
+    optimisticUserMessageByThreadId.value = {}
     queuedMessagesByThreadId.value = {}
     queueProcessingByThreadId.value = {}
     persistQueueState()

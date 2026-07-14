@@ -2524,3 +2524,90 @@ describe('findAdjacentThreadId', () => {
     expect(findAdjacentThreadId([thread('selected-thread', '/tmp/project')], 'selected-thread')).toBe('')
   })
 })
+
+describe('optimistic user message', () => {
+  function resumedDetail(messages: Array<{ id: string; role: 'user' | 'assistant' | 'system'; text: string; turnIndex?: number }> = []) {
+    return {
+      model: 'gpt-5.5',
+      modelProvider: 'codex',
+      reasoningEffort: '',
+      messages,
+      inProgress: false,
+      activeTurnId: '',
+      hasMoreOlder: false,
+      turnIndexByTurnId: {} as Record<string, number>,
+    }
+  }
+
+  function detailWith(messages: Array<{ id: string; role: 'user' | 'assistant' | 'system'; text: string; turnIndex?: number }>) {
+    return {
+      messages,
+      inProgress: false,
+      activeTurnId: '',
+      hasMoreOlder: false,
+      turnIndexByTurnId: {} as Record<string, number>,
+    }
+  }
+
+  beforeEach(() => {
+    gatewayMocks.resumeThread.mockReset()
+    gatewayMocks.startThreadTurn.mockReset()
+  })
+
+  it('shows the sent prompt instantly before the app-server round-trip persists it', async () => {
+    installTestWindow()
+    gatewayMocks.resumeThread.mockResolvedValue(resumedDetail())
+    gatewayMocks.startThreadTurn.mockResolvedValue('turn-1')
+    gatewayMocks.getThreadDetail.mockResolvedValue(detailWith([]))
+
+    const state = useDesktopState()
+    state.primeSelectedThread('thread-a')
+    await state.loadMessages('thread-a')
+
+    await state.sendMessageToSelectedThread('hello optimistic')
+
+    const userMessages = state.messages.value.filter((message) => message.role === 'user' && message.text === 'hello optimistic')
+    expect(userMessages).toHaveLength(1)
+    expect(userMessages[0]?.id.startsWith('optimistic-user-')).toBe(true)
+  })
+
+  it('clears the optimistic message once loadMessages sees the persisted user message', async () => {
+    installTestWindow()
+    gatewayMocks.resumeThread.mockResolvedValue(resumedDetail())
+    gatewayMocks.startThreadTurn.mockResolvedValue('turn-1')
+    gatewayMocks.getThreadDetail.mockResolvedValue(detailWith([]))
+
+    const state = useDesktopState()
+    state.primeSelectedThread('thread-a')
+    await state.loadMessages('thread-a')
+
+    await state.sendMessageToSelectedThread('hello optimistic')
+    expect(state.messages.value.some((message) => message.id.startsWith('optimistic-user-'))).toBe(true)
+
+    gatewayMocks.resumeThread.mockResolvedValue(resumedDetail([
+      { id: 'real-user-1', role: 'user', text: 'hello optimistic', turnIndex: 0 },
+    ]))
+    await state.loadMessages('thread-a', { force: true })
+
+    expect(state.messages.value.some((message) => message.id.startsWith('optimistic-user-'))).toBe(false)
+    expect(state.messages.value.filter((message) => message.role === 'user' && message.text === 'hello optimistic')).toHaveLength(1)
+    expect(state.messages.value.find((message) => message.id === 'real-user-1')).toBeTruthy()
+  })
+
+  it('keeps the optimistic message when startThreadTurn fails so the user can still see what they sent', async () => {
+    installTestWindow()
+    gatewayMocks.resumeThread.mockResolvedValue(resumedDetail())
+    gatewayMocks.startThreadTurn.mockRejectedValue(new Error('connection error'))
+    gatewayMocks.getThreadDetail.mockResolvedValue(detailWith([]))
+
+    const state = useDesktopState()
+    state.primeSelectedThread('thread-a')
+    await state.loadMessages('thread-a')
+
+    await state.sendMessageToSelectedThread('hello after error').catch(() => {})
+
+    const userMessages = state.messages.value.filter((message) => message.role === 'user' && message.text === 'hello after error')
+    expect(userMessages).toHaveLength(1)
+    expect(userMessages[0]?.id.startsWith('optimistic-user-')).toBe(true)
+  })
+})
