@@ -6948,6 +6948,7 @@ export class BackendQueueProcessor {
     private readonly appServer: AppServerProcess,
     private readonly resolveAppServerForRpc: (method: string, params: unknown) => AppServerProcess = () => appServer,
     private readonly runtimeProvider = '',
+    private readonly forwardNotification: ((notification: { method: string; params: unknown }) => void) | null = null,
   ) {
     this.unsubscribe = appServer.onNotification((notification) => {
       if (isTurnCompletedNotification(notification)) {
@@ -7266,6 +7267,15 @@ export class BackendQueueProcessor {
         }
       }
       await this.resolveAppServerForRpc('turn/start', turnStartParams).rpc('turn/start', turnStartParams)
+      // codex does not always re-emit thread/status/changed running after a
+      // resume+turn/start auto-continuation, so the frontend never learns the
+      // turn is active again and the UI drops out of "running". Forward a
+      // synthetic running status change directly to subscribers (bypassing
+      // this processor's own handler) so the sidebar stays truthful.
+      this.forwardNotification?.({
+        method: 'thread/status/changed',
+        params: { threadId: snapshot.threadId, status: { type: 'running' } },
+      })
       this.autoContinuedInterruptedTurnIds.add(snapshot.turnId)
       return true
     } catch (error) {
@@ -7570,7 +7580,9 @@ class AppServerRuntime {
     this.signature = getAppServerRuntimeSignature(state)
     this.appServer = new AppServerProcess()
     this.appServer.setFreeModeState(state)
-    this.backendQueueProcessor = new BackendQueueProcessor(this.appServer, resolveAppServerForRpc, readNonEmptyString(state.provider))
+    this.backendQueueProcessor = new BackendQueueProcessor(this.appServer, resolveAppServerForRpc, readNonEmptyString(state.provider), (notification) => {
+      this.forwardNotification({ ...notification, atIso: new Date().toISOString() })
+    })
     this.unsubscribeNotifications = this.appServer.onNotification((notification) => {
       this.forwardNotification({
         ...notification,

@@ -1873,6 +1873,7 @@ describe('backend queue scheduling', () => {
     vi.stubEnv('CODEX_HOME', `/tmp/codexui-auto-continue-${String(Date.now())}`)
     const listeners: Array<(value: { method: string; params: unknown }) => void> = []
     const calls: Array<{ method: string; params: Record<string, unknown> }> = []
+    const forwarded: Array<{ method: string; params: Record<string, unknown> }> = []
     const processor = new BackendQueueProcessor({
       onNotification(listener: (value: { method: string; params: unknown }) => void) {
         listeners.push(listener)
@@ -1894,7 +1895,9 @@ describe('backend queue scheduling', () => {
         }
         return {}
       },
-    } as never)
+    } as never, undefined, undefined, (notification) => {
+      forwarded.push({ method: notification.method, params: notification.params as Record<string, unknown> })
+    })
 
     listeners[0]?.({
       method: 'turn/completed',
@@ -1921,6 +1924,15 @@ describe('backend queue scheduling', () => {
         },
       },
     ])
+
+    // Auto-continue forwards a synthetic running status so the frontend knows
+    // the turn is active again even when codex does not re-emit it.
+    await vi.waitFor(() => {
+      expect(forwarded).toContainEqual({
+        method: 'thread/status/changed',
+        params: { threadId: 'thread-1', status: { type: 'running' } },
+      })
+    })
 
     processor.dispose()
   })
