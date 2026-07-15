@@ -6414,6 +6414,35 @@ export function useDesktopState() {
   async function selectThread(threadId: string) {
     setSelectedThreadId(threadId)
 
+    // [DEBUG:switch-lag] Snapshot what we already have in memory for this
+    // thread at switch time so we can tell whether the latest reply is
+    // available from live state (instant) or has to wait for a thread/read
+    // round-trip. Remove once the switch-latency regression is resolved.
+    if (threadId && typeof window !== 'undefined') {
+      const liveAgent = liveAgentMessagesByThreadId.value[threadId] ?? []
+      const liveCommands = liveCommandsByThreadId.value[threadId] ?? []
+      const persisted = persistedMessagesByThreadId.value[threadId] ?? []
+      const version = currentThreadVersion(threadId)
+      const loadedVersion = loadedVersionByThreadId.value[threadId] ?? ''
+      const inProgress = inProgressById.value[threadId] === true
+      const unread = eventUnreadByThreadId.value[threadId] === true
+      const alreadyLoaded = loadedMessagesByThreadId.value[threadId] === true
+      console.warn('[DEBUG:switch-lag]', {
+        threadId,
+        alreadyLoaded,
+        inProgress,
+        unread,
+        persistedCount: persisted.length,
+        liveAgentCount: liveAgent.length,
+        liveAgentLatestId: liveAgent.at(-1)?.id ?? '',
+        liveAgentLatestType: liveAgent.at(-1)?.messageType ?? '',
+        liveCommandsCount: liveCommands.length,
+        versionMatches: version.length === 0 || loadedVersion === version,
+        version,
+        loadedVersion,
+      })
+    }
+
     // Fire the message + queue fetches in the background so quickly
     // clicking another thread is not blocked on the previous thread's
     // pending network work. Per-thread loading/caching maps guarantee that
