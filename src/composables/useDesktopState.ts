@@ -2363,6 +2363,9 @@ export function useDesktopState() {
   function setSelectedThreadId(nextThreadId: string): void {
     const sameThread = selectedThreadId.value === nextThreadId
     if (!sameThread) {
+      if (typeof window !== 'undefined') {
+        console.warn('[DEBUG:switch-lag] setSelectedThreadId', { from: selectedThreadId.value, to: nextThreadId })
+      }
       selectedThreadId.value = nextThreadId
       saveSelectedThreadId(nextThreadId)
     }
@@ -6051,6 +6054,9 @@ export function useDesktopState() {
 
     const existingLoad = loadMessagePromiseByThreadId.get(threadId)
     if (existingLoad) {
+      if (typeof window !== 'undefined') {
+        console.warn('[DEBUG:switch-lag] loadMessages awaiting existingLoad', { threadId, preferCached: options.preferCached === true, silent: options.silent === true, force: options.force === true })
+      }
       await existingLoad
       return
     }
