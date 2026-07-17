@@ -2000,6 +2000,9 @@ function setRenderWindow(start: number, end: number): void {
 
   const nextStart = Math.max(0, Math.min(Math.floor(start), messageCount - 1))
   const nextEnd = Math.max(nextStart + 1, Math.min(Math.floor(end), messageCount))
+  if (typeof window !== 'undefined' && (nextStart !== renderWindowStart.value || nextEnd !== renderWindowEnd.value)) {
+    console.warn('[DEBUG:switch-lag] setRenderWindow', { from: [renderWindowStart.value, renderWindowEnd.value], to: [nextStart, nextEnd], messageCount, autoFollow: autoFollowOutput.value, latestTurnStart: latestTurnStartIndex.value })
+  }
   renderWindowStart.value = nextStart
   renderWindowEnd.value = nextEnd
 }
@@ -5763,6 +5766,10 @@ watch(
 function onConversationScroll(): void {
   const container = conversationListRef.value
   if (!container || props.isLoading) return
+  const atBottom = isAtBottom(container)
+  if (typeof window !== 'undefined') {
+    console.warn('[DEBUG:switch-lag] onScroll', { scrollTop: Math.round(container.scrollTop), atBottom, isRenderingLatest: isRenderingLatest.value, autoFollowBefore: autoFollowOutput.value, hasMoreAbove: hasMoreAbove.value, hasMoreBelow: hasMoreBelow.value, window: [renderWindowStart.value, renderWindowEnd.value], messageCount: props.messages.length })
+  }
   // While the agent streams, props.messages grows every frame but the render
   // window is reconciled asynchronously, so isRenderingLatest can be
   // transiently false even when the user is parked at the bottom. Only turn
@@ -5772,7 +5779,7 @@ function onConversationScroll(): void {
   // hiding the live overlay).
   autoFollowOutput.value = resolveAutoFollowAfterScroll(
     autoFollowOutput.value,
-    isAtBottom(container),
+    atBottom,
     isRenderingLatest.value,
   )
   if (hasMoreAbove.value && !isLoadingMore.value && container.scrollTop < LOAD_MORE_SCROLL_THRESHOLD_PX) {
