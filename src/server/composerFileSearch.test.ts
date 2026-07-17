@@ -48,6 +48,29 @@ describe('searchComposerPaths', () => {
     expect(results.some((entry) => entry.path === 'alpha.txt')).toBe(true)
   })
 
+  it('ranks compact basename-ish hits above deep sparse subsequence noise', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'codexui-composer-search-'))
+
+    await mkdir(join(tempDir, '_notebooks', 'byte', 'cradle', 'references'), { recursive: true })
+    await writeFile(
+      join(tempDir, '_notebooks', 'byte', 'cradle', 'references', 'w4a4-wfp4afp8-moe-amd-development.md'),
+      'target',
+    )
+    await mkdir(join(tempDir, '_workspace', 'rmsnorm', '3rdparty', 'composable_kernel', 'example'), { recursive: true })
+    await writeFile(
+      join(tempDir, '_workspace', 'rmsnorm', '3rdparty', 'composable_kernel', 'example', 'run_layernorm4d_fwd_example.inc'),
+      'noise',
+    )
+
+    const results = await searchComposerPaths(tempDir, 'w4a4de', 20)
+    const paths = results.map((entry) => entry.path)
+
+    expect(paths[0]).toBe('_notebooks/byte/cradle/references/w4a4-wfp4afp8-moe-amd-development.md')
+    expect(paths).not.toContain(
+      '_workspace/rmsnorm/3rdparty/composable_kernel/example/run_layernorm4d_fwd_example.inc',
+    )
+  })
+
   it('supports fuzzy matching for misspelled file names', async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'codexui-composer-search-'))
 
@@ -176,13 +199,14 @@ describe('searchComposerPaths', () => {
     await writeFile(join(tempDir, '_workspace.tmp', 'deep', '3rdparty', 'SeedKernelBench', 'README.md'), 'workspace')
 
     const results = await searchComposerPaths(tempDir, 'KernelBench', 20)
+    const paths = results.map((entry) => entry.path)
 
     expect(results[0]?.path).toBe('SeedKernelBench')
-    expect(results.findIndex((entry) => entry.path === 'SeedKernelBench')).toBeLessThan(
-      results.findIndex((entry) => entry.path === '.worktrees/op_134_153/SeedKernelBench'),
+    expect(paths.indexOf('SeedKernelBench')).toBeLessThan(
+      paths.indexOf('.worktrees/op_134_153/SeedKernelBench/README.md'),
     )
-    expect(results.findIndex((entry) => entry.path === 'SeedKernelBench')).toBeLessThan(
-      results.findIndex((entry) => entry.path === '_workspace.tmp/deep/3rdparty/SeedKernelBench'),
+    expect(paths.indexOf('SeedKernelBench')).toBeLessThan(
+      paths.indexOf('_workspace.tmp/deep/3rdparty/SeedKernelBench/README.md'),
     )
   })
 

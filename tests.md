@@ -7316,3 +7316,26 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - Remove `setOptimisticUserMessage` / `clearOptimisticUserMessage` / `clearOptimisticUserMessageIfPersisted`, the `optimisticUserMessageByThreadId` ref, its injection in the `messages` computed, the two `setOptimisticUserMessage` calls in `sendMessageToThread`, the `clearOptimisticUserMessageIfPersisted` call in `loadMessages`, and the prune/reset lines.
+
+### Feature: Composer file mention full-index fzf ranking
+
+#### Prerequisites
+- System `fzf` is available.
+- Project cwd can be large (for example a notebook workspace with symlinked caches).
+
+#### Steps
+1. Run `pnpm exec vitest run src/server/composerFileSearch.test.ts`.
+2. Open a large project and type a compact fuzzy query such as `@w4a4de`.
+3. Confirm the first hits match `rg --files | fzf --filter=w4a4de --scheme=path`.
+
+#### Expected Results
+- Search waits for the full path index before ranking, instead of ranking a partial early scan.
+- Real compact basename matches are not buried under deep sparse subsequence noise.
+- Candidate pool is top-level entries + shallow directories + file paths, without exploding every ancestor directory into the pool.
+
+#### Performance Audit
+- Cold search cost is roughly one full `rg --files` plus one `fzf --filter` over the path list.
+- Path cache TTL is 5 minutes; warm searches reuse the index.
+
+#### Rollback/Cleanup
+- No persistent cleanup is required.

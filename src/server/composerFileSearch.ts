@@ -26,8 +26,8 @@ type RankedComposerSearchPathCandidate = ComposerSearchPathCandidate & {
 }
 
 const COMPOSER_SEARCH_EXCLUDED_TOP_LEVEL_NAMES = new Set(['.git', 'node_modules'])
-const COMPOSER_PATH_CACHE_TTL_MS = 30_000
-const COMPOSER_FUZZY_INITIAL_SCAN_BUDGET_MS = 250
+const COMPOSER_PATH_CACHE_TTL_MS = 5 * 60_000
+const COMPOSER_PATH_CACHE_SETTLE_BUDGET_MS = 8_000
 const COMPOSER_SHALLOW_DIRECTORY_CANDIDATE_LIMIT = 1_000
 const COMPOSER_RIPGREP_FILE_ARGS = [
   '--files',
@@ -341,44 +341,29 @@ function warmComposerPathCache(cwd: string): void {
   void listCachedPathsWithRipgrep(cwd).catch(() => {})
 }
 
-function hasComposerPathLiteralMatch(paths: string[], query: string, startIndex: number): { matched: boolean; nextIndex: number } {
-  const trimmedQuery = query.trim()
-  for (let index = startIndex; index < paths.length; index += 1) {
-    if (!trimmedQuery || typeof scoreComposerPathLiteralCandidate(paths[index], trimmedQuery) === 'number') {
-      return { matched: true, nextIndex: index + 1 }
-    }
-  }
-  return { matched: false, nextIndex: paths.length }
-}
-
-async function waitForComposerPathCacheMatch(
+async function waitForComposerPathCacheSettle(
   entry: ComposerPathCacheEntry,
-  query: string,
   budgetMs: number,
 ): Promise<void> {
-  let checkedIndex = 0
-  const initialMatch = hasComposerPathLiteralMatch(entry.paths, query, checkedIndex)
-  checkedIndex = initialMatch.nextIndex
-  if (entry.settled || initialMatch.matched) return
+  if (entry.settled) return
 
   await new Promise<void>((resolvePromise) => {
     let timeout: ReturnType<typeof setTimeout> | null = null
     let waiter: (() => void) | null = null
-    let settled = false
+    let done = false
     const cleanup = () => {
-      if (settled) return
-      settled = true
+      if (done) return
+      done = true
       if (timeout) clearTimeout(timeout)
       if (waiter) entry.waiters.delete(waiter)
       resolvePromise()
     }
     waiter = () => {
-      const result = hasComposerPathLiteralMatch(entry.paths, query, checkedIndex)
-      checkedIndex = result.nextIndex
-      if (entry.settled || result.matched) cleanup()
+      if (entry.settled) cleanup()
     }
     timeout = setTimeout(cleanup, Math.max(1, budgetMs))
     entry.waiters.add(waiter)
+    if (entry.settled) cleanup()
   })
 }
 
@@ -614,11 +599,6 @@ function poolAdd(
   }
 }
 
-function poolAddWithAncestors(pool: ComposerCandidatePool, pathValue: string): void {
-  poolAdd(pool, pathValue, 'file')
-  addAncestorDirectories(pool, pathValue)
-}
-
 async function runFzfFilter(candidates: string[], query: string): Promise<string[] | null> {
   const command = resolveFzfCommand()
   if (!command) return null
@@ -698,16 +678,15 @@ export async function searchComposerPaths(
     return topLevelRows.slice(0, maxResults)
   }
 
-  const { pool, symlinks } = await collectComposerCandidatePool(cwd, topLevelRows)
+  // Wait for a full path index before ranking. Partial scans made fzf rank
+  // whatever happened to stream first, which buried real hits under random
+  // deep paths that only subsequence-matched.
+  const cacheEntry = getOrStartComposerPathCache(cwd)
+  await waitForComposerPathCacheSettle(cacheEntry, COMPOSER_PATH_CACHE_SETTLE_BUDGET_MS)
 
-  const cachedPaths = getCachedPaths(cwd)
-  const cacheEntry = cachedPaths ? null : getOrStartComposerPathCache(cwd)
-  if (cacheEntry) {
-    await waitForComposerPathCacheMatch(cacheEntry, trimmedQuery, COMPOSER_FUZZY_INITIAL_SCAN_BUDGET_MS)
-  }
-  const filePaths = cachedPaths ?? cacheEntry?.paths ?? []
-  for (const filePath of filePaths) {
-    poolAddWithAncestors(pool, filePath)
+  const { pool, symlinks } = await collectComposerCandidatePool(cwd, topLevelRows)
+  for (const filePath of cacheEntry.paths) {
+    poolAdd(pool, filePath, 'file')
   }
 
   const orderedPaths = await orderComposerCandidatesWithFzf(pool, trimmedQuery, maxResults)
