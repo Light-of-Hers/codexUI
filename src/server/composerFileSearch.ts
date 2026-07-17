@@ -26,6 +26,180 @@ type RankedComposerSearchPathCandidate = ComposerSearchPathCandidate & {
 }
 
 const COMPOSER_SEARCH_EXCLUDED_TOP_LEVEL_NAMES = new Set(['.git', 'node_modules'])
+
+
+// ---------------------------------------------------------------------------
+// fzf V2 fuzzy matching algorithm (ported from fzf 0.38.0 src/algo/algo.go)
+// ---------------------------------------------------------------------------
+// This is a faithful port of fzf's FuzzyMatchV2 with --scheme=path. Running it
+// in-process avoids the ~200ms overhead of spawning the fzf binary on every
+// keystroke. The binary spawn is kept as a fallback for forward-compatibility.
+
+const FZF_SCORE_MATCH = 16
+const FZF_SCORE_GAP_START = -3
+const FZF_SCORE_GAP_EXTENSION = -1
+const FZF_BONUS_BOUNDARY = Math.floor(FZF_SCORE_MATCH / 2) // 8
+const FZF_BONUS_NON_WORD = Math.floor(FZF_SCORE_MATCH / 2) // 8
+const FZF_BONUS_CAMEL_123 = FZF_BONUS_BOUNDARY + FZF_SCORE_GAP_EXTENSION // 7
+const FZF_BONUS_CONSECUTIVE = -(FZF_SCORE_GAP_START + FZF_SCORE_GAP_EXTENSION) // 4
+const FZF_BONUS_FIRST_CHAR_MULTIPLIER = 2
+const FZF_BONUS_BOUNDARY_WHITE = FZF_BONUS_BOUNDARY // 8 (path scheme)
+const FZF_BONUS_BOUNDARY_DELIMITER = FZF_BONUS_BOUNDARY + 1 // 9 (path scheme)
+
+const FZF_CHAR_WHITE = 0
+const FZF_CHAR_NON_WORD = 1
+const FZF_CHAR_DELIMITER = 2
+const FZF_CHAR_LOWER = 3
+const FZF_CHAR_UPPER = 4
+const FZF_CHAR_NUMBER = 6
+
+// In path scheme fzf only treats "/" as a delimiter (plus the OS separator on
+// non-unix). "." "_" "-" etc. are charNonWord, which gives a smaller bonus.
+const FZF_DELIMITER_CHARS = '/'
+const FZF_WHITE_CHARS = ' \t\n\v\f\r\x85\xA0'
+
+function fzfCharClassOf(c: string): number {
+  if (c >= 'a' && c <= 'z') return FZF_CHAR_LOWER
+  if (c >= 'A' && c <= 'Z') return FZF_CHAR_UPPER
+  if (c >= '0' && c <= '9') return FZF_CHAR_NUMBER
+  if (FZF_WHITE_CHARS.includes(c)) return FZF_CHAR_WHITE
+  if (FZF_DELIMITER_CHARS.includes(c)) return FZF_CHAR_DELIMITER
+  return FZF_CHAR_NON_WORD
+}
+
+function fzfBonusFor(prevClass: number, currClass: number): number {
+  if (currClass > FZF_CHAR_NON_WORD) {
+    if (prevClass === FZF_CHAR_WHITE) return FZF_BONUS_BOUNDARY_WHITE
+    if (prevClass === FZF_CHAR_DELIMITER) return FZF_BONUS_BOUNDARY_DELIMITER
+    if (prevClass === FZF_CHAR_NON_WORD) return FZF_BONUS_BOUNDARY
+  }
+  if (prevClass === FZF_CHAR_LOWER && currClass === FZF_CHAR_UPPER) return FZF_BONUS_CAMEL_123
+  if (prevClass !== FZF_CHAR_NUMBER && currClass === FZF_CHAR_NUMBER) return FZF_BONUS_CAMEL_123
+  if (currClass === FZF_CHAR_NON_WORD) return FZF_BONUS_NON_WORD
+  if (currClass === FZF_CHAR_WHITE) return FZF_BONUS_BOUNDARY_WHITE
+  return 0
+}
+
+/**
+ * Computes the fzf V2 match score for `text` against `pattern` using the path
+ * scoring scheme. Returns null when the pattern is not a subsequence of text
+ * (i.e. no match). Higher scores are better.
+ */
+export function fzfV2Match(text: string, pattern: string): number | null {
+  const M = pattern.length
+  const N = text.length
+  if (M === 0) return 0
+  if (M > N) return null
+
+  const lower = text.toLowerCase()
+  const pLower = pattern.toLowerCase()
+
+  // Quick subsequence check (mirrors fzf asciiFuzzyIndex) so we can bail out
+  // early for the common no-match case without allocating the DP tables.
+  let pidx = 0
+  for (let j = 0; j < N && pidx < M; j++) {
+    if (lower[j] === pLower[pidx]) pidx++
+  }
+  if (pidx < M) return null
+
+  // Bonus for each position. Path scheme uses charDelimiter as the initial
+  // char class so a leading word start gets the delimiter bonus.
+  const B = new Int16Array(N)
+  let prevClass = FZF_CHAR_DELIMITER
+  for (let j = 0; j < N; j++) {
+    B[j] = fzfBonusFor(prevClass, fzfCharClassOf(text[j]))
+    prevClass = fzfCharClassOf(text[j])
+  }
+
+  // Flat DP tables: H[i][j] and C[i][j] mapped to index i*(N+1)+j.
+  const NEG_INF = -32768
+  const H = new Int32Array((M + 1) * (N + 1))
+  const C = new Int32Array((M + 1) * (N + 1))
+  for (let i = 1; i <= M; i++) H[i * (N + 1)] = NEG_INF
+
+  let maxScore = 0
+
+  // Row 1: pattern[0] matching (fzf Phase 2 - greedy reset). When the first
+  // pattern char matches, fzf resets the score directly instead of comparing
+  // against the gap extension, which keeps later word starts competitive.
+  let inGap0 = false
+  for (let j = 1; j <= N; j++) {
+    if (lower[j - 1] === pLower[0]) {
+      const bonus = B[j - 1]
+      const score = FZF_SCORE_MATCH + bonus * FZF_BONUS_FIRST_CHAR_MULTIPLIER
+      H[(N + 1) + j] = Math.max(score, 0)
+      C[(N + 1) + j] = 1
+      inGap0 = false
+      if (M === 1 && score > maxScore) maxScore = score
+    } else {
+      const hLeft = H[(N + 1) + j - 1]
+      const s2: number = inGap0 ? hLeft + FZF_SCORE_GAP_EXTENSION : hLeft + FZF_SCORE_GAP_START
+      H[(N + 1) + j] = Math.max(s2, 0)
+      C[(N + 1) + j] = 0
+      inGap0 = true
+    }
+  }
+
+  // Rows 2..M: standard DP (fzf Phase 3).
+  for (let i = 2; i <= M; i++) {
+    const row = i * (N + 1)
+    const prevRow = (i - 1) * (N + 1)
+    let inGap = false
+
+    for (let j = 1; j <= N; j++) {
+      const hLeft = H[row + j - 1]
+      const s2: number = inGap ? hLeft + FZF_SCORE_GAP_EXTENSION : hLeft + FZF_SCORE_GAP_START
+
+      let s1 = 0
+      let consecutive = 0
+
+      if (lower[j - 1] === pLower[i - 1]) {
+        s1 = H[prevRow + j - 1] + FZF_SCORE_MATCH
+        let b = B[j - 1]
+        consecutive = C[prevRow + j - 1] + 1
+
+        if (consecutive > 1) {
+          const fb = B[j - consecutive]
+          if (b >= FZF_BONUS_BOUNDARY && b > fb) {
+            consecutive = 1
+          } else {
+            b = Math.max(b, Math.max(FZF_BONUS_CONSECUTIVE, fb))
+          }
+        }
+
+        if (s1 + b < s2) {
+          s1 += B[j - 1]
+          consecutive = 0
+        } else {
+          s1 += b
+        }
+      }
+
+      C[row + j] = consecutive
+      inGap = s1 < s2
+      const score = Math.max(Math.max(s1, s2), 0)
+      H[row + j] = score
+
+      if (i === M && lower[j - 1] === pLower[i - 1] && score > maxScore) {
+        maxScore = score
+      }
+    }
+  }
+
+  return maxScore > 0 ? maxScore : null
+}
+
+// fzf default tiebreak is byScore then byLength (shorter is better). We keep
+// the original input order as a final stable tiebreaker.
+function compareFzfRanks(
+  a: { score: number; path: string; index: number },
+  b: { score: number; path: string; index: number },
+): number {
+  if (b.score !== a.score) return b.score - a.score
+  if (a.path.length !== b.path.length) return a.path.length - b.path.length
+  return a.index - b.index
+}
+
 const COMPOSER_PATH_CACHE_TTL_MS = 5 * 60_000
 const COMPOSER_PATH_CACHE_SETTLE_BUDGET_MS = 8_000
 const COMPOSER_SHALLOW_DIRECTORY_CANDIDATE_LIMIT = 1_000
@@ -706,6 +880,31 @@ async function orderComposerCandidatesWithFzf(
   const candidates = Array.from(pool.values())
   if (candidates.length === 0) return []
 
+  const trimmedQuery = query.trim()
+
+  // In-process fzf V2 ranking. Avoids spawning the fzf binary on every
+  // keystroke (~200ms spawn overhead) and stays faithful to fzf's scoring.
+  if (trimmedQuery) {
+    const ranked: { score: number; path: string; index: number }[] = []
+    for (let i = 0; i < candidates.length; i++) {
+      const candidate = candidates[i]
+      const score = fzfV2Match(candidate.path, trimmedQuery)
+      if (score !== null) {
+        ranked.push({ score, path: candidate.path, index: i })
+      }
+    }
+    ranked.sort(compareFzfRanks)
+
+    const output: ComposerSearchPathCandidate[] = []
+    for (const entry of ranked) {
+      const hit = pool.get(entry.path)
+      if (hit) output.push(hit)
+      if (output.length >= limit) break
+    }
+    return output
+  }
+
+  // Fall back to the fzf binary for empty queries.
   const fzfOrdered = await runFzfFilter(candidates.map((c) => c.path), query)
   if (fzfOrdered) {
     const output: ComposerSearchPathCandidate[] = []

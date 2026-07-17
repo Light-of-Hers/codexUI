@@ -74,7 +74,8 @@
                     class="cmd-output-wrap"
                     :class="{ 'cmd-output-visible': isCommandExpanded(cmd) }"
                   >
-                    <div class="cmd-output-inner">
+                    <Transition :duration="350" name="cmd-output-fade">
+                    <div v-if="isCommandExpanded(cmd)" class="cmd-output-inner">
                       <div class="cmd-output-section">
                         <span class="cmd-output-section-label">Command</span>
                         <div class="cmd-code-box" tabindex="0" @keydown="onCodeBoxKeydown">
@@ -117,6 +118,7 @@
                         </div>
                       </div>
                     </div>
+                    </Transition>
                   </div>
                 </div>
               </div>
@@ -142,7 +144,8 @@
                 class="cmd-output-wrap"
                 :class="{ 'cmd-output-visible': isCommandExpanded(message) }"
               >
-                <div class="cmd-output-inner">
+                <Transition :duration="350" name="cmd-output-fade">
+                <div v-if="isCommandExpanded(message)" class="cmd-output-inner">
                   <div class="cmd-output-section">
                     <span class="cmd-output-section-label">Command</span>
                     <div class="cmd-code-box" tabindex="0" @keydown="onCodeBoxKeydown">
@@ -185,6 +188,7 @@
                     </div>
                   </div>
                 </div>
+                </Transition>
               </div>
             </template>
           </div>
@@ -483,7 +487,8 @@
                         class="cmd-output-wrap"
                         :class="{ 'cmd-output-visible': isCommandExpanded(cmd) }"
                       >
-                        <div class="cmd-output-inner">
+                        <Transition :duration="350" name="cmd-output-fade">
+                        <div v-if="isCommandExpanded(cmd)" class="cmd-output-inner">
                           <div class="cmd-output-section">
                             <span class="cmd-output-section-label">Command</span>
                             <div class="cmd-code-box" tabindex="0" @keydown="onCodeBoxKeydown">
@@ -526,6 +531,7 @@
                             </div>
                           </div>
                         </div>
+                        </Transition>
                       </div>
                     </div>
                   </div>
@@ -6963,6 +6969,13 @@ onBeforeUnmount(() => {
   border: 1px solid transparent;
   border-top: none;
 }
+
+/* Command output bodies are mounted with v-if only while a command is expanded
+   (see the <Transition :duration> wrappers around .cmd-output-inner). Collapsed
+   commands keep their (potentially very large) output nodes out of the DOM, so
+   long sessions with many commands no longer accumulate hidden DOM nodes and
+   leak memory. The leave duration outlasts the grid collapse transition above
+   so the unmount happens only after the animation finishes. */
 
 .cmd-output-wrap.cmd-output-visible {
   grid-template-rows: 1fr;

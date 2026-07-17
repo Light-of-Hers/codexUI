@@ -1919,50 +1919,34 @@ async function queueFileMentionSearch(): Promise<void> {
     return
   }
 
-  const { filterComposerFileMentionSuggestions, toComposerFileMentionSearchQuery } = await loadComposerFileMentionsModule()
+  const { toComposerFileMentionSearchQuery } = await loadComposerFileMentionsModule()
   if (!isFileMentionOpen.value) return
   const query = toComposerFileMentionSearchQuery(mentionQuery.value)
-  const hasReusableCache = fileMentionCachedCwd === cwd && fileMentionCachedRows.length > 0
-  let localRows: ComposerFileSuggestion[] = []
-  if (hasReusableCache) {
-    localRows = filterComposerFileMentionSuggestions(
-      fileMentionCachedRows,
-      query,
-      FILE_MENTION_DISPLAY_LIMIT,
-    )
-    fileMentionSuggestions.value = localRows
-    mentionHighlightedIndex.value = 0
-    resetMentionListScroll()
-  }
 
   if (fileMentionDebounceTimer) {
     clearTimeout(fileMentionDebounceTimer)
   }
 
-  const shouldFetchImmediately = !hasReusableCache || query.length === 0 || localRows.length === 0
-  const delayMs = shouldFetchImmediately ? FILE_MENTION_FAST_SEARCH_DELAY_MS : FILE_MENTION_IDLE_REFRESH_DELAY_MS
+  // Ranking is delegated to the backend fzf search. Re-running a local fuzzy
+  // filter here produced a different ordering and could drop the real target,
+  // so every keystroke re-queries the server and shows its exact order.
   const token = fileMentionSearchToken
   fileMentionDebounceTimer = setTimeout(() => {
     void refreshFileMentionSuggestionsFromServer(cwd, query, token)
-  }, delayMs)
+  }, FILE_MENTION_FAST_SEARCH_DELAY_MS)
 }
 
 async function refreshFileMentionSuggestionsFromServer(cwd: string, query: string, token: number): Promise<void> {
   if (fileMentionBackendInFlight) return
   fileMentionBackendInFlight = true
   try {
-    const { filterComposerFileMentionSuggestions, toComposerFileMentionSearchQuery } = await loadComposerFileMentionsModule()
     const rows = await searchComposerFiles(cwd, query, FILE_MENTION_BACKEND_LIMIT)
     if (!isFileMentionOpen.value || token !== fileMentionSearchToken || cwd !== (props.cwd ?? '').trim()) return
     fileMentionCachedCwd = cwd
     fileMentionCachedQuery = query
     fileMentionCachedRows = rows
-    const currentQuery = toComposerFileMentionSearchQuery(mentionQuery.value)
-    fileMentionSuggestions.value = filterComposerFileMentionSuggestions(
-      rows,
-      currentQuery,
-      FILE_MENTION_DISPLAY_LIMIT,
-    )
+    // Show the backend (fzf) order directly instead of re-scoring locally.
+    fileMentionSuggestions.value = rows.slice(0, FILE_MENTION_DISPLAY_LIMIT)
     mentionHighlightedIndex.value = 0
     resetMentionListScroll()
   } catch {

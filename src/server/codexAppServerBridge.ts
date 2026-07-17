@@ -10299,6 +10299,8 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         const query = typeof payload?.query === 'string' ? payload.query.trim() : ''
         const limitRaw = typeof payload?.limit === 'number' ? payload.limit : 20
         const limit = Math.max(1, Math.min(100, Math.floor(limitRaw)))
+        const offsetRaw = typeof payload?.offset === 'number' ? payload.offset : 0
+        const offset = Math.max(0, Math.floor(offsetRaw))
         if (!rawCwd) {
           setJson(res, 400, { error: 'Missing cwd' })
           return
@@ -10316,7 +10318,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         }
 
         try {
-          const paths = await searchComposerPaths(cwd, query, limit)
+          const paths = await searchComposerPaths(cwd, query, limit, offset)
           setJson(res, 200, { data: paths })
         } catch (error) {
           setJson(res, 500, { error: getErrorMessage(error, 'Failed to search paths') })
