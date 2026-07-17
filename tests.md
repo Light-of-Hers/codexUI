@@ -7339,3 +7339,32 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - No persistent cleanup is required.
+
+### Feature: File mention search shows the final query without flashing stale results
+
+#### Prerequisites
+- App server is running from this repository.
+- The workspace has nested directories that fuzzy-match a prefix of a deeper path, e.g. `_notebooks/byte/` and `_notebooks/byte/cradle/`, so typing `@bytecra` should rank `_notebooks/byte/cradle/` first.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Run `pnpm exec vitest run`.
+2. Run `pnpm exec vue-tsc --noEmit`.
+3. In the composer, type `@` then quickly type `bytecra` in one go (with brief pauses that can let an intermediate query like `@byte` dispatch a search).
+4. Confirm the suggestion list jumps straight to the `@bytecra` ranking (with `_notebooks/byte/cradle/` at the top) instead of first showing `_notebooks/byte/` at the top and then flashing/refreshing to `cradle/`.
+5. Type a few more characters and confirm the list updates to the latest query without lingering on an earlier query's results.
+6. Repeat in both light and dark theme.
+
+#### Expected Results
+- The suggestion list reflects the current `@<query>` only; an earlier, shorter query's in-flight result is discarded (token mismatch) rather than flashed before the final query refreshes.
+- Once a previous in-flight search settles, the final query is re-fetched immediately (no extra ~320ms idle debounce), so the correct ranking appears as soon as the network allows.
+- Light and dark theme render identically.
+
+#### Performance Audit
+- Root cause: `queueFileMentionSearch` only bumped `fileMentionSearchToken` on close/clear, not per query. If an intermediate query (e.g. `@byte`) won the 80ms debounce and dispatched a fetch while the user kept typing to `@bytecra`, that fetch's result still matched the current token and was displayed (`_notebooks/byte/` on top). The final `@bytecra` result only arrived via `refreshFileMentionSuggestionsAfterInFlight`, which additionally waited `FILE_MENTION_IDLE_REFRESH_DELAY_MS` (320ms) before re-fetching, so users saw the stale `byte/` list for a noticeable moment before it refreshed to `cradle/`.
+- Fix: `queueFileMentionSearch` now bumps `fileMentionSearchToken` on every query, so a stale intermediate fetch's result is discarded by the `token !== fileMentionSearchToken` guard in `refreshFileMentionSuggestionsFromServer`. `refreshFileMentionSuggestionsAfterInFlight` now re-fetches immediately (clearing any pending debounce timer) instead of waiting the idle debounce, so the final query's result shows as soon as the previous in-flight fetch settles.
+- No extra network calls in the common case: the in-flight guard (`fileMentionBackendInFlight`) still serializes fetches, and the cached-query check skips re-fetch when the query has not changed.
+- No profiling run was executed in this session; the change is a latency/correctness fix on the client dispatch path. Next measurement: instrument the gap between the last keystroke and the final suggestion list settling and confirm it no longer includes the stale-result flash plus the 320ms idle debounce.
+
+#### Rollback/Cleanup
+- Revert the `fileMentionSearchToken += 1` in `queueFileMentionSearch` and restore the `setTimeout(..., FILE_MENTION_IDLE_REFRESH_DELAY_MS)` in `refreshFileMentionSuggestionsAfterInFlight`.

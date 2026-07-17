@@ -1930,6 +1930,10 @@ async function queueFileMentionSearch(): Promise<void> {
   // Ranking is delegated to the backend fzf search. Re-running a local fuzzy
   // filter here produced a different ordering and could drop the real target,
   // so every keystroke re-queries the server and shows its exact order.
+  // Bump the token per query so that if an earlier, shorter query (e.g.
+  // `@byte`) already kicked off a fetch, its result is discarded instead of
+  // being flashed before the final query (e.g. `@bytecra`) refreshes.
+  fileMentionSearchToken += 1
   const token = fileMentionSearchToken
   fileMentionDebounceTimer = setTimeout(() => {
     void refreshFileMentionSuggestionsFromServer(cwd, query, token)
@@ -1968,10 +1972,14 @@ async function refreshFileMentionSuggestionsAfterInFlight(): Promise<void> {
   if (!isFileMentionOpen.value || fileMentionBackendInFlight) return
   const query = toComposerFileMentionSearchQuery(mentionQuery.value)
   if (fileMentionCachedCwd === cwd && fileMentionCachedQuery === query) return
+  if (fileMentionDebounceTimer) {
+    clearTimeout(fileMentionDebounceTimer)
+    fileMentionDebounceTimer = null
+  }
+  // Re-fetch immediately once the previous in-flight search settles so the
+  // final query's result appears without an extra idle debounce delay.
   const token = fileMentionSearchToken
-  fileMentionDebounceTimer = setTimeout(() => {
-    void refreshFileMentionSuggestionsFromServer(cwd, query, token)
-  }, FILE_MENTION_IDLE_REFRESH_DELAY_MS)
+  void refreshFileMentionSuggestionsFromServer(cwd, query, token)
 }
 
 async function applyFileMention(suggestion: ComposerFileSuggestion): Promise<void> {
