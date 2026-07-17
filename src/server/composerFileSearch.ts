@@ -773,6 +773,15 @@ function poolAdd(
   }
 }
 
+// Adds a file path plus all of its ancestor directories to the candidate pool
+// so that directories remain searchable even when they only appear as parents
+// of indexed files (e.g. repos/opencode when only repos/opencode/README.md is
+// returned by ripgrep).
+function poolAddWithAncestors(pool: ComposerCandidatePool, pathValue: string): void {
+  poolAdd(pool, pathValue, 'file')
+  addAncestorDirectories(pool, pathValue)
+}
+
 async function runFzfFilter(candidates: string[], query: string): Promise<string[] | null> {
   const command = resolveFzfCommand()
   if (!command) return null
@@ -860,7 +869,7 @@ export async function searchComposerPaths(
 
   const { pool, symlinks } = await collectComposerCandidatePool(cwd, topLevelRows)
   for (const filePath of cacheEntry.paths) {
-    poolAdd(pool, filePath, 'file')
+    poolAddWithAncestors(pool, filePath)
   }
 
   const orderedPaths = await orderComposerCandidatesWithFzf(pool, trimmedQuery, maxResults)
