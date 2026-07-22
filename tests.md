@@ -7368,3 +7368,32 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - Revert the `fileMentionSearchToken += 1` in `queueFileMentionSearch` and restore the `setTimeout(..., FILE_MENTION_IDLE_REFRESH_DELAY_MS)` in `refreshFileMentionSuggestionsAfterInFlight`.
+
+### Feature: Downward scroll reaches the latest reply without bouncing back
+
+#### Prerequisites
+- App server is running from this repository.
+- A thread whose latest turn ran many commands (100+) so the turn spans more messages than the render window cap, e.g. session `019f8278-14d6-7c91-8e40-5b7a854e7592` (a turn with 200+ tool calls).
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Run `pnpm exec vitest run`.
+2. Run `pnpm exec vue-tsc --noEmit`.
+3. Open the thread and scroll/locate the last user message (top of the latest turn).
+4. Scroll downward toward the agent's reply / latest command output. Confirm the view keeps scrolling down and reaches the very bottom instead of snapping back up to the user message.
+5. Continue scrolling up and down through the large turn; confirm no bounce/loop between loadMoreAbove and loadMoreBelow.
+6. Repeat in both light and dark theme.
+
+#### Expected Results
+- Scrolling down from the last user message reaches the latest reply at the bottom; the view no longer snaps back up to the user message.
+- No loadMoreAbove <-> loadMoreBelow bounce loop while paging through a large turn.
+- Light and dark theme render identically.
+
+#### Performance Audit
+- Root cause: `loadMoreBelow` computed `nextStart = max(renderWindowStart, nextEnd - MAX_RENDER_WINDOW_SIZE)`, so extending the end also trimmed the start once the window reached the 110-message cap. `restoreMessageAnchor` then snapped `scrollTop` back to the first visible message (near the top of the turn, e.g. the user's last message). The reduced `scrollTop` could re-trigger `loadMoreAbove` (which re-extended the start), looping the user back up whenever they tried to scroll down toward the latest reply.
+- Fix: `loadMoreBelow` now keeps `renderWindowStart` fixed and only grows `renderWindowEnd`, so paginating downward never slices off the top of the turn and `restoreMessageAnchor` becomes a no-op (the top of the window is unchanged). The window grows downward until it reaches the latest message; commands are grouped/collapsed so a larger window stays cheap to render.
+- `loadMoreAbove` is unchanged (it still caps the end via `MAX_RENDER_WINDOW_SIZE + latestTurnSize`), which is fine because paging upward is the direction where trimming the tail is acceptable.
+- No profiling run was executed in this session; the change is a scroll-correctness fix. Next measurement: on the example session, scroll down from the last user message and confirm `scrollTop` monotonically increases to the bottom with no `[DEBUG:switch-lag] setRenderWindow` oscillation between two window ranges.
+
+#### Rollback/Cleanup
+- Restore `const nextStart = Math.max(renderWindowStart.value, nextEnd - MAX_RENDER_WINDOW_SIZE)` and `setRenderWindow(nextStart, nextEnd)` in `loadMoreBelow`.

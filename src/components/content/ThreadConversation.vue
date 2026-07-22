@@ -5539,8 +5539,13 @@ async function loadMoreBelow(): Promise<void> {
   const anchor = readFirstVisibleMessageAnchor(container)
 
   const nextEnd = Math.min(props.messages.length, renderWindowEnd.value + LOAD_MORE_CHUNK)
-  const nextStart = Math.max(renderWindowStart.value, nextEnd - MAX_RENDER_WINDOW_SIZE)
-  setRenderWindow(nextStart, nextEnd)
+  // Keep the start fixed when paginating downward. Trimming the start to stay
+  // within MAX_RENDER_WINDOW_SIZE slices off the top of the turn (e.g. the
+  // user's last message); restoreMessageAnchor then snaps scrollTop back to
+  // that anchor, so scrolling down toward the latest reply bounces the user
+  // back up (and can re-trigger loadMoreAbove, looping). Commands are
+  // grouped/collapsed, so a window that grows downward stays cheap to render.
+  setRenderWindow(renderWindowStart.value, nextEnd)
 
   try {
     await nextTick()
