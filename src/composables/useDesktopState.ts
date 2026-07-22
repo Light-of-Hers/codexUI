@@ -2045,6 +2045,15 @@ export function useDesktopState() {
       combined = [...persisted, ...livePlan, ...liveCommands, ...liveFileChanges, ...liveToolCalls, ...liveAgent]
     }
 
+    if (typeof window !== 'undefined' && combined.length > 0 && combined[0].role === 'user') {
+      console.warn('[DEBUG:switch-lag] messages first is user', {
+        threadId,
+        length: combined.length,
+        first3: combined.slice(0, 3).map((m) => ({ role: m.role, turnIndex: m.turnIndex, type: m.messageType, id: m.id })),
+        last2: combined.slice(-2).map((m) => ({ role: m.role, turnIndex: m.turnIndex, type: m.messageType, id: m.id })),
+        optimisticId: optimistic?.id ?? '',
+      })
+    }
     const summary = turnSummaryByThreadId.value[threadId]
     if (!summary) return combined
     return insertTurnSummaryMessage(combined, summary)
