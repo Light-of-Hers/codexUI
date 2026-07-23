@@ -201,7 +201,8 @@ function compareFzfRanks(
   return a.index - b.index
 }
 
-const COMPOSER_PATH_CACHE_TTL_MS = 30_000
+const COMPOSER_PATH_CACHE_TTL_MS = 60_000
+const COMPOSER_CANDIDATE_POOL_IDLE_TTL_MS = 10 * 60_000
 const COMPOSER_PATH_CACHE_SETTLE_BUDGET_MS = 8_000
 const COMPOSER_SHALLOW_DIRECTORY_CANDIDATE_LIMIT = 1_000
 const COMPOSER_RIPGREP_FILE_ARGS = [
@@ -758,12 +759,14 @@ type ComposerCandidatePoolData = {
 
 type ComposerCandidatePoolCacheEntry = {
   expiresAt: number
+  lastAccessedAt: number
   promise: Promise<ComposerCandidatePoolData>
   data: ComposerCandidatePoolData | null
   refreshing: boolean
 }
 
 const composerCandidatePoolCache = new Map<string, ComposerCandidatePoolCacheEntry>()
+let composerCandidatePoolRefreshTimerStarted = false
 
 function createComposerFzfInputPath(): string {
   const suffix = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`
@@ -774,6 +777,27 @@ function scheduleComposerFzfInputCleanup(pathValue: string): void {
   setTimeout(() => {
     void unlink(pathValue).catch(() => {})
   }, 60_000).unref?.()
+}
+
+function ensureComposerCandidatePoolRefreshTimer(): void {
+  if (composerCandidatePoolRefreshTimerStarted) return
+  composerCandidatePoolRefreshTimerStarted = true
+  setInterval(() => {
+    refreshActiveComposerCandidatePools()
+  }, COMPOSER_PATH_CACHE_TTL_MS).unref?.()
+}
+
+function refreshActiveComposerCandidatePools(): void {
+  const now = Date.now()
+  for (const [cwd, entry] of Array.from(composerCandidatePoolCache.entries())) {
+    if (now - entry.lastAccessedAt > COMPOSER_CANDIDATE_POOL_IDLE_TTL_MS) {
+      composerCandidatePoolCache.delete(cwd)
+      if (entry.data) scheduleComposerFzfInputCleanup(entry.data.fzfInputPath)
+      continue
+    }
+    if (!entry.data || entry.refreshing || entry.expiresAt > now) continue
+    void startComposerCandidatePoolRefresh(cwd, entry).promise.catch(() => {})
+  }
 }
 
 function poolAdd(
@@ -945,6 +969,7 @@ function startComposerCandidatePoolRefresh(
 ): ComposerCandidatePoolCacheEntry {
   const entry: ComposerCandidatePoolCacheEntry = existing ?? {
     expiresAt: 0,
+    lastAccessedAt: Date.now(),
     promise: Promise.resolve(undefined as unknown as ComposerCandidatePoolData),
     data: null,
     refreshing: false,
@@ -974,8 +999,12 @@ function startComposerCandidatePoolRefresh(
 }
 
 async function getCachedComposerCandidatePool(cwd: string): Promise<ComposerCandidatePoolData> {
+  ensureComposerCandidatePoolRefreshTimer()
   const now = Date.now()
   const cached = composerCandidatePoolCache.get(cwd)
+  if (cached) {
+    cached.lastAccessedAt = now
+  }
   if (cached?.data) {
     if (cached.expiresAt <= now && !cached.refreshing) {
       void startComposerCandidatePoolRefresh(cwd, cached).promise.catch(() => {})
