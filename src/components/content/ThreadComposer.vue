@@ -522,7 +522,7 @@ const INLINE_MENTION_TOKEN_PATTERN = /(^|\s)([@\uFF20$\uFF04][^\s@\uFF20$\uFF04]
 const FULL_WIDTH_DOLLAR = '\uFF04'
 const FILE_MENTION_DISPLAY_LIMIT = 20
 const FILE_MENTION_BACKEND_LIMIT = 100
-const FILE_MENTION_FAST_SEARCH_DELAY_MS = 80
+const FILE_MENTION_FAST_SEARCH_DELAY_MS = 30
 const FILE_MENTION_IDLE_REFRESH_DELAY_MS = 320
 
 let markdownRendererModulePromise: Promise<MarkdownRendererModule> | null = null

@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process'
+import { closeSync, openSync } from 'node:fs'
 import type { Dirent } from 'node:fs'
-import { lstat, readdir, stat } from 'node:fs/promises'
-import { homedir } from 'node:os'
+import { lstat, readdir, stat, unlink, writeFile } from 'node:fs/promises'
+import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute, parse, resolve } from 'node:path'
 import { normalizePathForUi } from '../pathUtils.js'
 import { resolveFzfCommand, resolveRipgrepCommand } from '../commandResolution.js'
@@ -200,7 +201,7 @@ function compareFzfRanks(
   return a.index - b.index
 }
 
-const COMPOSER_PATH_CACHE_TTL_MS = 5 * 60_000
+const COMPOSER_PATH_CACHE_TTL_MS = 30_000
 const COMPOSER_PATH_CACHE_SETTLE_BUDGET_MS = 8_000
 const COMPOSER_SHALLOW_DIRECTORY_CANDIDATE_LIMIT = 1_000
 const COMPOSER_RIPGREP_FILE_ARGS = [
@@ -752,14 +753,28 @@ type ComposerCandidatePoolData = {
   symlinks: Map<string, boolean>
   candidates: ComposerSearchPathCandidate[]
   fzfInput: string
+  fzfInputPath: string
 }
 
 type ComposerCandidatePoolCacheEntry = {
   expiresAt: number
   promise: Promise<ComposerCandidatePoolData>
+  data: ComposerCandidatePoolData | null
+  refreshing: boolean
 }
 
 const composerCandidatePoolCache = new Map<string, ComposerCandidatePoolCacheEntry>()
+
+function createComposerFzfInputPath(): string {
+  const suffix = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  return resolve(tmpdir(), `codexui-composer-fzf-${suffix}.txt`)
+}
+
+function scheduleComposerFzfInputCleanup(pathValue: string): void {
+  setTimeout(() => {
+    void unlink(pathValue).catch(() => {})
+  }, 60_000).unref?.()
+}
 
 function poolAdd(
   pool: ComposerCandidatePool,
@@ -782,27 +797,52 @@ function poolAddWithAncestors(pool: ComposerCandidatePool, pathValue: string): v
   addAncestorDirectories(pool, pathValue)
 }
 
-async function runFzfFilter(input: string, query: string, limit: number): Promise<string[] | null> {
+async function runFzfFilter(input: string, inputPath: string, query: string, limit: number): Promise<string[] | null> {
   const command = resolveFzfCommand()
   if (!command) return null
-  if (!input) return []
+  if (!input && !inputPath) return []
 
   return await new Promise<string[] | null>((resolvePromise) => {
     let settled = false
+    let inputFd: number | null = null
     const finish = (value: string[] | null) => {
       if (settled) return
       settled = true
+      if (inputFd !== null) {
+        try {
+          closeSync(inputFd)
+        } catch {}
+        inputFd = null
+      }
       resolvePromise(value)
     }
+    if (inputPath) {
+      try {
+        inputFd = openSync(inputPath, 'r')
+      } catch {
+        finish(null)
+        return
+      }
+    }
     const proc = spawn(command, ['--filter', query, '--scheme=path', '--tiebreak=length,index'], {
-      stdio: ['pipe', 'pipe', 'ignore'],
+      stdio: [inputFd ?? 'pipe', 'pipe', 'ignore'],
       env: process.env,
     })
     const lines: string[] = []
     let pending = ''
     let failed = false
+    if (!proc.stdout) {
+      finish(null)
+      return
+    }
     proc.stdout.setEncoding('utf8')
-    proc.stdin.on('error', () => {})
+    if (!inputFd) {
+      if (!proc.stdin) {
+        finish(null)
+        return
+      }
+      proc.stdin.on('error', () => {})
+    }
     proc.stdout.on('data', (chunk: string) => {
       if (settled) return
       pending += chunk
@@ -832,7 +872,9 @@ async function runFzfFilter(input: string, query: string, limit: number): Promis
       if (pending) lines.push(pending)
       finish(lines.slice(0, limit))
     })
-    proc.stdin.end(input)
+    if (!inputFd) {
+      proc.stdin?.end(input)
+    }
   })
 }
 
@@ -885,32 +927,66 @@ async function buildComposerCandidatePoolData(cwd: string): Promise<ComposerCand
   }
 
   const candidates = Array.from(pool.values())
+  const fzfInput = candidates.map((candidate) => candidate.path).join('\n')
+  const fzfInputPath = createComposerFzfInputPath()
+  await writeFile(fzfInputPath, fzfInput)
   return {
     pool,
     symlinks,
     candidates,
-    fzfInput: candidates.map((candidate) => candidate.path).join('\n'),
+    fzfInput,
+    fzfInputPath,
   }
+}
+
+function startComposerCandidatePoolRefresh(
+  cwd: string,
+  existing?: ComposerCandidatePoolCacheEntry,
+): ComposerCandidatePoolCacheEntry {
+  const entry: ComposerCandidatePoolCacheEntry = existing ?? {
+    expiresAt: 0,
+    promise: Promise.resolve(undefined as unknown as ComposerCandidatePoolData),
+    data: null,
+    refreshing: false,
+  }
+
+  entry.refreshing = true
+  entry.promise = buildComposerCandidatePoolData(cwd).then((data) => {
+    const oldInputPath = entry.data?.fzfInputPath
+    entry.data = data
+    entry.expiresAt = Date.now() + COMPOSER_PATH_CACHE_TTL_MS
+    entry.refreshing = false
+    if (oldInputPath && oldInputPath !== data.fzfInputPath) {
+      scheduleComposerFzfInputCleanup(oldInputPath)
+    }
+    return data
+  }).catch((error) => {
+    entry.refreshing = false
+    if (!entry.data && composerCandidatePoolCache.get(cwd) === entry) {
+      composerCandidatePoolCache.delete(cwd)
+    }
+    if (entry.data) return entry.data
+    throw error
+  })
+
+  composerCandidatePoolCache.set(cwd, entry)
+  return entry
 }
 
 async function getCachedComposerCandidatePool(cwd: string): Promise<ComposerCandidatePoolData> {
   const now = Date.now()
   const cached = composerCandidatePoolCache.get(cwd)
-  if (cached && cached.expiresAt > now) {
+  if (cached?.data) {
+    if (cached.expiresAt <= now && !cached.refreshing) {
+      void startComposerCandidatePoolRefresh(cwd, cached).promise.catch(() => {})
+    }
+    return cached.data
+  }
+  if (cached) {
     return await cached.promise
   }
 
-  const entry: ComposerCandidatePoolCacheEntry = {
-    expiresAt: now + COMPOSER_PATH_CACHE_TTL_MS,
-    promise: buildComposerCandidatePoolData(cwd).catch((error) => {
-      if (composerCandidatePoolCache.get(cwd) === entry) {
-        composerCandidatePoolCache.delete(cwd)
-      }
-      throw error
-    }),
-  }
-  composerCandidatePoolCache.set(cwd, entry)
-  return await entry.promise
+  return await startComposerCandidatePoolRefresh(cwd).promise
 }
 
 function warmComposerCandidatePool(cwd: string): void {
@@ -950,13 +1026,13 @@ async function orderComposerCandidatesWithFzf(
   query: string,
   limit: number,
 ): Promise<ComposerSearchPathCandidate[]> {
-  const { candidates, fzfInput, pool } = poolData
+  const { candidates, fzfInput, fzfInputPath, pool } = poolData
   if (candidates.length === 0) return []
 
   const trimmedQuery = query.trim()
 
   if (trimmedQuery) {
-    const fzfOrdered = await runFzfFilter(fzfInput, trimmedQuery, limit)
+    const fzfOrdered = await runFzfFilter(fzfInput, fzfInputPath, trimmedQuery, limit)
     if (fzfOrdered) {
       const output: ComposerSearchPathCandidate[] = []
       for (const path of fzfOrdered) {
@@ -987,7 +1063,7 @@ async function orderComposerCandidatesWithFzf(
   }
 
   // Fall back to the fzf binary for empty queries.
-  const fzfOrdered = await runFzfFilter(fzfInput, query, limit)
+  const fzfOrdered = await runFzfFilter(fzfInput, fzfInputPath, query, limit)
   if (fzfOrdered) {
     const output: ComposerSearchPathCandidate[] = []
     for (const path of fzfOrdered) {
