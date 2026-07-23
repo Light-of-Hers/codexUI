@@ -465,12 +465,6 @@ async function listPathsWithRipgrep(
   })
 }
 
-function getCachedPaths(cwd: string): string[] | null {
-  const cached = composerPathCache.get(cwd)
-  if (!cached || cached.expiresAt <= Date.now()) return null
-  return cached.settled ? cached.paths : null
-}
-
 function getOrStartComposerPathCache(cwd: string): ComposerPathCacheEntry {
   const now = Date.now()
   const cached = composerPathCache.get(cwd)
@@ -505,14 +499,6 @@ function getOrStartComposerPathCache(cwd: string): ComposerPathCacheEntry {
   entry.promise = promise
   composerPathCache.set(cwd, entry)
   return entry
-}
-
-async function listCachedPathsWithRipgrep(cwd: string): Promise<string[]> {
-  return await getOrStartComposerPathCache(cwd).promise
-}
-
-function warmComposerPathCache(cwd: string): void {
-  void listCachedPathsWithRipgrep(cwd).catch(() => {})
 }
 
 async function waitForComposerPathCacheSettle(
@@ -761,6 +747,20 @@ async function searchAbsoluteComposerPaths(
 
 type ComposerCandidatePool = Map<string, ComposerSearchPathCandidate>
 
+type ComposerCandidatePoolData = {
+  pool: ComposerCandidatePool
+  symlinks: Map<string, boolean>
+  candidates: ComposerSearchPathCandidate[]
+  fzfInput: string
+}
+
+type ComposerCandidatePoolCacheEntry = {
+  expiresAt: number
+  promise: Promise<ComposerCandidatePoolData>
+}
+
+const composerCandidatePoolCache = new Map<string, ComposerCandidatePoolCacheEntry>()
+
 function poolAdd(
   pool: ComposerCandidatePool,
   pathValue: string,
@@ -782,32 +782,57 @@ function poolAddWithAncestors(pool: ComposerCandidatePool, pathValue: string): v
   addAncestorDirectories(pool, pathValue)
 }
 
-async function runFzfFilter(candidates: string[], query: string): Promise<string[] | null> {
+async function runFzfFilter(input: string, query: string, limit: number): Promise<string[] | null> {
   const command = resolveFzfCommand()
   if (!command) return null
-  if (candidates.length === 0) return []
+  if (!input) return []
 
   return await new Promise<string[] | null>((resolvePromise) => {
+    let settled = false
+    const finish = (value: string[] | null) => {
+      if (settled) return
+      settled = true
+      resolvePromise(value)
+    }
     const proc = spawn(command, ['--filter', query, '--scheme=path', '--tiebreak=length,index'], {
       stdio: ['pipe', 'pipe', 'ignore'],
       env: process.env,
     })
-    let stdout = ''
+    const lines: string[] = []
+    let pending = ''
     let failed = false
     proc.stdout.setEncoding('utf8')
-    proc.stdout.on('data', (chunk: string) => { stdout += chunk })
-    proc.on('error', () => { failed = true; resolvePromise(null) })
+    proc.stdin.on('error', () => {})
+    proc.stdout.on('data', (chunk: string) => {
+      if (settled) return
+      pending += chunk
+      const rows = pending.split(/\r?\n/u)
+      pending = rows.pop() ?? ''
+      for (const row of rows) {
+        if (!row) continue
+        lines.push(row)
+        if (lines.length >= limit) {
+          finish(lines)
+          proc.kill()
+          return
+        }
+      }
+    })
+    proc.on('error', () => {
+      failed = true
+      finish(null)
+    })
     proc.on('close', (code) => {
-      if (failed) return
+      if (failed || settled) return
       // fzf exits with 1 when there are no matches; any other non-zero is a real error
       if (code !== 0 && code !== 1) {
-        resolvePromise(null)
+        finish(null)
         return
       }
-      const lines = stdout.split(/\r?\n/u).filter(Boolean)
-      resolvePromise(lines)
+      if (pending) lines.push(pending)
+      finish(lines.slice(0, limit))
     })
-    proc.stdin.end(candidates.join('\n'))
+    proc.stdin.end(input)
   })
 }
 
@@ -845,21 +870,8 @@ async function collectComposerCandidatePool(
   return { pool, symlinks }
 }
 
-export async function searchComposerPaths(
-  cwd: string,
-  query: string,
-  limit: number,
-): Promise<ComposerSearchPathResult[]> {
-  const trimmedQuery = query.trim()
-  const maxResults = Math.max(1, Math.min(100, Math.floor(limit)))
-  const absoluteResults = await searchAbsoluteComposerPaths(trimmedQuery, maxResults)
-  if (absoluteResults) return absoluteResults
-
+async function buildComposerCandidatePoolData(cwd: string): Promise<ComposerCandidatePoolData> {
   const topLevelRows = await listTopLevelComposerPaths(cwd)
-  if (!trimmedQuery) {
-    warmComposerPathCache(cwd)
-    return topLevelRows.slice(0, maxResults)
-  }
 
   // Wait for a full path index before ranking. Partial scans made fzf rank
   // whatever happened to stream first, which buried real hits under random
@@ -872,28 +884,89 @@ export async function searchComposerPaths(
     poolAddWithAncestors(pool, filePath)
   }
 
-  const orderedPaths = await orderComposerCandidatesWithFzf(pool, trimmedQuery, maxResults)
+  const candidates = Array.from(pool.values())
+  return {
+    pool,
+    symlinks,
+    candidates,
+    fzfInput: candidates.map((candidate) => candidate.path).join('\n'),
+  }
+}
 
-  return await Promise.all(orderedPaths.slice(0, maxResults).map(async (candidate) => ({
+async function getCachedComposerCandidatePool(cwd: string): Promise<ComposerCandidatePoolData> {
+  const now = Date.now()
+  const cached = composerCandidatePoolCache.get(cwd)
+  if (cached && cached.expiresAt > now) {
+    return await cached.promise
+  }
+
+  const entry: ComposerCandidatePoolCacheEntry = {
+    expiresAt: now + COMPOSER_PATH_CACHE_TTL_MS,
+    promise: buildComposerCandidatePoolData(cwd).catch((error) => {
+      if (composerCandidatePoolCache.get(cwd) === entry) {
+        composerCandidatePoolCache.delete(cwd)
+      }
+      throw error
+    }),
+  }
+  composerCandidatePoolCache.set(cwd, entry)
+  return await entry.promise
+}
+
+function warmComposerCandidatePool(cwd: string): void {
+  void getCachedComposerCandidatePool(cwd).catch(() => {})
+}
+
+export async function searchComposerPaths(
+  cwd: string,
+  query: string,
+  limit: number,
+  offset = 0,
+): Promise<ComposerSearchPathResult[]> {
+  const trimmedQuery = query.trim()
+  const maxResults = Math.max(1, Math.min(100, Math.floor(limit)))
+  const skip = Math.max(0, Math.floor(offset))
+  const absoluteResults = await searchAbsoluteComposerPaths(trimmedQuery, maxResults)
+  if (absoluteResults) return absoluteResults
+
+  if (!trimmedQuery) {
+    const topLevelRows = await listTopLevelComposerPaths(cwd)
+    warmComposerCandidatePool(cwd)
+    return topLevelRows.slice(skip, skip + maxResults)
+  }
+
+  const poolData = await getCachedComposerCandidatePool(cwd)
+  const orderedPaths = await orderComposerCandidatesWithFzf(poolData, trimmedQuery, skip + maxResults)
+
+  return await Promise.all(orderedPaths.slice(skip, skip + maxResults).map(async (candidate) => ({
     path: candidate.path,
     kind: candidate.kind,
-    isSymlink: symlinks.get(candidate.path) ?? await isSymlinkPath(cwd, candidate.path),
+    isSymlink: poolData.symlinks.get(candidate.path) ?? await isSymlinkPath(cwd, candidate.path),
   })))
 }
 
 async function orderComposerCandidatesWithFzf(
-  pool: ComposerCandidatePool,
+  poolData: ComposerCandidatePoolData,
   query: string,
   limit: number,
 ): Promise<ComposerSearchPathCandidate[]> {
-  const candidates = Array.from(pool.values())
+  const { candidates, fzfInput, pool } = poolData
   if (candidates.length === 0) return []
 
   const trimmedQuery = query.trim()
 
-  // In-process fzf V2 ranking. Avoids spawning the fzf binary on every
-  // keystroke (~200ms spawn overhead) and stays faithful to fzf's scoring.
   if (trimmedQuery) {
+    const fzfOrdered = await runFzfFilter(fzfInput, trimmedQuery, limit)
+    if (fzfOrdered) {
+      const output: ComposerSearchPathCandidate[] = []
+      for (const path of fzfOrdered) {
+        const hit = pool.get(path)
+        if (hit) output.push(hit)
+        if (output.length >= limit) break
+      }
+      return output
+    }
+
     const ranked: { score: number; path: string; index: number }[] = []
     for (let i = 0; i < candidates.length; i++) {
       const candidate = candidates[i]
@@ -914,7 +987,7 @@ async function orderComposerCandidatesWithFzf(
   }
 
   // Fall back to the fzf binary for empty queries.
-  const fzfOrdered = await runFzfFilter(candidates.map((c) => c.path), query)
+  const fzfOrdered = await runFzfFilter(fzfInput, query, limit)
   if (fzfOrdered) {
     const output: ComposerSearchPathCandidate[] = []
     for (const path of fzfOrdered) {

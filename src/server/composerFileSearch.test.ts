@@ -141,6 +141,19 @@ describe('searchComposerPaths', () => {
     expect(paths).toContain('repos/opencode')
   })
 
+  it('surfaces ancestor directories from indexed file paths', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'codexui-composer-search-'))
+
+    await mkdir(join(tempDir, 'repos', 'opencode', 'src'), { recursive: true })
+    await writeFile(join(tempDir, 'repos', 'opencode', 'src', 'index.ts'), 'source')
+
+    const results = await searchComposerPaths(tempDir, 'opencode', 20)
+    const paths = results.map((entry) => entry.path)
+
+    expect(paths).toContain('repos/opencode')
+    expect(results.find((entry) => entry.path === 'repos/opencode')?.kind).toBe('directory')
+  })
+
   it('returns exact absolute path queries without treating them as cwd-relative text', async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'codexui-composer-search-'))
     const targetDir = join(tempDir, 'absolute-target')
