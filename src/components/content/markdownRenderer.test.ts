@@ -283,6 +283,16 @@ const answer = 42
     expect(html).not.toContain('message-file-link')
   })
 
+  it('emits Mermaid placeholders with their source for browser-side rendering', () => {
+    const html = render('```mermaid\nflowchart LR\n  A[Start] --> B[Finish]\n```')
+
+    expect(html).toContain('class="message-mermaid message-scroll-anchor"')
+    expect(html).toContain('data-mermaid-state="pending"')
+    expect(html).toContain('data-mermaid-source="flowchart LR')
+    expect(html).toMatch(/<pre class="message-mermaid-source"[^>]*><code class="hljs language-mermaid"[^>]*>flowchart LR/u)
+    expect(html).not.toContain('message-code-block')
+  })
+
   it('highlights expanded fenced code language aliases', () => {
     const html = render('```shellscript\necho "$HOME"\n```')
 

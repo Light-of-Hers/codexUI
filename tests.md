@@ -7403,3 +7403,41 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - Restore `const nextStart = Math.max(renderWindowStart.value, nextEnd - MAX_RENDER_WINDOW_SIZE)` and `setRenderWindow(nextStart, nextEnd)` in `loadMoreBelow`.
+
+### Feature: Mermaid diagrams in Markdown previews and messages
+
+#### Prerequisites
+- App server is running from this repository.
+- A thread is available for sending a test message.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Run `pnpm exec vitest run src/components/content/markdownRenderer.test.ts`.
+2. In the composer, enter a Mermaid fence such as:
+
+   ````markdown
+   ```mermaid
+   flowchart LR
+     A[Start] --> B[Finish]
+   ```
+   ````
+
+3. Open the composer Markdown preview and confirm the fence is replaced by a rendered SVG flowchart.
+4. Send the same text to the thread and confirm the rendered message replaces the Mermaid fence with the same SVG diagram after the message renderer loads.
+5. Enter an invalid Mermaid fence, open preview, and send it; confirm both locations retain readable Mermaid source instead of an empty or broken diagram.
+6. Switch to dark theme, wait for the visible diagrams to redraw, and repeat steps 3-5.
+
+#### Expected Results
+- Fenced blocks labeled `mermaid` render as scalable SVG diagrams in both composer preview and message content.
+- Other fenced code blocks keep their existing highlighted, copyable code-block behavior.
+- Invalid Mermaid source remains visible as source code.
+- Light and dark diagrams have readable fills, text, and borders after a theme switch.
+
+#### Performance Audit
+- The common Markdown renderer only emits a lightweight placeholder; it neither imports Mermaid nor parses diagrams synchronously.
+- Mermaid is dynamically loaded only when a visible preview or rendered message contains a Mermaid placeholder. Production output keeps the Mermaid core in a separate on-demand chunk (about 635 KB), while the primary conversation chunk remains about 120 KB.
+- Render calls are serialized because Mermaid has module-global configuration. The DOM scan is limited to visible preview/message roots and only pending or theme-stale diagrams are processed.
+- No API calls, filesystem work, or cache invalidation are added for ordinary Markdown messages without Mermaid blocks.
+
+#### Rollback/Cleanup
+- Delete the disposable Mermaid test message or close the test thread. No persistent application data is created by rendering.

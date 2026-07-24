@@ -1164,6 +1164,11 @@ function wrapCodeBlock(node: MarkdownElement, parent: MarkdownNode, index: numbe
   const code = firstCode ?? null
   const language = extractCodeLanguage(code)
 
+  if (language.toLowerCase() === 'mermaid') {
+    wrapMermaidDiagram(node, parent, index, code)
+    return
+  }
+
   const wrapperChildren: MarkdownNode[] = []
   if (language) {
     wrapperChildren.push({
@@ -1187,6 +1192,30 @@ function wrapCodeBlock(node: MarkdownElement, parent: MarkdownNode, index: numbe
       className: ['message-code-block', 'message-scroll-anchor'],
     },
     children: wrapperChildren,
+  }
+
+  if (!Array.isArray(parent.children)) return
+  parent.children.splice(index, 1, wrapper)
+}
+
+function wrapMermaidDiagram(
+  node: MarkdownElement,
+  parent: MarkdownNode,
+  index: number,
+  code: MarkdownElement | null,
+): void {
+  addClass(node, 'message-mermaid-source')
+
+  const wrapper: MarkdownElement = {
+    type: 'element',
+    tagName: 'div',
+    position: node.position,
+    properties: {
+      className: ['message-mermaid', 'message-scroll-anchor'],
+      dataMermaidSource: nodePlainText(code ?? node),
+      dataMermaidState: 'pending',
+    },
+    children: [node],
   }
 
   if (!Array.isArray(parent.children)) return

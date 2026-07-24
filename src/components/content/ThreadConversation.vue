@@ -1034,6 +1034,7 @@ import { getHighlightLanguageForPath, normalizeHighlightLanguage } from '../../u
 import { groupConsecutiveToolCallsByLatestId } from './threadConversationGrouping'
 import { resolveAutoFollowAfterScroll, resolveLatestRenderWindow } from './threadConversationScroll'
 import { buildUserMessageNavigationItems, type UserMessageNavigationItem } from './threadMessageNavigation'
+import { observeMermaidTheme, renderMermaidDiagrams } from './mermaidRenderer'
 
 import IconTablerArrowUp from '../icons/IconTablerArrowUp.vue'
 import IconTablerChevronDown from '../icons/IconTablerChevronDown.vue'
@@ -1817,6 +1818,8 @@ function forwardServerRequestReply(payload: UiServerRequestReply): void {
 }
 
 const conversationListRef = ref<HTMLElement | null>(null)
+let stopConversationMermaidThemeObserver: (() => void) | null = null
+let observedConversationMermaidRoot: HTMLElement | null = null
 const bottomAnchorRef = ref<HTMLElement | null>(null)
 const modalImageUrl = ref('')
 const copiedResponseAnchorId = ref('')
@@ -2081,6 +2084,7 @@ function loadMarkdownRendererModule(): Promise<MarkdownRendererModule> {
         markdownRendererModule = module
         markdownHtmlCache.clear()
         markdownRendererVersion.value += 1
+        void nextTick().then(() => renderConversationMermaidDiagrams())
         return module
       })
       .finally(() => {
@@ -2088,6 +2092,17 @@ function loadMarkdownRendererModule(): Promise<MarkdownRendererModule> {
       })
   }
   return markdownRendererLoader
+}
+
+function renderConversationMermaidDiagrams(): Promise<void> {
+  const root = conversationListRef.value
+  if (!root) return Promise.resolve()
+  if (observedConversationMermaidRoot !== root) {
+    stopConversationMermaidThemeObserver?.()
+    observedConversationMermaidRoot = root
+    stopConversationMermaidThemeObserver = observeMermaidTheme(root)
+  }
+  return renderMermaidDiagrams(root)
 }
 
 function scheduleMarkdownRendererLoad(): void {
@@ -5680,6 +5695,7 @@ watch(
     }
 
     await scheduleConversationScroll()
+    void renderConversationMermaidDiagrams()
   },
 )
 
@@ -5815,9 +5831,13 @@ onMounted(() => {
   if (threadId && props.ensureUserMessageNavigationTotal) {
     props.ensureUserMessageNavigationTotal(threadId)
   }
+  void renderConversationMermaidDiagrams()
 })
 
 onBeforeUnmount(() => {
+  stopConversationMermaidThemeObserver?.()
+  stopConversationMermaidThemeObserver = null
+  observedConversationMermaidRoot = null
   clearRenderCaches()
   if (conversationScrollFrame) {
     cancelAnimationFrame(conversationScrollFrame)

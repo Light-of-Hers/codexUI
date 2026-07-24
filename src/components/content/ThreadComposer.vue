@@ -213,7 +213,7 @@
         role="region"
         :aria-label="t('Markdown preview')"
       >
-        <article class="thread-composer-preview-content message-text-flow" v-html="draftPreviewHtml"></article>
+        <article ref="draftPreviewContentRef" class="thread-composer-preview-content message-text-flow" v-html="draftPreviewHtml"></article>
       </div>
 
       <div
@@ -506,6 +506,7 @@ import IconTablerMinimize from '../icons/IconTablerMinimize.vue'
 import IconTablerPlayerStopFilled from '../icons/IconTablerPlayerStopFilled.vue'
 import ComposerDropdown from './ComposerDropdown.vue'
 import ComposerSearchDropdown from './ComposerSearchDropdown.vue'
+import { observeMermaidTheme, renderMermaidDiagrams } from './mermaidRenderer'
 
 type SkillSourceBadge = {
   badge: string
@@ -639,7 +640,10 @@ const PROMPT_OPTION_PREFIX = 'prompt:'
 const draft = ref('')
 const isMarkdownPreviewVisible = ref(false)
 const draftPreviewHtml = ref('')
+const draftPreviewContentRef = ref<HTMLElement | null>(null)
 let draftPreviewRenderToken = 0
+let stopDraftPreviewMermaidThemeObserver: (() => void) | null = null
+let observedDraftPreviewRoot: HTMLElement | null = null
 const isSubmittingDraft = ref(false)
 const selectedImages = ref<SelectedImage[]>([])
 const selectedSkills = ref<SkillItem[]>([])
@@ -1157,10 +1161,28 @@ async function refreshDraftPreviewHtml(): Promise<void> {
     draftPreviewHtml.value = rendered
       ? rendered
       : `<p class="thread-composer-preview-empty">${t('Nothing to preview.')}</p>`
+    await nextTick()
+    if (renderToken !== draftPreviewRenderToken || !isMarkdownPreviewVisible.value) return
+    ensureDraftPreviewMermaidThemeObserver()
+    void renderMermaidDiagrams(draftPreviewContentRef.value)
   } catch {
     if (renderToken !== draftPreviewRenderToken || !isMarkdownPreviewVisible.value) return
     draftPreviewHtml.value = `<p class="thread-composer-preview-empty">${t('Nothing to preview.')}</p>`
   }
+}
+
+function ensureDraftPreviewMermaidThemeObserver(): void {
+  const root = draftPreviewContentRef.value
+  if (!root || observedDraftPreviewRoot === root) return
+  stopDraftPreviewMermaidThemeObserver?.()
+  observedDraftPreviewRoot = root
+  stopDraftPreviewMermaidThemeObserver = observeMermaidTheme(root)
+}
+
+function stopDraftPreviewMermaidThemeObservation(): void {
+  stopDraftPreviewMermaidThemeObserver?.()
+  stopDraftPreviewMermaidThemeObserver = null
+  observedDraftPreviewRoot = null
 }
 
 function replaceDraftState(payload: ComposerDraftPayload): void {
@@ -2192,6 +2214,7 @@ defineExpose<ThreadComposerExposed>({
 })
 
 onBeforeUnmount(() => {
+  stopDraftPreviewMermaidThemeObservation()
   document.removeEventListener('click', onDocumentClick)
   window.removeEventListener('drop', onWindowDragCleanup)
   window.removeEventListener('dragend', onWindowDragCleanup)
@@ -2272,6 +2295,7 @@ watch(isMarkdownPreviewVisible, (visible) => {
     void refreshDraftPreviewHtml()
     return
   }
+  stopDraftPreviewMermaidThemeObservation()
   draftPreviewHtml.value = ''
   draftPreviewRenderToken += 1
 })
