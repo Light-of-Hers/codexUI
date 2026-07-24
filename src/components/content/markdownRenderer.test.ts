@@ -118,6 +118,15 @@ const answer = 42
     expect(html).toContain(String.raw`>\mark{code}\comment{nope}</code>`)
   })
 
+  it('renders marks that contain inline code', () => {
+    const html = render('Rule: \\mark{only `notebook = "."` or `notebook = "_notebooks/<path>"`}.')
+
+    expect(html).toContain('<mark class="message-annotation-mark">')
+    expect(html).toContain('>notebook = "."</code>')
+    expect(html).toContain('>notebook = "_notebooks/&#x3C;path>"</code>')
+    expect(html).not.toContain(String.raw`\mark{only`)
+  })
+
   it('renders annotation comments that contain inline math and code', () => {
     const html = render('Review \\cmt{check $E = mc^2$ and `dtype`} now.')
 

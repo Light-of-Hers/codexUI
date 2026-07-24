@@ -70,11 +70,6 @@ type DecorationRange =
   | { kind: 'comment'; start: number; end: number; value: string }
   | { kind: 'markComment'; start: number; end: number; mark: string; comment: string }
 
-type CommentCommandOpener = {
-  start: number
-  bodyStart: number
-}
-
 type AnnotationBodyTextScan = {
   body: string
   closed: boolean
@@ -410,8 +405,8 @@ function splitDecorationSyntax(parent: MarkdownNode, ancestors: MarkdownElement[
   if (!Array.isArray(parent.children)) return
 
   if (!hasIgnoredTextAncestor(ancestors) && !hasAnnotationTextAncestor(ancestors)) {
-    while (splitCrossNodeCommentSyntax(parent)) {
-      // Keep scanning until all comment commands split across inline nodes are folded.
+    while (splitCrossNodeAnnotationSyntax(parent)) {
+      // Keep scanning until all annotation commands split across inline nodes are folded.
     }
   }
 
@@ -443,7 +438,7 @@ function hasDecorationSyntax(text: string): boolean {
   return text.includes('==') || text.includes('\\mark{') || text.includes('\\comment{') || text.includes('\\cmt{')
 }
 
-function splitCrossNodeCommentSyntax(parent: MarkdownNode): boolean {
+function splitCrossNodeAnnotationSyntax(parent: MarkdownNode): boolean {
   const children = parent.children
   if (!Array.isArray(children)) return false
 
@@ -452,12 +447,12 @@ function splitCrossNodeCommentSyntax(parent: MarkdownNode): boolean {
     if (!isText(child)) continue
 
     let searchFrom = 0
-    let opener = findCommentCommandOpener(child.value, searchFrom)
+    let opener = findCrossNodeAnnotationOpener(child.value, searchFrom)
     while (opener) {
       const scan = scanAnnotationBodyText(child.value.slice(opener.bodyStart), 1)
       if (!scan.closed) break
       searchFrom = opener.bodyStart
-      opener = findCommentCommandOpener(child.value, searchFrom)
+      opener = findCrossNodeAnnotationOpener(child.value, searchFrom)
     }
     if (!opener) continue
 
@@ -485,7 +480,9 @@ function splitCrossNodeCommentSyntax(parent: MarkdownNode): boolean {
 
         const replacement: MarkdownNode[] = [
           ...textToAnnotationBodyNodes(before),
-          createAnnotationCommentNode(bodyChildren, decodeAnnotationValue(sourceParts.join(''))),
+          opener.kind === 'mark'
+            ? createAnnotationMarkNode(bodyChildren)
+            : createAnnotationCommentNode(bodyChildren, decodeAnnotationValue(sourceParts.join(''))),
           ...textToAnnotationBodyNodes(scan.afterClose),
         ]
         children.splice(index, endIndex - index + 1, ...replacement)
@@ -500,17 +497,25 @@ function splitCrossNodeCommentSyntax(parent: MarkdownNode): boolean {
   return false
 }
 
-function findCommentCommandOpener(text: string, fromIndex = 0): CommentCommandOpener | null {
-  const commands = ['\\comment{', '\\cmt{']
-  let match: CommentCommandOpener | null = null
+function findCrossNodeAnnotationOpener(
+  text: string,
+  fromIndex = 0,
+): { start: number; bodyStart: number; kind: AnnotationCommandKind } | null {
+  const commands: Array<{ raw: string; kind: AnnotationCommandKind }> = [
+    { raw: '\\comment{', kind: 'comment' },
+    { raw: '\\cmt{', kind: 'comment' },
+    { raw: '\\mark{', kind: 'mark' },
+  ]
+  let match: { start: number; bodyStart: number; kind: AnnotationCommandKind } | null = null
 
   for (const command of commands) {
-    const start = text.indexOf(command, fromIndex)
+    const start = text.indexOf(command.raw, fromIndex)
     if (start < 0) continue
     if (match && start >= match.start) continue
     match = {
       start,
-      bodyStart: start + command.length,
+      bodyStart: start + command.raw.length,
+      kind: command.kind,
     }
   }
 
@@ -664,14 +669,17 @@ function createDecorationNode(range: DecorationRange): MarkdownNode {
   }
 }
 
-function createAnnotationMarkNode(value: string): MarkdownElement {
+function createAnnotationMarkNode(value: string | MarkdownNode[]): MarkdownElement {
+  const bodyChildren = Array.isArray(value)
+    ? value
+    : [{ type: 'text', value }]
   return {
     type: 'element',
     tagName: 'mark',
     properties: {
       className: ['message-annotation-mark'],
     },
-    children: [{ type: 'text', value }],
+    children: bodyChildren,
   }
 }
 

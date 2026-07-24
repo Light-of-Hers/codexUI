@@ -2861,6 +2861,10 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       const editorValue = editor.getValue();
       const startIndex = editorPositionToIndex(editorValue, selectionRange.start);
       const endIndex = editorPositionToIndex(editorValue, selectionRange.end);
+      lastPreviewHighlightSelection = null;
+      lastPreviewClickedHighlight = null;
+      lastPreviewClickedMark = null;
+      lastPreviewClickedComment = null;
       lastEditorHighlightSelection = {
         startIndex: Math.min(startIndex, endIndex),
         endIndex: Math.max(startIndex, endIndex),
@@ -3501,8 +3505,8 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
 
     const highlightCurrentSelection = () => {
       if (!supportsMarkdownPreview) return;
+      if (lastPreviewHighlightSelection && highlightPreviewSelection()) return;
       if (highlightEditorSelection()) return;
-      if (highlightPreviewSelection()) return;
       setPreviewStatus('Select text in preview or editor first');
     };
 
@@ -3526,6 +3530,10 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
         selectedText,
         lastPreviewHighlightSelection.line,
         lastPreviewHighlightSelection.endLine,
+        {
+          containsInlineCode: lastPreviewHighlightSelection.containsInlineCode === true,
+          endsInInlineCode: lastPreviewHighlightSelection.endsInInlineCode === true,
+        },
       );
       if (!match) {
         setPreviewStatus('Could not find selected text in source');
@@ -3536,8 +3544,8 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
 
     const markCurrentSelection = () => {
       if (!supportsMarkdownPreview) return;
+      if (lastPreviewHighlightSelection && markPreviewSelection()) return;
       if (markEditorSelection()) return;
-      if (markPreviewSelection()) return;
       setPreviewStatus('Select text in preview or editor first');
     };
 
@@ -3561,6 +3569,10 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
         selectedText,
         lastPreviewHighlightSelection.line,
         lastPreviewHighlightSelection.endLine,
+        {
+          containsInlineCode: lastPreviewHighlightSelection.containsInlineCode === true,
+          endsInInlineCode: lastPreviewHighlightSelection.endsInInlineCode === true,
+        },
       );
       if (!match) {
         setPreviewStatus('Could not find selected text in source');
@@ -3571,8 +3583,9 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
 
     const addCommentToCurrentSelection = (rect = null) => {
       if (!supportsMarkdownPreview) return;
-      const editorInsertIndex = findCommentInsertIndexForEditorSelection();
-      const insertIndex = editorInsertIndex === null ? findCommentInsertIndexForPreviewSelection() : editorInsertIndex;
+      const insertIndex = lastPreviewHighlightSelection
+        ? findCommentInsertIndexForPreviewSelection()
+        : findCommentInsertIndexForEditorSelection();
       if (insertIndex === null) {
         setPreviewStatus('Select text in preview or editor first');
         return;

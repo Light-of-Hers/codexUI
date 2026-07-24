@@ -5423,8 +5423,9 @@ Markdown files opened through the local editor expose a preview button that rend
 6. Add `prefix \mark{A}\cmt{a longer note that may wrap}` near the end of a line and confirm `A` does not get forced onto a new line before the comment.
 7. Add ``\cmt{check $E = mc^2$ and `code`}`` and confirm the comment still renders as a `cmt` pill with KaTeX math and inline code inside it.
 8. Add ``\mark{A}\cmt{math $x^2$ and `code`}`` and confirm the mark and rich comment both stay inline.
-9. Add `` `\mark{code}\comment{raw}` `` and confirm code spans keep the literal text.
-10. Repeat the preview check in dark theme.
+9. Add ``\mark{use `notebook = "."` or `notebook = "_notebooks/<path>"`}`` and confirm both inline-code spans render inside one annotation mark.
+10. Add `` `\mark{code}\comment{raw}` `` and confirm code spans keep the literal text.
+11. Repeat the preview check in dark theme.
 
 #### Expected Results
 - `\mark{...}` renders as an annotation mark without exposing the raw command syntax.
@@ -5432,11 +5433,12 @@ Markdown files opened through the local editor expose a preview button that rend
 - Adjacent `\mark{...}\comment{...}` renders as a paired annotation.
 - Short marked text in `\mark{A}\cmt{...}` remains in the normal text flow instead of moving to the next line with the comment.
 - Comment bodies can contain inline math and inline code without exposing raw `\cmt{...}` syntax.
+- Mark bodies can contain inline code without exposing raw `\mark{...}` syntax.
 - Code spans are not parsed as annotations.
 - Annotation marks and comment notes remain readable in light and dark themes.
 
 #### Performance Audit
-- Annotation parsing runs during the existing markdown tree transform and scans only text nodes that contain annotation command prefixes or `==`, plus adjacent inline siblings when a comment body spans math or code nodes.
+- Annotation parsing runs during the existing markdown tree transform and scans only text nodes that contain annotation command prefixes or `==`, plus adjacent inline siblings when a mark or comment body spans math or code nodes.
 - Code, links, math, and existing ignored text ancestors are skipped as before.
 - No extra filesystem access, network requests, preview iframe messages, or preview rerenders are introduced.
 
@@ -5459,10 +5461,11 @@ Markdown files opened through the local editor expose a preview button that rend
 6. Click the marked text in preview and confirm floating `Unmark` and `Add comment` actions appear.
 7. Click `Add comment`, enter comment text in the inline floating editor, save it, and confirm the source inserts `\comment{...}` after the marked source span or its adjacent comment, then preview renders the comment pill.
 8. Select a rendered inline code span, click `Add comment`, save a comment, and confirm the source preserves the code delimiter before adding `\comment{...}`, for example `` `git status`\comment{check command} ``.
-9. Click the rendered comment pill, use `Edit comment`, enter `$\sum_{i=1}^n i^2$` in the inline floating editor, save it, and confirm the source keeps readable LaTeX braces instead of becoming `$\\sum_\{i=1\}^n i^2$`.
-10. Click the rendered comment pill again, use `Remove comment`, and confirm only the selected `\comment{...}` portion is removed.
-11. Click the marked text again, use `Unmark`, and confirm only the mark command is removed while the original text remains.
-12. Repeat the selection, mark action, comment action, and unmark checks in dark theme.
+9. Select text A in the editor and run `Mark`; then select a different text B in preview, run `Mark` and `Add comment`, and confirm only B receives the new mark/comment.
+10. Click the rendered comment pill, use `Edit comment`, enter `$\sum_{i=1}^n i^2$` in the inline floating editor, save it, and confirm the source keeps readable LaTeX braces instead of becoming `$\\sum_\{i=1\}^n i^2$`.
+11. Click the rendered comment pill again, use `Remove comment`, and confirm only the selected `\comment{...}` portion is removed.
+12. Click the marked text again, use `Unmark`, and confirm only the mark command is removed while the original text remains.
+13. Repeat the selection, mark action, comment action, and unmark checks in dark theme.
 
 #### Expected Results
 - Mark actions reuse the floating-selection workflow without replacing highlight behavior.
@@ -5471,6 +5474,7 @@ Markdown files opened through the local editor expose a preview button that rend
 - Add/edit comment uses an inline floating editor near the current preview action, not a browser prompt dialog.
 - Add comment is available from text selections and clicked marks; edit/remove comment updates only the selected comment command.
 - Adding a comment to rendered inline code keeps its closing backtick before the new annotation command.
+- A current preview selection takes precedence over an earlier editor selection for highlight, mark, and comment actions.
 - Comment editing preserves readable LaTeX source for balanced math braces while still escaping unmatched annotation braces.
 - Unmark removes only the mark command, preserving marked text and any adjacent comment command.
 - Light and dark theme action buttons and annotation styles remain readable.
