@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { createDirectoryListingHtml, createEditorReferenceText, createLocalBrowseEntry, createMarkdownPreviewHtml, createTextEditorHtml, deleteLocalBrowseEntry, encodeAnnotationSourceForLocalBrowse, isMarkdownPath } from './localBrowseUi'
+import { createDirectoryListingHtml, createEditorReferenceText, createLocalBrowseEntry, createMarkdownPreviewHtml, createTextEditorHtml, deleteLocalBrowseEntry, encodeAnnotationSourceForLocalBrowse, findRenderedInlineCodeSelectionInSource, isMarkdownPath } from './localBrowseUi'
 import { KATEX_STYLESHEET_HREF } from './katexAssets'
 
 let tempDir = ''
@@ -27,6 +27,20 @@ describe('local browse markdown preview', () => {
     expect(encodeAnnotationSourceForLocalBrowse('literal } brace')).toBe(String.raw`literal \} brace`)
     expect(encodeAnnotationSourceForLocalBrowse('literal { brace')).toBe(String.raw`literal \{ brace`)
     expect(encodeAnnotationSourceForLocalBrowse(String.raw`$\{$`)).toBe(String.raw`$\\\{$`)
+  })
+
+  it('maps a rendered inline-code selection through its closing delimiter', () => {
+    const source = 'Plain git status then `git status`.'
+    const annotatedSource = 'Plain git status then `git status`\\comment{check}.'
+
+    expect(findRenderedInlineCodeSelectionInSource(source, 'git status', { requireInlineCodeEnd: true })).toEqual({
+      startOffset: 23,
+      endOffset: 34,
+    })
+    expect(`${source.slice(0, 34)}\\comment{check}${source.slice(34)}`).toBe('Plain git status then `git status`\\comment{check}.')
+    const annotationHtml = createMarkdownPreviewHtml('/tmp/note.md', annotatedSource)
+    expect(annotationHtml).toContain('>git status</code>')
+    expect(annotationHtml).toContain('data-annotation-comment="check"')
   })
 
   it('recognizes markdown files for preview support', () => {
@@ -110,6 +124,9 @@ describe('local browse markdown preview', () => {
     expect(markdownEditorHtml).toContain('editCurrentComment')
     expect(markdownEditorHtml).toContain('removeCurrentComment')
     expect(markdownEditorHtml).toContain('findCommentMarkupInEditor')
+    expect(markdownEditorHtml).toContain('findRenderedInlineCodeSelectionInSource')
+    expect(markdownEditorHtml).toContain('containsInlineCode')
+    expect(markdownEditorHtml).toContain('endsInInlineCode')
     expect(markdownEditorHtml).toContain('findMarkMarkupInEditor')
     expect(markdownEditorHtml).toContain('encodeAnnotationSource')
     expect(markdownEditorHtml).toContain('saveEditorContent();')

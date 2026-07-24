@@ -139,6 +139,110 @@ export function encodeAnnotationSourceForLocalBrowse(value: string): string {
   return encoded
 }
 
+export function findRenderedInlineCodeSelectionInSource(
+  sourceSlice: string,
+  selectedText: string,
+  options: { requireInlineCodeEnd?: boolean } = {},
+): { startOffset: number; endOffset: number } | null {
+  const normalizedSelection = String(selectedText || '')
+    .replace(/\u00a0/gu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim()
+  if (!sourceSlice || !normalizedSelection) return null
+
+  const renderedCharacters: string[] = []
+  const sourceOffsets: number[] = []
+  const inlineCodeEndOffsets: Array<number | null> = []
+  const appendCharacter = (character: string, sourceOffset: number, inlineCodeEndOffset: number | null = null): void => {
+    renderedCharacters.push(character)
+    sourceOffsets.push(sourceOffset)
+    inlineCodeEndOffsets.push(inlineCodeEndOffset)
+  }
+  const appendPlainRange = (start: number, end: number): void => {
+    for (let cursor = start; cursor < end; cursor += 1) {
+      appendCharacter(sourceSlice[cursor], cursor)
+    }
+  }
+  const isEscapedBacktick = (offset: number): boolean => {
+    let slashCount = 0
+    for (let cursor = offset - 1; cursor >= 0 && sourceSlice[cursor] === '\\'; cursor -= 1) {
+      slashCount += 1
+    }
+    return slashCount % 2 === 1
+  }
+
+  let index = 0
+  while (index < sourceSlice.length) {
+    if (sourceSlice[index] !== '`' || isEscapedBacktick(index)) {
+      appendCharacter(sourceSlice[index], index)
+      index += 1
+      continue
+    }
+
+    let delimiterEnd = index + 1
+    while (sourceSlice[delimiterEnd] === '`') delimiterEnd += 1
+    const delimiter = sourceSlice.slice(index, delimiterEnd)
+    let closingIndex = sourceSlice.indexOf(delimiter, delimiterEnd)
+    while (closingIndex >= 0 && (sourceSlice[closingIndex - 1] === '`' || sourceSlice[closingIndex + delimiter.length] === '`')) {
+      closingIndex = sourceSlice.indexOf(delimiter, closingIndex + 1)
+    }
+    if (closingIndex < 0) {
+      appendPlainRange(index, delimiterEnd)
+      index = delimiterEnd
+      continue
+    }
+
+    const inlineCodeEndOffset = closingIndex + delimiter.length
+    for (let cursor = delimiterEnd; cursor < closingIndex; cursor += 1) {
+      appendCharacter(sourceSlice[cursor], cursor, inlineCodeEndOffset)
+    }
+    index = inlineCodeEndOffset
+  }
+
+  let normalizedSource = ''
+  const normalizedOffsets: number[] = []
+  const normalizedInlineCodeEndOffsets: Array<number | null> = []
+  let previousWasWhitespace = false
+  for (let characterIndex = 0; characterIndex < renderedCharacters.length; characterIndex += 1) {
+    const character = renderedCharacters[characterIndex] === '\u00a0' ? ' ' : renderedCharacters[characterIndex]
+    if (/\s/u.test(character)) {
+      if (!previousWasWhitespace) {
+        normalizedSource += ' '
+        normalizedOffsets.push(sourceOffsets[characterIndex])
+        normalizedInlineCodeEndOffsets.push(inlineCodeEndOffsets[characterIndex])
+        previousWasWhitespace = true
+      }
+      continue
+    }
+    normalizedSource += character
+    normalizedOffsets.push(sourceOffsets[characterIndex])
+    normalizedInlineCodeEndOffsets.push(inlineCodeEndOffsets[characterIndex])
+    previousWasWhitespace = false
+  }
+
+  let trimStart = 0
+  let trimEnd = normalizedSource.length
+  while (trimStart < trimEnd && normalizedSource[trimStart] === ' ') trimStart += 1
+  while (trimEnd > trimStart && normalizedSource[trimEnd - 1] === ' ') trimEnd -= 1
+  const normalizedText = normalizedSource.slice(trimStart, trimEnd)
+  let normalizedIndex = normalizedText.indexOf(normalizedSelection)
+  while (normalizedIndex >= 0) {
+    const sourceIndex = normalizedIndex + trimStart
+    const sourceEndIndex = sourceIndex + normalizedSelection.length - 1
+    const startOffset = normalizedOffsets[sourceIndex]
+    const inlineCodeEndOffset = normalizedInlineCodeEndOffsets[sourceEndIndex]
+    const endOffset = Number.isFinite(inlineCodeEndOffset)
+      ? Number(inlineCodeEndOffset)
+      : normalizedOffsets[sourceEndIndex] + 1
+    if (Number.isFinite(startOffset) && Number.isFinite(endOffset) && (options.requireInlineCodeEnd !== true || Number.isFinite(inlineCodeEndOffset))) {
+      return { startOffset, endOffset }
+    }
+    normalizedIndex = normalizedText.indexOf(normalizedSelection, normalizedIndex + 1)
+  }
+
+  return null
+}
+
 function isHiddenName(value: string): boolean {
   return value.startsWith('.')
 }
@@ -1431,6 +1535,18 @@ function markdownPreviewScript(localPath: string): string {
         }
         const sourceEndLine = Number.parseInt(sourceElement.getAttribute('data-source-end-line') || '', 10);
         const rect = range.getBoundingClientRect();
+        const inlineCodeElements = Array.from(sourceElement.querySelectorAll('code.message-inline-code'));
+        const containsInlineCode = inlineCodeElements.some((element) => range.intersectsNode(element));
+        const endElement = range.endContainer.nodeType === Node.ELEMENT_NODE
+          ? range.endContainer
+          : range.endContainer.parentElement;
+        const endingInlineCode = endElement?.closest('code.message-inline-code')
+          || (range.endContainer.nodeType === Node.ELEMENT_NODE && range.endOffset > 0
+            ? range.endContainer.childNodes[range.endOffset - 1]?.nodeType === Node.ELEMENT_NODE
+              ? range.endContainer.childNodes[range.endOffset - 1]
+              : range.endContainer.childNodes[range.endOffset - 1]?.parentElement
+            : null)?.closest?.('code.message-inline-code');
+        const endsInInlineCode = Boolean(endingInlineCode);
         activePreviewActionTarget = null;
         window.parent.postMessage({
           type: 'codex-local-markdown-preview-selection',
@@ -1438,6 +1554,8 @@ function markdownPreviewScript(localPath: string): string {
           text,
           line: sourceLine,
           endLine: Number.isFinite(sourceEndLine) && sourceEndLine >= sourceLine ? sourceEndLine : sourceLine,
+          containsInlineCode,
+          endsInInlineCode,
           rect: serializeRect(rect),
         }, '*');
         return true;
@@ -2823,8 +2941,17 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       };
     };
 
-    const findSelectionInSourceSlice = (sourceSlice, selectedText) => {
+    const findRenderedInlineCodeSelectionInSource = ${findRenderedInlineCodeSelectionInSource.toString()};
+
+    const findSelectionInSourceSlice = (sourceSlice, selectedText, options = {}) => {
       if (!sourceSlice || !selectedText) return null;
+
+      if (options.containsInlineCode === true) {
+        const inlineCodeMatch = findRenderedInlineCodeSelectionInSource(sourceSlice, selectedText, {
+          requireInlineCodeEnd: options.endsInInlineCode === true,
+        });
+        if (inlineCodeMatch) return inlineCodeMatch;
+      }
 
       const exactIndex = sourceSlice.indexOf(selectedText);
       if (exactIndex >= 0) {
@@ -2866,11 +2993,11 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       };
     };
 
-    const findHighlightSelectionInEditor = (selectedText, sourceLine, sourceEndLine) => {
+    const findHighlightSelectionInEditor = (selectedText, sourceLine, sourceEndLine, options = {}) => {
       const editorValue = editor.getValue();
       const lineWindow = sourceWindowForLines(editorValue, sourceLine, sourceEndLine);
       if (lineWindow) {
-        const lineMatch = findSelectionInSourceSlice(lineWindow.value, selectedText);
+        const lineMatch = findSelectionInSourceSlice(lineWindow.value, selectedText, options);
         if (lineMatch) {
           return {
             startIndex: lineWindow.startIndex + lineMatch.startOffset,
@@ -2879,7 +3006,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
         }
       }
 
-      const fullMatch = findSelectionInSourceSlice(editorValue, selectedText);
+      const fullMatch = findSelectionInSourceSlice(editorValue, selectedText, options);
       if (!fullMatch) return null;
       return {
         startIndex: fullMatch.startOffset,
@@ -3360,6 +3487,10 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
         selectedText,
         lastPreviewHighlightSelection.line,
         lastPreviewHighlightSelection.endLine,
+        {
+          containsInlineCode: lastPreviewHighlightSelection.containsInlineCode === true,
+          endsInInlineCode: lastPreviewHighlightSelection.endsInInlineCode === true,
+        },
       );
       if (!match) {
         setPreviewStatus('Could not find selected text in source');
@@ -3603,6 +3734,8 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
           text: selectedText,
           line: sourceLine,
           endLine: Number.isFinite(sourceEndLine) && sourceEndLine >= sourceLine ? sourceEndLine : sourceLine,
+          containsInlineCode: data.containsInlineCode === true,
+          endsInInlineCode: data.endsInInlineCode === true,
         };
         lastEditorHighlightSelection = null;
         lastPreviewClickedHighlight = null;

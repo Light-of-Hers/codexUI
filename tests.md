@@ -5458,10 +5458,11 @@ Markdown files opened through the local editor expose a preview button that rend
 5. Click `Mark` and confirm the source wraps the selected text as `\mark{...}` and the preview renders marked text.
 6. Click the marked text in preview and confirm floating `Unmark` and `Add comment` actions appear.
 7. Click `Add comment`, enter comment text in the inline floating editor, save it, and confirm the source inserts `\comment{...}` after the marked source span or its adjacent comment, then preview renders the comment pill.
-8. Click the rendered comment pill, use `Edit comment`, enter `$\sum_{i=1}^n i^2$` in the inline floating editor, save it, and confirm the source keeps readable LaTeX braces instead of becoming `$\\sum_\{i=1\}^n i^2$`.
-9. Click the rendered comment pill again, use `Remove comment`, and confirm only the selected `\comment{...}` portion is removed.
-10. Click the marked text again, use `Unmark`, and confirm only the mark command is removed while the original text remains.
-11. Repeat the selection, mark action, comment action, and unmark checks in dark theme.
+8. Select a rendered inline code span, click `Add comment`, save a comment, and confirm the source preserves the code delimiter before adding `\comment{...}`, for example `` `git status`\comment{check command} ``.
+9. Click the rendered comment pill, use `Edit comment`, enter `$\sum_{i=1}^n i^2$` in the inline floating editor, save it, and confirm the source keeps readable LaTeX braces instead of becoming `$\\sum_\{i=1\}^n i^2$`.
+10. Click the rendered comment pill again, use `Remove comment`, and confirm only the selected `\comment{...}` portion is removed.
+11. Click the marked text again, use `Unmark`, and confirm only the mark command is removed while the original text remains.
+12. Repeat the selection, mark action, comment action, and unmark checks in dark theme.
 
 #### Expected Results
 - Mark actions reuse the floating-selection workflow without replacing highlight behavior.
@@ -5469,6 +5470,7 @@ Markdown files opened through the local editor expose a preview button that rend
 - Clicking marked preview text exposes `Unmark` and `Add comment`; comment editing is entered from the rendered comment pill.
 - Add/edit comment uses an inline floating editor near the current preview action, not a browser prompt dialog.
 - Add comment is available from text selections and clicked marks; edit/remove comment updates only the selected comment command.
+- Adding a comment to rendered inline code keeps its closing backtick before the new annotation command.
 - Comment editing preserves readable LaTeX source for balanced math braces while still escaping unmatched annotation braces.
 - Unmark removes only the mark command, preserving marked text and any adjacent comment command.
 - Light and dark theme action buttons and annotation styles remain readable.
