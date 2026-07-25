@@ -5424,8 +5424,9 @@ Markdown files opened through the local editor expose a preview button that rend
 7. Add ``\cmt{check $E = mc^2$ and `code`}`` and confirm the comment still renders as a `cmt` pill with KaTeX math and inline code inside it.
 8. Add ``\mark{A}\cmt{math $x^2$ and `code`}`` and confirm the mark and rich comment both stay inline.
 9. Add ``\mark{use `notebook = "."` or `notebook = "_notebooks/<path>"`}`` and confirm both inline-code spans render inside one annotation mark.
-10. Add `` `\mark{code}\comment{raw}` `` and confirm code spans keep the literal text.
-11. Repeat the preview check in dark theme.
+10. Add ``\comment{outer note \comment{inner note}}`` and confirm both comments render as nested `cmt` pills.
+11. Add `` `\mark{code}\comment{raw}` `` and confirm code spans keep the literal text.
+12. Repeat the preview check in dark theme.
 
 #### Expected Results
 - `\mark{...}` renders as an annotation mark without exposing the raw command syntax.
@@ -5434,11 +5435,13 @@ Markdown files opened through the local editor expose a preview button that rend
 - Short marked text in `\mark{A}\cmt{...}` remains in the normal text flow instead of moving to the next line with the comment.
 - Comment bodies can contain inline math and inline code without exposing raw `\cmt{...}` syntax.
 - Mark bodies can contain inline code without exposing raw `\mark{...}` syntax.
+- Comment bodies can contain nested `\comment{...}` or `\cmt{...}` commands that render as nested comment notes.
 - Code spans are not parsed as annotations.
 - Annotation marks and comment notes remain readable in light and dark themes.
 
 #### Performance Audit
 - Annotation parsing runs during the existing markdown tree transform and scans only text nodes that contain annotation command prefixes or `==`, plus adjacent inline siblings when a mark or comment body spans math or code nodes.
+- Nested annotation bodies reuse the same balanced-command parser on their already-isolated child nodes.
 - Code, links, math, and existing ignored text ancestors are skipped as before.
 - No extra filesystem access, network requests, preview iframe messages, or preview rerenders are introduced.
 

@@ -670,9 +670,7 @@ function createDecorationNode(range: DecorationRange): MarkdownNode {
 }
 
 function createAnnotationMarkNode(value: string | MarkdownNode[]): MarkdownElement {
-  const bodyChildren = Array.isArray(value)
-    ? value
-    : [{ type: 'text', value }]
+  const bodyChildren = parseAnnotationBodyChildren(value)
   return {
     type: 'element',
     tagName: 'mark',
@@ -684,9 +682,7 @@ function createAnnotationMarkNode(value: string | MarkdownNode[]): MarkdownEleme
 }
 
 function createAnnotationCommentNode(value: string | MarkdownNode[], sourceValue?: string): MarkdownElement {
-  const bodyChildren = Array.isArray(value)
-    ? value
-    : [{ type: 'text', value }]
+  const bodyChildren = parseAnnotationBodyChildren(value)
   const annotationText = sourceValue ?? (typeof value === 'string' ? value : nodePlainText({ type: 'root', children: value }))
 
   return {
@@ -717,6 +713,15 @@ function createAnnotationCommentNode(value: string | MarkdownNode[], sourceValue
       },
     ],
   }
+}
+
+function parseAnnotationBodyChildren(value: string | MarkdownNode[]): MarkdownNode[] {
+  const root: MarkdownNode = {
+    type: 'root',
+    children: Array.isArray(value) ? value : textToAnnotationBodyNodes(value),
+  }
+  splitDecorationSyntax(root, [])
+  return root.children ?? []
 }
 
 function findNextDecorationRange(text: string, fromIndex: number): DecorationRange | null {

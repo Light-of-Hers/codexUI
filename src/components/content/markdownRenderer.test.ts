@@ -140,6 +140,14 @@ const answer = 42
     expect(html).not.toContain(String.raw`\cmt{check`)
   })
 
+  it('renders nested annotation comments', () => {
+    const html = render(String.raw`Review \comment{outer note \comment{inner note}} now.`)
+
+    expect((html.match(/class="message-annotation-comment"/gu) ?? []).length).toBe(2)
+    expect(html).toContain('<span class="message-annotation-body">outer note ')
+    expect(html).toContain('<span class="message-annotation-body">inner note</span>')
+  })
+
   it('renders marked annotations with rich adjacent comments', () => {
     const html = render('Review \\mark{A}\\cmt{math $x^2$ and `code`} inline.')
 
