@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { createDirectoryListingHtml, createEditorReferenceText, createLocalBrowseEntry, createMarkdownPreviewHtml, createTextEditorHtml, deleteLocalBrowseEntry, encodeAnnotationSourceForLocalBrowse, findRenderedInlineCodeSelectionInSource, isMarkdownPath } from './localBrowseUi'
+import { createDirectoryListingHtml, createEditorReferenceText, createLocalBrowseEntry, createMarkdownPreviewHtml, createTextEditorHtml, deleteLocalBrowseEntry, encodeAnnotationSourceForLocalBrowse, findAnnotationCommentInSource, findRenderedInlineCodeSelectionInSource, isMarkdownPath } from './localBrowseUi'
 import { KATEX_STYLESHEET_HREF } from './katexAssets'
 
 let tempDir = ''
@@ -27,6 +27,23 @@ describe('local browse markdown preview', () => {
     expect(encodeAnnotationSourceForLocalBrowse('literal } brace')).toBe(String.raw`literal \} brace`)
     expect(encodeAnnotationSourceForLocalBrowse('literal { brace')).toBe(String.raw`literal \{ brace`)
     expect(encodeAnnotationSourceForLocalBrowse(String.raw`$\{$`)).toBe(String.raw`$\\\{$`)
+  })
+
+  it('locates nested comments independently for editing', () => {
+    const source = String.raw`Review \comment{outer note \comment{inner note}} and \cmt{inner note}.`
+    const nestedStart = source.indexOf(String.raw`\comment{inner note}`)
+    const laterStart = source.indexOf(String.raw`\cmt{inner note}`)
+
+    expect(findAnnotationCommentInSource(source, 'inner note')).toMatchObject({
+      comment: 'inner note',
+      commentStartOffset: nestedStart,
+      commentEndOffset: nestedStart + String.raw`\comment{inner note}`.length,
+    })
+    expect(findAnnotationCommentInSource(source, 'inner note', 1)).toMatchObject({
+      comment: 'inner note',
+      commentStartOffset: laterStart,
+      commentEndOffset: laterStart + String.raw`\cmt{inner note}`.length,
+    })
   })
 
   it('maps a rendered inline-code selection through its closing delimiter', () => {

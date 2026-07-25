@@ -139,6 +139,125 @@ export function encodeAnnotationSourceForLocalBrowse(value: string): string {
   return encoded
 }
 
+type AnnotationCommentMatch = {
+  comment: string
+  commentStartOffset: number
+  commentEndOffset: number
+  commentBodyStartOffset: number
+  commentBodyEndOffset: number
+}
+
+export function findAnnotationCommentInSource(
+  sourceSlice: string,
+  selectedText: string,
+  occurrence = 0,
+): AnnotationCommentMatch | null {
+  const annotationSlash = String.fromCharCode(92)
+  const normalizeAnnotationText = (value: string): string => String(value || '')
+    .replace(/\u00a0/gu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim()
+  const normalizedSelection = normalizeAnnotationText(selectedText)
+  if (!sourceSlice || !normalizedSelection) return null
+
+  const decodeAnnotationSource = (value: string): string => {
+    let decoded = ''
+    for (let index = 0; index < value.length; index += 1) {
+      if (value[index] === annotationSlash && index + 1 < value.length && (value[index + 1] === annotationSlash || value[index + 1] === '{' || value[index + 1] === '}')) {
+        decoded += value[index + 1]
+        index += 1
+        continue
+      }
+      decoded += value[index]
+    }
+    return decoded
+  }
+
+  const readAnnotationCommandBody = (value: string, openBraceIndex: number): { value: string; endOffset: number } | null => {
+    if (value[openBraceIndex] !== '{') return null
+    let depth = 1
+    let cursor = openBraceIndex + 1
+    while (cursor < value.length) {
+      const character = value[cursor]
+      if (character === annotationSlash) {
+        cursor += 2
+        continue
+      }
+      if (character === '{') {
+        depth += 1
+      } else if (character === '}') {
+        depth -= 1
+        if (depth === 0) {
+          return {
+            value: value.slice(openBraceIndex + 1, cursor),
+            endOffset: cursor + 1,
+          }
+        }
+      }
+      cursor += 1
+    }
+    return null
+  }
+
+  const parseAnnotationCommandAt = (value: string, startOffset: number) => {
+    if (value[startOffset] !== annotationSlash) return null
+    const commands = [
+      { raw: annotationSlash + 'comment{', kind: 'comment' },
+      { raw: annotationSlash + 'mark{', kind: 'mark' },
+      { raw: annotationSlash + 'cmt{', kind: 'comment' },
+    ]
+    const command = commands.find((candidate) => value.startsWith(candidate.raw, startOffset))
+    if (!command) return null
+    const openBraceIndex = startOffset + command.raw.length - 1
+    const body = readAnnotationCommandBody(value, openBraceIndex)
+    if (!body) return null
+    return {
+      kind: command.kind,
+      startOffset,
+      endOffset: body.endOffset,
+      bodyStartOffset: openBraceIndex + 1,
+      bodyEndOffset: body.endOffset - 1,
+      value: decodeAnnotationSource(body.value),
+    }
+  }
+
+  let matchedOccurrence = 0
+  const findInSlice = (value: string, baseOffset: number): AnnotationCommentMatch | null => {
+    let searchFrom = 0
+    while (searchFrom < value.length) {
+      const commandIndex = value.indexOf(annotationSlash, searchFrom)
+      if (commandIndex < 0) return null
+      const command = parseAnnotationCommandAt(value, commandIndex)
+      if (!command) {
+        searchFrom = commandIndex + 1
+        continue
+      }
+      if (command.kind === 'comment' && normalizeAnnotationText(command.value) === normalizedSelection) {
+        if (matchedOccurrence >= occurrence) {
+          return {
+            comment: command.value,
+            commentStartOffset: baseOffset + command.startOffset,
+            commentEndOffset: baseOffset + command.endOffset,
+            commentBodyStartOffset: baseOffset + command.bodyStartOffset,
+            commentBodyEndOffset: baseOffset + command.bodyEndOffset,
+          }
+        }
+        matchedOccurrence += 1
+      }
+
+      const nestedMatch = findInSlice(
+        value.slice(command.bodyStartOffset, command.bodyEndOffset),
+        baseOffset + command.bodyStartOffset,
+      )
+      if (nestedMatch) return nestedMatch
+      searchFrom = command.endOffset
+    }
+    return null
+  }
+
+  return findInSlice(sourceSlice, 0)
+}
+
 export function findRenderedInlineCodeSelectionInSource(
   sourceSlice: string,
   selectedText: string,
@@ -3175,44 +3294,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       };
     };
 
-    const findCommentMarkupInSourceSlice = (sourceSlice, selectedText, occurrence = 0) => {
-      if (!sourceSlice || !selectedText) return null;
-      const normalizedSelection = normalizeTextWithIndexMap(selectedText).text;
-      if (!normalizedSelection) return null;
-
-      let searchFrom = 0;
-      let matchedOccurrence = 0;
-      while (searchFrom < sourceSlice.length) {
-        const commandIndex = sourceSlice.indexOf(annotationSlash, searchFrom);
-        if (commandIndex < 0) return null;
-        const command = parseAnnotationCommandAt(sourceSlice, commandIndex);
-        if (!command) {
-          searchFrom = commandIndex + 1;
-          continue;
-        }
-        if (command.kind !== 'comment') {
-          searchFrom = command.endOffset;
-          continue;
-        }
-        if (normalizeTextWithIndexMap(command.value).text === normalizedSelection) {
-          if (matchedOccurrence < occurrence) {
-            matchedOccurrence += 1;
-            searchFrom = command.endOffset;
-            continue;
-          }
-          return {
-            comment: command.value,
-            commentStartOffset: command.startOffset,
-            commentEndOffset: command.endOffset,
-            commentBodyStartOffset: command.bodyStartOffset,
-            commentBodyEndOffset: command.bodyEndOffset,
-          };
-        }
-        searchFrom = command.endOffset;
-      }
-
-      return null;
-    };
+    const findCommentMarkupInSourceSlice = ${findAnnotationCommentInSource.toString()};
 
     const findCommentMarkupInEditor = (selectedText, sourceLine, sourceEndLine, occurrence = 0) => {
       const editorValue = editor.getValue();
