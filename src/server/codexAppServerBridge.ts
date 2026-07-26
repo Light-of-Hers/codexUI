@@ -3264,33 +3264,113 @@ type SessionRecoveredCommand = {
 function parseExecCommandOutput(output: string): { exitCode: number | null; wallTime: number | null; cleanOutput: string } {
   let exitCode: number | null = null
   let wallTime: number | null = null
-  const outputLines: string[] = []
-  let pastHeader = false
+  const lines = output.split('\n')
 
-  for (const line of output.split('\n')) {
-    if (!pastHeader) {
-      const exitMatch = line.match(/^Process exited with code (\d+)/)
-      if (exitMatch) {
-        exitCode = Number.parseInt(exitMatch[1]!, 10)
-        continue
-      }
-      const wallMatch = line.match(/^Wall time:\s+([\d.]+)\s+seconds/)
-      if (wallMatch) {
-        wallTime = Math.round(Number.parseFloat(wallMatch[1]!) * 1000)
-        continue
-      }
-      if (line.startsWith('Command:') || line.startsWith('Chunk ID:') || line.startsWith('Original token count:')) {
-        continue
-      }
-      if (line === 'Output:') {
-        pastHeader = true
-        continue
-      }
-    }
-    outputLines.push(line)
+  for (const line of lines) {
+    const exitMatch = line.match(/^Process exited with code (\d+)/)
+    if (exitMatch) exitCode = Number.parseInt(exitMatch[1]!, 10)
+
+    const wallMatch = line.match(/^Wall time:\s+([\d.]+)\s+seconds/)
+    if (wallMatch) wallTime = Math.round(Number.parseFloat(wallMatch[1]!) * 1000)
+  }
+
+  const firstOutputIndex = lines.indexOf('Output:')
+  if (firstOutputIndex < 0) {
+    return { exitCode, wallTime, cleanOutput: output.trimEnd() }
+  }
+
+  let outputLines = lines.slice(firstOutputIndex + 1)
+  const nestedOutputIndex = outputLines.indexOf('Output:')
+  if (
+    nestedOutputIndex >= 0
+    && outputLines.slice(0, nestedOutputIndex).some((line) => (
+      line.startsWith('Chunk ID:')
+      || line.startsWith('Process exited with code ')
+      || line.startsWith('Original token count:')
+    ))
+  ) {
+    outputLines = outputLines.slice(nestedOutputIndex + 1)
   }
 
   return { exitCode, wallTime, cleanOutput: outputLines.join('\n').trimEnd() }
+}
+
+function readCustomToolCallOutput(output: unknown): string {
+  if (typeof output === 'string') return output
+  if (Array.isArray(output)) {
+    return output
+      .map((part) => {
+        const record = asRecord(part)
+        return typeof record?.text === 'string' ? record.text : ''
+      })
+      .join('')
+  }
+  const record = asRecord(output)
+  return typeof record?.text === 'string' ? record.text : ''
+}
+
+function jsonObjectAfterMarker(input: string, marker: string): string | null {
+  const markerIndex = input.indexOf(marker)
+  if (markerIndex < 0) return null
+
+  let start = markerIndex + marker.length
+  while (/\s/.test(input[start] ?? '')) start += 1
+  if (input[start] !== '{') return null
+
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let index = start; index < input.length; index += 1) {
+    const char = input[index]!
+    if (inString) {
+      if (escaped) {
+        escaped = false
+      } else if (char === '\\') {
+        escaped = true
+      } else if (char === '"') {
+        inString = false
+      }
+      continue
+    }
+
+    if (char === '"') {
+      inString = true
+    } else if (char === '{') {
+      depth += 1
+    } else if (char === '}') {
+      depth -= 1
+      if (depth === 0) return input.slice(start, index + 1)
+    }
+  }
+
+  return null
+}
+
+function buildCustomExecRecoveredCommand(payload: Record<string, unknown>): SessionRecoveredCommand | null {
+  if (payload.name !== 'exec') return null
+  const callId = readNonEmptyString(payload.call_id)
+  const input = typeof payload.input === 'string' ? payload.input : ''
+  const argumentJson = jsonObjectAfterMarker(input, 'tools.exec_command(')
+  if (!callId || !argumentJson) return null
+
+  try {
+    const args = asRecord(JSON.parse(argumentJson))
+    const command = readNonEmptyString(args?.cmd)
+    if (!command) return null
+
+    return {
+      id: `session-cmd-${callId}`,
+      type: 'commandExecution',
+      command,
+      cwd: readNonEmptyString(args?.workdir) || readNonEmptyString(args?.cwd) || null,
+      status: payload.status === 'failed' ? 'failed' : 'completed',
+      aggregatedOutput: '',
+      exitCode: null,
+      durationMs: null,
+    }
+  } catch {
+    return null
+  }
 }
 
 type SessionRecoveredFileChangeItem = {
@@ -3504,6 +3584,15 @@ function buildSessionItemOrder(sessionLogRaw: string, turnIds: Set<string>): Map
       continue
     }
 
+    if (payload.type === 'custom_tool_call') {
+      const command = buildCustomExecRecoveredCommand(payload)
+      if (command) {
+        callIdToCommand.set(readNonEmptyString(payload.call_id), command)
+        slots.push({ type: 'commandExecution', command })
+        continue
+      }
+    }
+
     if (payload.type === 'function_call' && payload.name === 'exec_command') {
       const callId = readNonEmptyString(payload.call_id)
       if (!callId) continue
@@ -3527,17 +3616,21 @@ function buildSessionItemOrder(sessionLogRaw: string, turnIds: Set<string>): Map
       continue
     }
 
-    if (payload.type === 'function_call_output') {
+    if (payload.type === 'function_call_output' || payload.type === 'custom_tool_call_output') {
       const callId = readNonEmptyString(payload.call_id)
       if (!callId) continue
       const existing = callIdToCommand.get(callId)
       if (!existing) continue
-      const rawOutput = typeof payload.output === 'string' ? payload.output : ''
+      const rawOutput = payload.type === 'custom_tool_call_output'
+        ? readCustomToolCallOutput(payload.output)
+        : typeof payload.output === 'string' ? payload.output : ''
       const parsed = parseExecCommandOutput(rawOutput)
       existing.aggregatedOutput = parsed.cleanOutput
       existing.exitCode = parsed.exitCode
       existing.durationMs = parsed.wallTime
-      existing.status = parsed.exitCode === 0 || parsed.exitCode === null ? 'completed' : 'failed'
+      if (parsed.exitCode !== null) {
+        existing.status = parsed.exitCode === 0 ? 'completed' : 'failed'
+      }
     }
 
     if (payload.type === 'custom_tool_call' && payload.name === 'apply_patch' && payload.status === 'completed') {

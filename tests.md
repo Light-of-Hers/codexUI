@@ -56,7 +56,7 @@ This file tracks manual regression and feature verification steps.
 
 #### Prerequisites
 - App server is running from this repository.
-- A historical thread exists whose session JSONL contains `exec_command` tool calls that are not present in the stored `thread/read` turn items.
+- A historical thread exists whose session JSONL contains `exec_command` calls or custom `exec` wrappers that invoke `tools.exec_command(...)`, but whose stored `thread/read` turn items omit those commands.
 - Light and dark themes are both available from Settings.
 
 #### Steps
@@ -65,11 +65,12 @@ This file tracks manual regression and feature verification steps.
 3. For a thread whose stored `thread/read` result has one merged assistant message, confirm command execution entries still appear between the matching assistant text fragments when the session JSONL preserves those fragments.
 4. For a thread whose stored `thread/read` result already contains command execution entries grouped before the assistant text, confirm those existing command cards are reordered between the matching assistant text fragments.
 5. For a thread that contains `response_item` entries after `task_complete`, confirm recovered command cards appear in the matching `rollout-*` section rather than the previous completed turn.
-6. Load older messages in the same thread, if available, and confirm recovered command entries remain visible after pagination.
-7. Switch to light theme and dark theme, then repeat the same thread rendering check.
+6. For a session with custom `exec` wrappers, confirm each wrapped `tools.exec_command(...)` is rendered as a command card with its command text, working directory, output, exit code, and duration.
+7. Load older messages in the same thread, if available, and confirm recovered command entries remain visible after pagination.
+8. Switch to light theme and dark theme, then repeat the same thread rendering check.
 
 #### Expected Results
-- Historical `exec_command` calls recovered from session JSONL render as command execution cards in `thread/read` results.
+- Historical `exec_command` calls and custom `exec` wrappers recovered from session JSONL render as command execution cards in `thread/read` results.
 - Command cards preserve command text, output, exit code, and duration when available.
 - When session assistant text fragments can be matched to a merged stored assistant message, recovered command cards are interleaved between those fragments instead of being grouped before or after the whole message.
 - Existing recovered command cards are reused and reordered instead of duplicated.

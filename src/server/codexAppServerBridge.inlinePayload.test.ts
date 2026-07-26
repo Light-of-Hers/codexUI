@@ -817,6 +817,81 @@ describe('thread session skill recovery', () => {
     })
   })
 
+  it('recovers custom exec wrappers from session JSONL as command executions', () => {
+    const result = {
+      thread: {
+        id: 'thread-custom-exec',
+        path: '/tmp/session.jsonl',
+        turns: [{
+          id: 'turn-1',
+          items: [
+            {
+              id: 'user-1',
+              type: 'userMessage',
+              content: [{ type: 'text', text: 'list files', text_elements: [] }],
+            },
+            {
+              id: 'agent-1',
+              type: 'agentMessage',
+              text: 'done',
+            },
+          ],
+        }],
+      },
+    }
+    const sessionLog = [
+      JSON.stringify({ type: 'turn_context', payload: { turn_id: 'turn-1' } }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'custom_tool_call',
+          name: 'exec',
+          status: 'completed',
+          call_id: 'call-custom-1',
+          input: 'const result = await tools.exec_command({"cmd":"pwd","workdir":"/tmp/project"});\ntext(result.output);',
+        },
+      }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'custom_tool_call_output',
+          call_id: 'call-custom-1',
+          output: [
+            { type: 'input_text', text: 'Script completed\nWall time 0.2 seconds\nOutput:\n' },
+            { type: 'input_text', text: 'Chunk ID: abc\nProcess exited with code 0\nWall time: 0.123 seconds\nOriginal token count: 1\nOutput:\n/tmp/project\n' },
+          ],
+        },
+      }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'done' }],
+        },
+      }),
+    ].join('\n')
+
+    const merged = mergeRecoveredTurnItemsIntoThreadResult(
+      result,
+      (_threadId, turns) => turns,
+      sessionLog,
+    ) as typeof result
+    const items = merged.thread.turns[0].items
+
+    expect(items.map((item) => item.type)).toEqual(['userMessage', 'commandExecution', 'agentMessage'])
+    expect(items[1]).toMatchObject({
+      id: 'session-cmd-call-custom-1',
+      type: 'commandExecution',
+      command: 'pwd',
+      cwd: '/tmp/project',
+      status: 'completed',
+      aggregatedOutput: '/tmp/project',
+      exitCode: 0,
+      durationMs: 123,
+    })
+  })
+
   it('recovers Cursor shell payload references from session JSONL as command executions', async () => {
     const codexHome = await mkdtemp(join(tmpdir(), 'codex-home-'))
     vi.stubEnv('CODEX_HOME', codexHome)
