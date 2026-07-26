@@ -1705,14 +1705,16 @@ function markdownPreviewScript(localPath: string): string {
         if (!Number.isFinite(sourceLine) || sourceLine < 1) return false;
         const sourceEndLine = Number.parseInt(sourceElement.getAttribute('data-source-end-line') || '', 10);
         const markText = annotationMarkElement.textContent || '';
+        const markSource = annotationMarkElement.getAttribute('data-annotation-mark') || markText;
         const siblingMarks = Array.from(sourceElement.querySelectorAll('mark.message-annotation-mark'));
         const occurrence = Math.max(0, siblingMarks
-          .filter((element) => (element.textContent || '') === markText)
+          .filter((element) => (element.getAttribute('data-annotation-mark') || element.textContent || '') === markSource)
           .indexOf(annotationMarkElement));
         window.parent.postMessage({
           type: 'codex-local-markdown-mark-click',
           path: sourcePath,
           text: markText,
+          sourceText: markSource,
           line: sourceLine,
           endLine: Number.isFinite(sourceEndLine) && sourceEndLine >= sourceLine ? sourceEndLine : sourceLine,
           occurrence,
@@ -1752,14 +1754,16 @@ function markdownPreviewScript(localPath: string): string {
         if (!Number.isFinite(sourceLine) || sourceLine < 1) return false;
         const sourceEndLine = Number.parseInt(sourceElement.getAttribute('data-source-end-line') || '', 10);
         const highlightText = highlightElement.textContent || '';
+        const highlightSource = highlightElement.getAttribute('data-highlight-source') || highlightText;
         const siblingHighlights = Array.from(sourceElement.querySelectorAll('mark.message-highlight'));
         const occurrence = Math.max(0, siblingHighlights
-          .filter((element) => (element.textContent || '') === highlightText)
+          .filter((element) => (element.getAttribute('data-highlight-source') || element.textContent || '') === highlightSource)
           .indexOf(highlightElement));
         window.parent.postMessage({
           type: 'codex-local-markdown-highlight-click',
           path: sourcePath,
           text: highlightText,
+          sourceText: highlightSource,
           line: sourceLine,
           endLine: Number.isFinite(sourceEndLine) && sourceEndLine >= sourceLine ? sourceEndLine : sourceLine,
           occurrence,
@@ -3147,9 +3151,9 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       };
     };
 
-    const findHighlightMarkupInSourceSlice = (sourceSlice, selectedText, occurrence = 0) => {
+    const findHighlightMarkupInSourceSlice = (sourceSlice, selectedText, occurrence = 0, sourceText = '') => {
       if (!sourceSlice || !selectedText) return null;
-      const normalizedSelection = normalizeTextWithIndexMap(selectedText).text;
+      const normalizedSelection = normalizeTextWithIndexMap(sourceText || selectedText).text;
       if (!normalizedSelection) return null;
 
       let searchFrom = 0;
@@ -3187,11 +3191,11 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       return null;
     };
 
-    const findHighlightMarkupInEditor = (selectedText, sourceLine, sourceEndLine, occurrence = 0) => {
+    const findHighlightMarkupInEditor = (selectedText, sourceLine, sourceEndLine, occurrence = 0, sourceText = '') => {
       const editorValue = editor.getValue();
       const lineWindow = sourceWindowForLines(editorValue, sourceLine, sourceEndLine);
       if (lineWindow) {
-        const lineMatch = findHighlightMarkupInSourceSlice(lineWindow.value, selectedText, occurrence);
+        const lineMatch = findHighlightMarkupInSourceSlice(lineWindow.value, selectedText, occurrence, sourceText);
         if (lineMatch) {
           return {
             startIndex: lineWindow.startIndex + lineMatch.startOffset,
@@ -3208,7 +3212,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
         }
       }
 
-      const fullMatch = findHighlightMarkupInSourceSlice(editorValue, selectedText, occurrence);
+      const fullMatch = findHighlightMarkupInSourceSlice(editorValue, selectedText, occurrence, sourceText);
       if (!fullMatch) return null;
       return {
         startIndex: fullMatch.startOffset,
@@ -3335,58 +3339,67 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       };
     };
 
-    const findMarkMarkupInSourceSlice = (sourceSlice, selectedText, occurrence = 0) => {
+    const findMarkMarkupInSourceSlice = (sourceSlice, selectedText, occurrence = 0, sourceText = '') => {
       if (!sourceSlice || !selectedText) return null;
-      const normalizedSelection = normalizeTextWithIndexMap(selectedText).text;
+      const normalizedSelection = normalizeTextWithIndexMap(sourceText || selectedText).text;
       if (!normalizedSelection) return null;
 
-      let searchFrom = 0;
       let matchedOccurrence = 0;
-      while (searchFrom < sourceSlice.length) {
-        const commandIndex = sourceSlice.indexOf(annotationSlash, searchFrom);
-        if (commandIndex < 0) return null;
-        const markCommand = parseAnnotationCommandAt(sourceSlice, commandIndex);
-        if (!markCommand) {
-          searchFrom = commandIndex + 1;
-          continue;
-        }
-        if (markCommand.kind !== 'mark') {
-          searchFrom = markCommand.endOffset;
-          continue;
-        }
-        const decodedMark = markCommand.value;
-        if (normalizeTextWithIndexMap(decodedMark).text === normalizedSelection) {
-          if (matchedOccurrence < occurrence) {
-            matchedOccurrence += 1;
-            searchFrom = markCommand.endOffset;
+      const findInSlice = (value, baseOffset = 0) => {
+        let searchFrom = 0;
+        while (searchFrom < value.length) {
+          const commandIndex = value.indexOf(annotationSlash, searchFrom);
+          if (commandIndex < 0) return null;
+          const command = parseAnnotationCommandAt(value, commandIndex);
+          if (!command) {
+            searchFrom = commandIndex + 1;
             continue;
           }
-          const commentCommand = parseAdjacentCommentCommand(sourceSlice, markCommand.endOffset);
-          return {
-            startOffset: markCommand.startOffset,
-            markEndOffset: markCommand.endOffset,
-            endOffset: markCommand.endOffset,
-            innerSource: decodedMark,
-            rawInnerSource: markCommand.rawBody,
-            comment: commentCommand ? commentCommand.value : '',
-            commentStartOffset: commentCommand ? commentCommand.startOffset : null,
-            commentEndOffset: commentCommand ? commentCommand.endOffset : null,
-            commentBodyStartOffset: commentCommand ? commentCommand.bodyStartOffset : null,
-            commentBodyEndOffset: commentCommand ? commentCommand.bodyEndOffset : null,
-            commentGapStartOffset: commentCommand ? commentCommand.gapStartOffset : null,
-          };
+          if (command.kind === 'mark' && normalizeTextWithIndexMap(command.value).text === normalizedSelection) {
+            if (matchedOccurrence >= occurrence) {
+              return {
+                ...command,
+                startOffset: baseOffset + command.startOffset,
+                endOffset: baseOffset + command.endOffset,
+                bodyStartOffset: baseOffset + command.bodyStartOffset,
+                bodyEndOffset: baseOffset + command.bodyEndOffset,
+              };
+            }
+            matchedOccurrence += 1;
+          }
+          const nestedMatch = findInSlice(
+            value.slice(command.bodyStartOffset, command.bodyEndOffset),
+            baseOffset + command.bodyStartOffset,
+          );
+          if (nestedMatch) return nestedMatch;
+          searchFrom = command.endOffset;
         }
-        searchFrom = markCommand.endOffset;
-      }
+        return null;
+      };
 
-      return null;
+      const markCommand = findInSlice(sourceSlice);
+      if (!markCommand) return null;
+      const commentCommand = parseAdjacentCommentCommand(sourceSlice, markCommand.endOffset);
+      return {
+        startOffset: markCommand.startOffset,
+        markEndOffset: markCommand.endOffset,
+        endOffset: markCommand.endOffset,
+        innerSource: markCommand.value,
+        rawInnerSource: markCommand.rawBody,
+        comment: commentCommand ? commentCommand.value : '',
+        commentStartOffset: commentCommand ? commentCommand.startOffset : null,
+        commentEndOffset: commentCommand ? commentCommand.endOffset : null,
+        commentBodyStartOffset: commentCommand ? commentCommand.bodyStartOffset : null,
+        commentBodyEndOffset: commentCommand ? commentCommand.bodyEndOffset : null,
+        commentGapStartOffset: commentCommand ? commentCommand.gapStartOffset : null,
+      };
     };
 
-    const findMarkMarkupInEditor = (selectedText, sourceLine, sourceEndLine, occurrence = 0) => {
+    const findMarkMarkupInEditor = (selectedText, sourceLine, sourceEndLine, occurrence = 0, sourceText = '') => {
       const editorValue = editor.getValue();
       const lineWindow = sourceWindowForLines(editorValue, sourceLine, sourceEndLine);
       if (lineWindow) {
-        const lineMatch = findMarkMarkupInSourceSlice(lineWindow.value, selectedText, occurrence);
+        const lineMatch = findMarkMarkupInSourceSlice(lineWindow.value, selectedText, occurrence, sourceText);
         if (lineMatch) {
           return {
             startIndex: lineWindow.startIndex + lineMatch.startOffset,
@@ -3404,7 +3417,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
         }
       }
 
-      const fullMatch = findMarkMarkupInSourceSlice(editorValue, selectedText, occurrence);
+      const fullMatch = findMarkMarkupInSourceSlice(editorValue, selectedText, occurrence, sourceText);
       if (!fullMatch) return null;
       return {
         startIndex: fullMatch.startOffset,
@@ -3708,6 +3721,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
         lastPreviewClickedMark.line,
         lastPreviewClickedMark.endLine,
         Number.isFinite(lastPreviewClickedMark.occurrence) ? lastPreviewClickedMark.occurrence : 0,
+        typeof lastPreviewClickedMark.sourceText === 'string' ? lastPreviewClickedMark.sourceText : '',
       );
       if (!match) {
         setPreviewStatus('Could not find mark in source');
@@ -3788,6 +3802,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
         lastPreviewClickedHighlight.line,
         lastPreviewClickedHighlight.endLine,
         Number.isFinite(lastPreviewClickedHighlight.occurrence) ? lastPreviewClickedHighlight.occurrence : 0,
+        typeof lastPreviewClickedHighlight.sourceText === 'string' ? lastPreviewClickedHighlight.sourceText : '',
       );
       if (!match) {
         setPreviewStatus('Could not find highlight markers in source');
@@ -3869,6 +3884,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
         const sourceEndLine = Number.parseInt(String(data.endLine ?? sourceLine), 10);
         lastPreviewClickedHighlight = {
           text: selectedText,
+          sourceText: typeof data.sourceText === 'string' ? data.sourceText : '',
           line: sourceLine,
           endLine: Number.isFinite(sourceEndLine) && sourceEndLine >= sourceLine ? sourceEndLine : sourceLine,
           occurrence: Number.isFinite(Number(data.occurrence)) ? Math.max(0, Math.floor(Number(data.occurrence))) : 0,
@@ -3889,6 +3905,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
         const sourceEndLine = Number.parseInt(String(data.endLine ?? sourceLine), 10);
         lastPreviewClickedMark = {
           text: selectedText,
+          sourceText: typeof data.sourceText === 'string' ? data.sourceText : '',
           line: sourceLine,
           endLine: Number.isFinite(sourceEndLine) && sourceEndLine >= sourceLine ? sourceEndLine : sourceLine,
           occurrence: Number.isFinite(Number(data.occurrence)) ? Math.max(0, Math.floor(Number(data.occurrence))) : 0,

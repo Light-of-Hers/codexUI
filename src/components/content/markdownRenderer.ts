@@ -15,6 +15,7 @@ type MarkdownRenderContext = {
   cwd: string
   kind: 'message' | 'plan'
   highlightVersion: number
+  source?: string
 }
 
 type MarkdownRenderResult = {
@@ -23,6 +24,7 @@ type MarkdownRenderResult = {
 
 type MarkdownSourcePoint = {
   line?: number
+  offset?: number
 }
 
 type MarkdownSourcePosition = {
@@ -74,6 +76,7 @@ type AnnotationBodyTextScan = {
   body: string
   closed: boolean
   depth: number
+  closeOffset: number
   afterClose: string
 }
 
@@ -137,7 +140,7 @@ export function renderMarkdownContent(
 
   let html = ''
   try {
-    html = String(processorFactory(context).processSync(normalizedText))
+    html = String(processorFactory({ ...context, source: normalizedText }).processSync(normalizedText))
   } catch {
     html = ''
   }
@@ -396,16 +399,16 @@ function isWhitespaceText(node: MarkdownNode): boolean {
 
 function transformMarkdownTree(root: MarkdownNode, context: MarkdownRenderContext): void {
   if (!Array.isArray(root.children)) return
-  splitDecorationSyntax(root, [])
+  splitDecorationSyntax(root, [], context.source ?? '')
   transformChildren(root, [], context)
   annotateSourceLocations(root)
 }
 
-function splitDecorationSyntax(parent: MarkdownNode, ancestors: MarkdownElement[]): void {
+function splitDecorationSyntax(parent: MarkdownNode, ancestors: MarkdownElement[], markdownSource: string): void {
   if (!Array.isArray(parent.children)) return
 
   if (!hasIgnoredTextAncestor(ancestors) && !hasAnnotationTextAncestor(ancestors)) {
-    while (splitCrossNodeAnnotationSyntax(parent)) {
+    while (splitCrossNodeAnnotationSyntax(parent, markdownSource) || splitCrossNodeHighlightSyntax(parent, markdownSource)) {
       // Keep scanning until all annotation commands split across inline nodes are folded.
     }
   }
@@ -430,7 +433,7 @@ function splitDecorationSyntax(parent: MarkdownNode, ancestors: MarkdownElement[
       continue
     }
 
-    splitDecorationSyntax(child, [...ancestors, child])
+    splitDecorationSyntax(child, [...ancestors, child], markdownSource)
   }
 }
 
@@ -438,7 +441,7 @@ function hasDecorationSyntax(text: string): boolean {
   return text.includes('==') || text.includes('\\mark{') || text.includes('\\comment{') || text.includes('\\cmt{')
 }
 
-function splitCrossNodeAnnotationSyntax(parent: MarkdownNode): boolean {
+function splitCrossNodeAnnotationSyntax(parent: MarkdownNode, markdownSource: string): boolean {
   const children = parent.children
   if (!Array.isArray(children)) return false
 
@@ -478,11 +481,19 @@ function splitCrossNodeAnnotationSyntax(parent: MarkdownNode): boolean {
           return false
         }
 
+        const sourceValue = decodeAnnotationValue(crossNodeBodySource(
+          markdownSource,
+          child,
+          opener.bodyStart,
+          bodyChild,
+          scan.closeOffset,
+          sourceParts.join(''),
+        ))
         const replacement: MarkdownNode[] = [
           ...textToAnnotationBodyNodes(before),
           opener.kind === 'mark'
-            ? createAnnotationMarkNode(bodyChildren)
-            : createAnnotationCommentNode(bodyChildren, decodeAnnotationValue(sourceParts.join(''))),
+            ? createAnnotationMarkNode(bodyChildren, sourceValue)
+            : createAnnotationCommentNode(bodyChildren, sourceValue),
           ...textToAnnotationBodyNodes(scan.afterClose),
         ]
         children.splice(index, endIndex - index + 1, ...replacement)
@@ -495,6 +506,79 @@ function splitCrossNodeAnnotationSyntax(parent: MarkdownNode): boolean {
   }
 
   return false
+}
+
+function splitCrossNodeHighlightSyntax(parent: MarkdownNode, markdownSource: string): boolean {
+  const children = parent.children
+  if (!Array.isArray(children)) return false
+
+  for (let index = 0; index < children.length; index += 1) {
+    const child = children[index]
+    if (!isText(child)) continue
+
+    const opener = findCrossNodeHighlightOpener(child.value)
+    if (opener < 0) continue
+
+    const before = child.value.slice(0, opener)
+    const bodyChildren = textToAnnotationBodyNodes(child.value.slice(opener + 2))
+    const sourceParts = [child.value.slice(opener + 2)]
+
+    for (let endIndex = index + 1; endIndex < children.length; endIndex += 1) {
+      const bodyChild = children[endIndex]
+      if (isText(bodyChild)) {
+        const closeOffset = findHighlightDelimiter(bodyChild.value)
+        if (closeOffset < 0) {
+          bodyChildren.push(...textToAnnotationBodyNodes(bodyChild.value))
+          sourceParts.push(bodyChild.value)
+          continue
+        }
+
+        bodyChildren.push(...textToAnnotationBodyNodes(bodyChild.value.slice(0, closeOffset)))
+        sourceParts.push(bodyChild.value.slice(0, closeOffset))
+        if (!hasMeaningfulAnnotationBody(bodyChildren)) return false
+
+        const sourceValue = crossNodeBodySource(
+          markdownSource,
+          child,
+          opener + 2,
+          bodyChild,
+          closeOffset,
+          sourceParts.join(''),
+        )
+        const replacement: MarkdownNode[] = [
+          ...textToAnnotationBodyNodes(before),
+          createHighlightNode(bodyChildren, sourceValue),
+          ...textToAnnotationBodyNodes(bodyChild.value.slice(closeOffset + 2)),
+        ]
+        children.splice(index, endIndex - index + 1, ...replacement)
+        return true
+      }
+
+      bodyChildren.push(bodyChild)
+      sourceParts.push(nodeAnnotationSourceText(bodyChild))
+    }
+  }
+
+  return false
+}
+
+function findCrossNodeHighlightOpener(text: string): number {
+  let opener = findHighlightDelimiter(text)
+  while (opener >= 0) {
+    const close = findHighlightDelimiter(text, opener + 2)
+    if (close < 0) return opener
+    opener = findHighlightDelimiter(text, close + 2)
+  }
+  return -1
+}
+
+function findHighlightDelimiter(text: string, fromIndex = 0): number {
+  let index = text.indexOf('==', fromIndex)
+  while (index >= 0) {
+    if (text[index - 1] !== '=' && text[index + 2] !== '=') return index
+    index = text.indexOf('==', index + 1)
+  }
+  return -1
 }
 
 function findCrossNodeAnnotationOpener(
@@ -547,6 +631,7 @@ function scanAnnotationBodyText(text: string, initialDepth: number): AnnotationB
           body,
           closed: true,
           depth,
+          closeOffset: index,
           afterClose: text.slice(index + 1),
         }
       }
@@ -561,8 +646,28 @@ function scanAnnotationBodyText(text: string, initialDepth: number): AnnotationB
     body,
     closed: false,
     depth,
+    closeOffset: -1,
     afterClose: '',
   }
+}
+
+function sourceOffset(node: MarkdownNode, edge: 'start' | 'end'): number | null {
+  const offset = node.position?.[edge]?.offset
+  return Number.isFinite(offset ?? NaN) ? Math.floor(offset ?? NaN) : null
+}
+
+function crossNodeBodySource(
+  markdownSource: string,
+  startNode: MarkdownNode,
+  bodyStartOffset: number,
+  endNode: MarkdownNode,
+  bodyEndOffset: number,
+  fallback: string,
+): string {
+  const startOffset = sourceOffset(startNode, 'start')
+  const endOffset = sourceOffset(endNode, 'start')
+  if (!markdownSource || startOffset === null || endOffset === null || bodyEndOffset < 0) return fallback
+  return markdownSource.slice(startOffset + bodyStartOffset, endOffset + bodyEndOffset)
 }
 
 function textToAnnotationBodyNodes(value: string): MarkdownNode[] {
@@ -588,6 +693,11 @@ function nodeAnnotationSourceText(node: MarkdownNode): string {
 
   if (node.tagName === 'code') {
     return `\`${nodePlainText(node)}\``
+  }
+
+  if (node.tagName === 'a') {
+    const href = getPropertyString(node, 'href')
+    return href ? `[${nodePlainText(node)}](${href})` : nodePlainText(node)
   }
 
   const tex = findMathAnnotationText(node)
@@ -638,14 +748,7 @@ function splitDecoratedTextNode(text: string): MarkdownNode[] {
 
 function createDecorationNode(range: DecorationRange): MarkdownNode {
   if (range.kind === 'highlight') {
-    return {
-      type: 'element',
-      tagName: 'mark',
-      properties: {
-        className: ['message-highlight'],
-      },
-      children: [{ type: 'text', value: range.value }],
-    }
+    return createHighlightNode(range.value)
   }
 
   if (range.kind === 'mark') {
@@ -669,13 +772,28 @@ function createDecorationNode(range: DecorationRange): MarkdownNode {
   }
 }
 
-function createAnnotationMarkNode(value: string | MarkdownNode[]): MarkdownElement {
+function createHighlightNode(value: string | MarkdownNode[], sourceValue?: string): MarkdownElement {
+  const sourceText = sourceValue ?? (typeof value === 'string' ? value : nodeAnnotationSourceText({ type: 'root', children: value }))
+  return {
+    type: 'element',
+    tagName: 'mark',
+    properties: {
+      className: ['message-highlight'],
+      dataHighlightSource: sourceText,
+    },
+    children: Array.isArray(value) ? value : [{ type: 'text', value }],
+  }
+}
+
+function createAnnotationMarkNode(value: string | MarkdownNode[], sourceValue?: string): MarkdownElement {
   const bodyChildren = parseAnnotationBodyChildren(value)
+  const annotationText = sourceValue ?? (typeof value === 'string' ? value : nodeAnnotationSourceText({ type: 'root', children: value }))
   return {
     type: 'element',
     tagName: 'mark',
     properties: {
       className: ['message-annotation-mark'],
+      dataAnnotationMark: annotationText,
     },
     children: bodyChildren,
   }
@@ -720,7 +838,7 @@ function parseAnnotationBodyChildren(value: string | MarkdownNode[]): MarkdownNo
     type: 'root',
     children: Array.isArray(value) ? value : textToAnnotationBodyNodes(value),
   }
-  splitDecorationSyntax(root, [])
+  splitDecorationSyntax(root, [], typeof value === 'string' ? value : '')
   return root.children ?? []
 }
 

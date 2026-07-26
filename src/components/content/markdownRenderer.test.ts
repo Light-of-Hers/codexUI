@@ -100,16 +100,36 @@ const answer = 42
   it('renders double-equals text as highlighted markdown', () => {
     const html = render('Plain ==important note== text and `==code==`.')
 
-    expect(html).toContain('<mark class="message-highlight">important note</mark>')
+    expect(html).toContain('<mark class="message-highlight" data-highlight-source="important note">important note</mark>')
     expect(html).toContain('<code class="message-inline-code"')
     expect(html).toContain('>==code==</code>')
+  })
+
+  it('renders highlights that contain inline code and math with source metadata', () => {
+    const html = render('Run ==`git status` with $x^2$== now.')
+
+    expect(html).toContain('class="message-highlight"')
+    expect(html).toContain('data-highlight-source="&#x60;git status&#x60; with $x^2$"')
+    expect(html).toContain('>git status</code>')
+    expect(html).toContain('class="katex"')
+    expect(html).not.toContain('==`git status`')
+  })
+
+  it('preserves raw link and math bodies for interactive highlights and marks', () => {
+    const html = render('Read ==[Docs](./docs/readme.md) and `version`== plus \\mark{cost $x^2$ and [Guide](./guide.md)}.')
+
+    expect(html).toContain('data-highlight-source="[Docs](./docs/readme.md) and &#x60;version&#x60;"')
+    expect(html).toContain('data-annotation-mark="cost $x^2$ and [Guide](./guide.md)"')
+    expect(html).toContain('href="/codex-local-browse/home/ubuntu/Documents/New%20Project%20(2)/docs/readme.md"')
+    expect(html).toContain('href="/codex-local-browse/home/ubuntu/Documents/New%20Project%20(2)/guide.md"')
+    expect(html).toContain('class="katex"')
   })
 
   it('renders inline mark and comment annotation commands', () => {
     const html = render('Review \\mark{this part}\\comment{check terms} and \\cmt{loose note}, but keep `\\mark{code}\\comment{nope}`.')
 
     expect(html).toContain('class="message-annotation"')
-    expect(html).toContain('<mark class="message-annotation-mark">this part</mark>')
+    expect(html).toContain('<mark class="message-annotation-mark" data-annotation-mark="this part">this part</mark>')
     expect(html).toContain('class="message-annotation-comment" role="note"')
     expect(html).toContain('class="message-annotation-label" aria-hidden="true">cmt</span>')
     expect(html).toContain('<span class="message-annotation-body">check terms</span>')
@@ -121,7 +141,8 @@ const answer = 42
   it('renders marks that contain inline code', () => {
     const html = render('Rule: \\mark{only `notebook = "."` or `notebook = "_notebooks/<path>"`}.')
 
-    expect(html).toContain('<mark class="message-annotation-mark">')
+    expect(html).toContain('<mark class="message-annotation-mark" data-annotation-mark=')
+    expect(html).toContain('&#x60;notebook = &#x22;.&#x22;&#x60;')
     expect(html).toContain('>notebook = "."</code>')
     expect(html).toContain('>notebook = "_notebooks/&#x3C;path>"</code>')
     expect(html).not.toContain(String.raw`\mark{only`)
@@ -151,7 +172,7 @@ const answer = 42
   it('renders marked annotations with rich adjacent comments', () => {
     const html = render('Review \\mark{A}\\cmt{math $x^2$ and `code`} inline.')
 
-    expect(html).toContain('<mark class="message-annotation-mark">A</mark>')
+    expect(html).toContain('<mark class="message-annotation-mark" data-annotation-mark="A">A</mark>')
     expect(html).toContain('class="message-annotation-comment" role="note"')
     expect(html).toContain('data-annotation-comment="math $x^2$ and &#x60;code&#x60;"')
     expect(html).toContain('class="katex"')

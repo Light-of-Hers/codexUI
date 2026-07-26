@@ -332,7 +332,7 @@ describe('local browse markdown preview', () => {
       'L_0',
       '$$',
       '',
-      String.raw`This is ==important==\comment{highlight note}.`,
+      'This is ==important==\\comment{highlight note}, ==`git status`==, and \\mark{use `updated` first}.',
       '',
       String.raw`Review \mark{annotated text}\comment{check this} and \cmt{standalone note}.`,
       '',
@@ -352,8 +352,10 @@ describe('local browse markdown preview', () => {
     expect(html).toContain('message-code-block')
     expect(html).toContain('class="message-code-copy-button"')
     expect(html).toContain('aria-label="Copy code"')
-    expect(html).toContain('<mark class="message-highlight">important</mark>')
-    expect(html).toContain('<mark class="message-annotation-mark">annotated text</mark>')
+    expect(html).toContain('<mark class="message-highlight" data-highlight-source="important">important</mark>')
+    expect(html).toContain('data-highlight-source="&#x60;git status&#x60;"')
+    expect(html).toContain('<mark class="message-annotation-mark" data-annotation-mark="annotated text">annotated text</mark>')
+    expect(html).toContain('data-annotation-mark="use &#x60;updated&#x60; first"')
     expect(html).toContain('class="message-annotation-comment" role="note"')
     expect(html).toContain('class="message-annotation-label" aria-hidden="true">cmt</span>')
     expect(html).toContain('<span class="message-annotation-body">highlight note</span>')
@@ -396,6 +398,10 @@ describe('local browse markdown preview', () => {
     expect(html).toContain('codex-local-markdown-highlight-click')
     expect(html).toContain('codex-local-markdown-mark-click')
     expect(html).toContain('codex-local-markdown-comment-click')
+    expect(html).toContain('data-annotation-mark')
+    expect(html).toContain('data-highlight-source')
+    expect(html).toContain('sourceText: markSource')
+    expect(html).toContain('sourceText: highlightSource')
     expect(html).toContain('codex-local-markdown-highlight-dismiss')
     expect(html).toContain('codex-local-markdown-preview-save')
     expect(html).toContain("img.message-markdown-image[data-browse-href]")
