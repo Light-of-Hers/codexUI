@@ -3,6 +3,7 @@ import {
   buildWorkspaceRootsProjectOrderState,
   collectWorkspaceRootPathsForProjectRemoval,
   applyModelContextWindowToThreadTokenUsage,
+  excludeLiveMessagesAlreadyPersisted,
   filterGroupsByWorkspaceRoots,
   findAdjacentThreadId,
   inferProviderFromModel,
@@ -131,6 +132,22 @@ async function waitForCalls(mock: { mock: { calls: unknown[] } }, minCalls: numb
   }
   throw new Error(`Timed out waiting for ${minCalls} mock invocation(s)`)
 }
+
+describe('excludeLiveMessagesAlreadyPersisted', () => {
+  it('keeps only live cards that are not already represented by persisted item ids', () => {
+    const persisted = [
+      { id: 'command-1', role: 'system' as const, text: 'pwd', messageType: 'commandExecution' },
+      { id: 'agent-1', role: 'assistant' as const, text: 'Done.', messageType: 'agentMessage' },
+    ]
+    const live = [
+      { id: 'command-1', role: 'system' as const, text: 'pwd', messageType: 'commandExecution' },
+      { id: 'command-2', role: 'system' as const, text: 'git status', messageType: 'commandExecution' },
+      { id: 'agent-1', role: 'assistant' as const, text: 'Done.', messageType: 'agentMessage.live' },
+    ]
+
+    expect(excludeLiveMessagesAlreadyPersisted(persisted, live).map((message) => message.id)).toEqual(['command-2'])
+  })
+})
 
 describe('filterGroupsByWorkspaceRoots', () => {
   it('keeps projectless chats visible when workspace roots are configured', () => {

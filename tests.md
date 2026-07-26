@@ -7482,3 +7482,15 @@ Markdown files opened through the local editor expose a preview button that rend
   4. 分别切换浅色主题和深色主题，重复观察上述顺序和折叠块。
 - **预期结果：** 文本和命令按 app-server 事件到达顺序交错显示；只有相邻的命令会合并为同一个折叠块。文本会把命令块分隔开，不会出现“所有文本在前、所有命令集中在后”的情况。浅色和深色主题下命令块、文本及展开内容均清晰可读。
 - **回滚/清理：** 无需清理；可删除测试线程。
+
+## 同一 turn 的 command 唯一渲染与交接去重
+
+- **前置条件：** 启动 CodexUI，打开一个会连续执行多个 command 并在最后输出 agent 回复的线程。
+- **步骤：**
+  1. 发送会让 agent 连续执行多条 command 的请求；等待 command 区域折叠为一个相邻 command block。
+  2. 等待最终 assistant 文本出现，并在 turn 刚完成、以及随后线程自动刷新后各观察一次。
+  3. 确认 `Worked for …` 状态行不会展开或重放任何 command。
+  4. 刷新页面并重新打开该线程，确认 command 仍按源 item 顺序只显示一次。
+  5. 分别在浅色主题和深色主题重复步骤 1–4。
+- **预期结果：** 每个 command item 仅有一个卡片；persisted history 与 live overlay 交接期间不出现第二份 command block；连续 command 只形成一个 collapse block，最终 assistant 回复不会前后各附加重复块；`Worked for …` 只显示时长状态。浅色和深色主题下状态行、command block 与最终回复均清晰可读。
+- **回滚/清理：** 删除用于验证的测试线程即可；无持久设置需要清理。

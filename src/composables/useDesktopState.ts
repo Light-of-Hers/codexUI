@@ -1039,6 +1039,15 @@ function mergeMessages(
   return areMessageArraysEqual(previous, merged) ? previous : merged
 }
 
+export function excludeLiveMessagesAlreadyPersisted(
+  persisted: readonly UiMessage[],
+  live: readonly UiMessage[],
+): UiMessage[] {
+  if (persisted.length === 0 || live.length === 0) return [...live]
+  const persistedIds = new Set(persisted.map((message) => message.id).filter(Boolean))
+  return live.filter((message) => !persistedIds.has(message.id))
+}
+
 function sortMessagesByThreadPosition(messages: UiMessage[]): UiMessage[] {
   const indexed = messages.map((message, index) => ({ message, index }))
   indexed.sort((left, right) => {
@@ -2035,9 +2044,12 @@ export function useDesktopState() {
     const liveCommands = liveCommandsByThreadId.value[threadId] ?? []
     const liveFileChanges = liveFileChangeMessagesByThreadId.value[threadId] ?? []
     const liveToolCalls = liveToolCallMessagesByThreadId.value[threadId] ?? []
-    const liveMessages = orderLiveMessages(
-      threadId,
-      [livePlan, liveAgent, liveCommands, liveFileChanges, liveToolCalls],
+    const liveMessages = excludeLiveMessagesAlreadyPersisted(
+      persisted,
+      orderLiveMessages(
+        threadId,
+        [livePlan, liveAgent, liveCommands, liveFileChanges, liveToolCalls],
+      ),
     )
     const optimistic = optimisticUserMessageByThreadId.value[threadId]
     let combined: UiMessage[]

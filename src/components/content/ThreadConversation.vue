@@ -455,85 +455,10 @@
                   <code v-if="message.automationDisplayName">{{ message.automationDisplayName }}</code>
                 </div>
                 <div v-if="message.messageType === 'worked'" class="worked-separator-wrap" aria-live="polite">
-                  <button type="button" class="worked-separator" @click="toggleWorkedExpand(message)">
+                  <div class="worked-separator" role="status">
                     <span class="worked-separator-line" aria-hidden="true" />
-                    <span class="worked-chevron" :class="{ 'worked-chevron-open': isWorkedExpanded(message) }">▶</span>
                     <p class="worked-separator-text">{{ message.text }}</p>
                     <span class="worked-separator-line" aria-hidden="true" />
-                  </button>
-                  <div v-if="isWorkedExpanded(message)" class="worked-details">
-                    <div
-                      v-for="cmd in getCommandsForWorked(messages, messages.indexOf(message))"
-                      :key="`worked-cmd-${cmd.id}`"
-                      class="worked-cmd-item"
-                    >
-                      <button
-                        type="button"
-                        class="cmd-row"
-                        :class="[
-                          commandStatusClass(cmd),
-                          {
-                            'cmd-expanded': isCommandExpanded(cmd),
-                            'cmd-compact': isCommandCompact(cmd),
-                          },
-                        ]"
-                        @click="toggleCommandExpand(cmd)"
-                      >
-                        <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isCommandExpanded(cmd) }">▶</span>
-                        <code class="cmd-label" :title="commandDisplayText(cmd)">{{ commandDisplayText(cmd) }}</code>
-                        <span class="cmd-status">{{ commandStatusLabel(cmd) }}</span>
-                      </button>
-                      <div
-                        class="cmd-output-wrap"
-                        :class="{ 'cmd-output-visible': isCommandExpanded(cmd) }"
-                      >
-                        <Transition :duration="350" name="cmd-output-fade">
-                        <div v-if="isCommandExpanded(cmd)" class="cmd-output-inner">
-                          <div class="cmd-output-section">
-                            <span class="cmd-output-section-label">Command</span>
-                            <div class="cmd-code-box" tabindex="0" @keydown="onCodeBoxKeydown">
-                              <button class="cmd-code-copy-button" type="button" title="Copy command" aria-label="Copy command" @click.stop="copyCommandCodeBox($event)">
-                                <span class="message-code-copy-icon" aria-hidden="true"></span>
-                              </button>
-                              <div class="cmd-code-box-lines">
-                                <div
-                                  v-for="(line, lineIndex) in commandDisplayLines(cmd)"
-                                  :key="`worked-command-line-${cmd.id}-${lineIndex}`"
-                                  class="cmd-code-box-line"
-                                  :data-line-number="lineIndex + 1"
-                                >
-                                  <code class="cmd-code-box-line-code" v-text="line || ' '"></code>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                          <div class="cmd-output-section">
-                            <span class="cmd-output-section-label">Output</span>
-                            <div
-                              class="cmd-code-box cmd-code-box-output"
-                              :class="{ 'cmd-code-box-condensed': isCommandOutputCondensed(cmd) }"
-                              tabindex="0"
-                              @keydown="onCodeBoxKeydown"
-                            >
-                              <button class="cmd-code-copy-button" type="button" title="Copy output" aria-label="Copy output" @click.stop="copyCommandCodeBox($event)">
-                                <span class="message-code-copy-icon" aria-hidden="true"></span>
-                              </button>
-                              <div class="cmd-code-box-lines">
-                                <div
-                                  v-for="(line, lineIndex) in outputDisplayLines(cmd)"
-                                  :key="`worked-output-line-${cmd.id}-${lineIndex}`"
-                                  class="cmd-code-box-line"
-                                  :data-line-number="lineIndex + 1"
-                                >
-                                  <code class="cmd-code-box-line-code" v-text="line || ' '"></code>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                        </Transition>
-                      </div>
-                    </div>
                   </div>
                 </div>
                 <div v-else-if="isPlanMessage(message)" class="plan-card" :data-streaming="message.messageType === 'plan.live'">
@@ -1063,7 +988,6 @@ const collapsedAutoCommandIds = ref<Set<string>>(new Set())
 const expandedCommandGroupIds = ref<Set<string>>(new Set())
 const expandedToolCallIds = ref<Set<string>>(new Set())
 const expandedToolCallGroupIds = ref<Set<string>>(new Set())
-const expandedWorkedIds = ref<Set<string>>(new Set())
 const expandedFileChangeSummaryIds = ref<Set<string>>(new Set())
 const expandedResponseSourceIds = ref<Set<string>>(new Set())
 const activeDiffViewerSummary = ref<TurnFileChangeSummary | null>(null)
@@ -1589,17 +1513,6 @@ function toolCallGroupStatusClass(message: UiMessage): string {
   return 'cmd-status-ok'
 }
 
-function toggleWorkedExpand(message: UiMessage): void {
-  const next = new Set(expandedWorkedIds.value)
-  if (next.has(message.id)) next.delete(message.id)
-  else next.add(message.id)
-  expandedWorkedIds.value = next
-}
-
-function isWorkedExpanded(message: UiMessage): boolean {
-  return expandedWorkedIds.value.has(message.id)
-}
-
 function toggleFileChangeSummary(message: UiMessage): void {
   const next = new Set(expandedFileChangeSummaryIds.value)
   if (next.has(message.id)) next.delete(message.id)
@@ -1673,15 +1586,6 @@ function pruneCommandIdSet(source: Set<string>, validIds: Set<string>): Set<stri
   return next.size === source.size ? source : next
 }
 
-function getCommandsForWorked(messages: UiMessage[], workedIndex: number): UiMessage[] {
-  const result: UiMessage[] = []
-  for (let i = workedIndex - 1; i >= 0; i--) {
-    const m = messages[i]
-    if (m.messageType === 'commandExecution') result.unshift(m)
-    else if (m.role === 'user' || m.messageType === 'worked') break
-  }
-  return result
-}
 
 const props = defineProps<{
   messages: UiMessage[]
@@ -6919,15 +6823,7 @@ onBeforeUnmount(() => {
 }
 
 .worked-separator {
-  @apply w-full flex items-center gap-3 bg-transparent border-none cursor-pointer p-0;
-}
-
-.worked-chevron {
-  @apply text-[9px] text-zinc-400 transition-transform duration-200 flex-shrink-0;
-}
-
-.worked-chevron-open {
-  transform: rotate(90deg);
+  @apply w-full flex items-center gap-3 bg-transparent border-none p-0;
 }
 
 .worked-separator-line {
@@ -6936,10 +6832,6 @@ onBeforeUnmount(() => {
 
 .worked-separator-text {
   @apply m-0 text-sm leading-relaxed font-normal text-slate-800;
-}
-
-.worked-details {
-  @apply flex flex-col gap-1.5 pt-2;
 }
 
 .worked-cmd-item {
