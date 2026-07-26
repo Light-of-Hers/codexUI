@@ -145,6 +145,7 @@ type AnnotationCommentMatch = {
   commentEndOffset: number
   commentBodyStartOffset: number
   commentBodyEndOffset: number
+  commentInsertionEndOffset: number
 }
 
 export function findAnnotationCommentInSource(
@@ -222,7 +223,11 @@ export function findAnnotationCommentInSource(
   }
 
   let matchedOccurrence = 0
-  const findInSlice = (value: string, baseOffset: number): AnnotationCommentMatch | null => {
+  const findInSlice = (
+    value: string,
+    baseOffset: number,
+    enclosingCommentEndOffset: number | null = null,
+  ): AnnotationCommentMatch | null => {
     let searchFrom = 0
     while (searchFrom < value.length) {
       const commandIndex = value.indexOf(annotationSlash, searchFrom)
@@ -240,6 +245,7 @@ export function findAnnotationCommentInSource(
             commentEndOffset: baseOffset + command.endOffset,
             commentBodyStartOffset: baseOffset + command.bodyStartOffset,
             commentBodyEndOffset: baseOffset + command.bodyEndOffset,
+            commentInsertionEndOffset: enclosingCommentEndOffset ?? baseOffset + command.endOffset,
           }
         }
         matchedOccurrence += 1
@@ -248,6 +254,9 @@ export function findAnnotationCommentInSource(
       const nestedMatch = findInSlice(
         value.slice(command.bodyStartOffset, command.bodyEndOffset),
         baseOffset + command.bodyStartOffset,
+        command.kind === 'comment'
+          ? enclosingCommentEndOffset ?? baseOffset + command.endOffset
+          : enclosingCommentEndOffset,
       )
       if (nestedMatch) return nestedMatch
       searchFrom = command.endOffset
@@ -1904,7 +1913,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     ? '<button id="previewBtn" type="button" aria-pressed="false">Preview</button>'
     : ''
   const floatingHighlightControls = supportsMarkdownPreview
-    ? '<div id="floatingSelectionActions" class="floating-highlight-action floating-action-group" hidden><button id="floatingHighlightBtn" type="button">Highlight</button><button id="floatingMarkBtn" type="button">Mark</button><button id="floatingSelectionCommentBtn" type="button">Add comment</button></div><div id="floatingHighlightActions" class="floating-highlight-action floating-action-group" hidden><button id="floatingRemoveHighlightBtn" class="danger" type="button">Remove highlight</button><button id="floatingAddHighlightCommentBtn" type="button">Add comment</button></div><div id="floatingMarkActions" class="floating-highlight-action floating-action-group" hidden><button id="floatingUnmarkBtn" type="button">Unmark</button><button id="floatingAddMarkCommentBtn" type="button">Add comment</button></div><div id="floatingCommentActions" class="floating-highlight-action floating-action-group" hidden><button id="floatingEditCommentBtn" type="button">Edit comment</button><button id="floatingRemoveCommentBtn" class="danger" type="button">Remove comment</button></div><form id="floatingCommentEditor" class="floating-highlight-action floating-comment-editor" hidden><label id="floatingCommentEditorTitle" class="floating-comment-title" for="floatingCommentInput">Add comment</label><textarea id="floatingCommentInput" class="floating-comment-input" rows="3"></textarea><div class="floating-comment-row"><button id="floatingCancelCommentBtn" type="button">Cancel</button><button id="floatingSaveCommentBtn" type="submit">Save</button></div></form>'
+    ? '<div id="floatingSelectionActions" class="floating-highlight-action floating-action-group" hidden><button id="floatingHighlightBtn" type="button">Highlight</button><button id="floatingMarkBtn" type="button">Mark</button><button id="floatingSelectionCommentBtn" type="button">Add comment</button></div><div id="floatingHighlightActions" class="floating-highlight-action floating-action-group" hidden><button id="floatingRemoveHighlightBtn" class="danger" type="button">Remove highlight</button><button id="floatingAddHighlightCommentBtn" type="button">Add comment</button></div><div id="floatingMarkActions" class="floating-highlight-action floating-action-group" hidden><button id="floatingUnmarkBtn" type="button">Unmark</button><button id="floatingAddMarkCommentBtn" type="button">Add comment</button></div><div id="floatingCommentActions" class="floating-highlight-action floating-action-group" hidden><button id="floatingAddCommentBtn" type="button">Add comment</button><button id="floatingEditCommentBtn" type="button">Edit comment</button><button id="floatingRemoveCommentBtn" class="danger" type="button">Remove comment</button></div><form id="floatingCommentEditor" class="floating-highlight-action floating-comment-editor" hidden><label id="floatingCommentEditorTitle" class="floating-comment-title" for="floatingCommentInput">Add comment</label><textarea id="floatingCommentInput" class="floating-comment-input" rows="3"></textarea><div class="floating-comment-row"><button id="floatingCancelCommentBtn" type="button">Cancel</button><button id="floatingSaveCommentBtn" type="submit">Save</button></div></form>'
     : ''
   const previewPane = supportsMarkdownPreview
     ? '<div id="previewSplitter" class="preview-splitter" role="separator" aria-orientation="vertical" aria-label="Resize markdown preview" tabindex="0" hidden></div><iframe id="previewFrame" class="preview-pane" title="Markdown preview" hidden></iframe>'
@@ -2300,6 +2309,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     const floatingUnmarkBtn = document.getElementById('floatingUnmarkBtn');
     const floatingAddMarkCommentBtn = document.getElementById('floatingAddMarkCommentBtn');
     const floatingCommentActions = document.getElementById('floatingCommentActions');
+    const floatingAddCommentBtn = document.getElementById('floatingAddCommentBtn');
     const floatingEditCommentBtn = document.getElementById('floatingEditCommentBtn');
     const floatingRemoveCommentBtn = document.getElementById('floatingRemoveCommentBtn');
     const floatingCommentEditor = document.getElementById('floatingCommentEditor');
@@ -3308,6 +3318,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
             commentEndIndex: lineWindow.startIndex + lineMatch.commentEndOffset,
             commentBodyStartIndex: lineWindow.startIndex + lineMatch.commentBodyStartOffset,
             commentBodyEndIndex: lineWindow.startIndex + lineMatch.commentBodyEndOffset,
+            commentInsertionEndIndex: lineWindow.startIndex + lineMatch.commentInsertionEndOffset,
           };
         }
       }
@@ -3320,6 +3331,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
         commentEndIndex: fullMatch.commentEndOffset,
         commentBodyStartIndex: fullMatch.commentBodyStartOffset,
         commentBodyEndIndex: fullMatch.commentBodyEndOffset,
+        commentInsertionEndIndex: fullMatch.commentInsertionEndOffset,
       };
     };
 
@@ -3750,6 +3762,15 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       const match = findCurrentCommentMarkup();
       if (!match) return;
       removeCommentMarkup(match);
+    };
+
+    const addCommentToCurrentComment = (rect = null) => {
+      const match = findCurrentCommentMarkup();
+      if (!match) return;
+      addCommentAtInsertIndex(
+        Number.isFinite(match.commentInsertionEndIndex) ? match.commentInsertionEndIndex : match.commentEndIndex,
+        rect,
+      );
     };
 
     const findCurrentHighlightMarkup = () => {
@@ -4437,6 +4458,14 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
         event.preventDefault();
         event.stopPropagation();
         addCommentToCurrentMark(rectFromElement(event.currentTarget));
+      });
+    }
+
+    if (floatingAddCommentBtn) {
+      floatingAddCommentBtn.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        addCommentToCurrentComment(rectFromElement(event.currentTarget));
       });
     }
 

@@ -5447,8 +5447,9 @@ Markdown files opened through the local editor expose a preview button that rend
 9. Add ``\mark{use `notebook = "."` or `notebook = "_notebooks/<path>"`}`` and confirm both inline-code spans render inside one annotation mark.
 10. Add ``\comment{outer note \comment{inner note}}`` and confirm both comments render as nested `cmt` pills.
 11. Click the inner `cmt` pill, choose `Edit comment`, and confirm changing it updates only the inner command in the editor source.
-12. Add `` `\mark{code}\comment{raw}` `` and confirm code spans keep the literal text.
-13. Repeat the preview check in dark theme.
+12. Click a `cmt` pill, choose `Add comment`, and confirm the new `\comment{...}` is appended after the outer comment command rather than nested inside it.
+13. Add `` `\mark{code}\comment{raw}` `` and confirm code spans keep the literal text.
+14. Repeat the preview check in dark theme.
 
 #### Expected Results
 - `\mark{...}` renders as an annotation mark without exposing the raw command syntax.
@@ -5459,6 +5460,7 @@ Markdown files opened through the local editor expose a preview button that rend
 - Mark bodies can contain inline code without exposing raw `\mark{...}` syntax.
 - Comment bodies can contain nested `\comment{...}` or `\cmt{...}` commands that render as nested comment notes.
 - Nested comment pills can be edited or removed independently from their outer comment.
+- Adding a comment from a comment pill appends a sibling command after the comment chain instead of nesting it.
 - Code spans are not parsed as annotations.
 - Annotation marks and comment notes remain readable in light and dark themes.
 

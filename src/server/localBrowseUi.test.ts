@@ -32,17 +32,20 @@ describe('local browse markdown preview', () => {
   it('locates nested comments independently for editing', () => {
     const source = String.raw`Review \comment{outer note \comment{inner note}} and \cmt{inner note}.`
     const nestedStart = source.indexOf(String.raw`\comment{inner note}`)
+    const outerEnd = source.indexOf(String.raw`\comment{outer note \comment{inner note}}`) + String.raw`\comment{outer note \comment{inner note}}`.length
     const laterStart = source.indexOf(String.raw`\cmt{inner note}`)
 
     expect(findAnnotationCommentInSource(source, 'inner note')).toMatchObject({
       comment: 'inner note',
       commentStartOffset: nestedStart,
       commentEndOffset: nestedStart + String.raw`\comment{inner note}`.length,
+      commentInsertionEndOffset: outerEnd,
     })
     expect(findAnnotationCommentInSource(source, 'inner note', 1)).toMatchObject({
       comment: 'inner note',
       commentStartOffset: laterStart,
       commentEndOffset: laterStart + String.raw`\cmt{inner note}`.length,
+      commentInsertionEndOffset: laterStart + String.raw`\cmt{inner note}`.length,
     })
   })
 
@@ -87,6 +90,7 @@ describe('local browse markdown preview', () => {
     expect(markdownEditorHtml).toContain('id="floatingUnmarkBtn"')
     expect(markdownEditorHtml).toContain('id="floatingAddMarkCommentBtn"')
     expect(markdownEditorHtml).toContain('id="floatingCommentActions"')
+    expect(markdownEditorHtml).toContain('id="floatingAddCommentBtn"')
     expect(markdownEditorHtml).toContain('id="floatingEditCommentBtn"')
     expect(markdownEditorHtml).toContain('id="floatingRemoveCommentBtn"')
     expect(markdownEditorHtml).toContain('id="floatingCommentEditor"')
@@ -139,6 +143,7 @@ describe('local browse markdown preview', () => {
     expect(markdownEditorHtml).toContain('removeCurrentHighlight')
     expect(markdownEditorHtml).toContain('unmarkCurrentMark')
     expect(markdownEditorHtml).toContain('editCurrentComment')
+    expect(markdownEditorHtml).toContain('addCommentToCurrentComment')
     expect(markdownEditorHtml).toContain('removeCurrentComment')
     expect(markdownEditorHtml).toContain('findCommentMarkupInEditor')
     expect(markdownEditorHtml).toContain('findRenderedInlineCodeSelectionInSource')
@@ -190,6 +195,7 @@ describe('local browse markdown preview', () => {
     expect(textEditorHtml).not.toContain('id="floatingMarkActions"')
     expect(textEditorHtml).not.toContain('id="floatingAddMarkCommentBtn"')
     expect(textEditorHtml).not.toContain('id="floatingCommentActions"')
+    expect(textEditorHtml).not.toContain('id="floatingAddCommentBtn"')
     expect(textEditorHtml).not.toContain('id="floatingCommentEditor"')
     expect(textEditorHtml).not.toContain('id="floatingCommentInput"')
     expect(textEditorHtml).not.toContain('id="previewSplitter"')
