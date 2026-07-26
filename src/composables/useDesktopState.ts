@@ -1789,6 +1789,10 @@ export function useDesktopState() {
   const liveCommandsByThreadId = ref<Record<string, UiMessage[]>>({})
   const liveFileChangeMessagesByThreadId = ref<Record<string, UiMessage[]>>({})
   const liveToolCallMessagesByThreadId = ref<Record<string, UiMessage[]>>({})
+  // Live items arrive through separate protocol channels. Keep their first-seen
+  // order so commands remain interleaved with assistant text instead of being
+  // rendered in per-channel buckets.
+  const liveMessageOrderByThreadId = ref<Record<string, string[]>>({})
   const inProgressById = ref<Record<string, boolean>>({})
   type FileAttachment = { label: string; path: string; fsPath: string }
   type QueuedMessage = {
@@ -2031,6 +2035,10 @@ export function useDesktopState() {
     const liveCommands = liveCommandsByThreadId.value[threadId] ?? []
     const liveFileChanges = liveFileChangeMessagesByThreadId.value[threadId] ?? []
     const liveToolCalls = liveToolCallMessagesByThreadId.value[threadId] ?? []
+    const liveMessages = orderLiveMessages(
+      threadId,
+      [livePlan, liveAgent, liveCommands, liveFileChanges, liveToolCalls],
+    )
     const optimistic = optimisticUserMessageByThreadId.value[threadId]
     let combined: UiMessage[]
     if (optimistic) {
@@ -2039,10 +2047,10 @@ export function useDesktopState() {
         ? persisted.some((message) => message.role === 'user' && normalizeMessageText(message.text) === optimisticText)
         : false
       combined = persistedHasOptimistic
-        ? [...persisted, ...livePlan, ...liveCommands, ...liveFileChanges, ...liveToolCalls, ...liveAgent]
-        : [...persisted, optimistic, ...livePlan, ...liveCommands, ...liveFileChanges, ...liveToolCalls, ...liveAgent]
+        ? [...persisted, ...liveMessages]
+        : [...persisted, optimistic, ...liveMessages]
     } else {
-      combined = [...persisted, ...livePlan, ...liveCommands, ...liveFileChanges, ...liveToolCalls, ...liveAgent]
+      combined = [...persisted, ...liveMessages]
     }
 
     if (typeof window !== 'undefined' && combined.length > 0 && combined[0].role === 'user') {
@@ -3268,6 +3276,7 @@ export function useDesktopState() {
     liveCommandsByThreadId.value = pruneThreadStateMap(liveCommandsByThreadId.value, activeThreadIds)
     liveFileChangeMessagesByThreadId.value = pruneThreadStateMap(liveFileChangeMessagesByThreadId.value, activeThreadIds)
     liveToolCallMessagesByThreadId.value = pruneThreadStateMap(liveToolCallMessagesByThreadId.value, activeThreadIds)
+    liveMessageOrderByThreadId.value = pruneThreadStateMap(liveMessageOrderByThreadId.value, activeThreadIds)
     turnSummaryByThreadId.value = pruneThreadStateMap(turnSummaryByThreadId.value, activeThreadIds)
     turnActivityByThreadId.value = pruneThreadStateMap(turnActivityByThreadId.value, activeThreadIds)
     turnErrorByThreadId.value = pruneThreadStateMap(turnErrorByThreadId.value, activeThreadIds)
@@ -3722,6 +3731,59 @@ export function useDesktopState() {
     loadingFullHistoryByThreadId.value = omitKey(loadingFullHistoryByThreadId.value, threadId)
   }
 
+  function recordLiveMessageOrder(threadId: string, messages: readonly UiMessage[]): void {
+    if (!threadId || messages.length === 0) return
+    const previous = liveMessageOrderByThreadId.value[threadId] ?? []
+    const knownIds = new Set(previous)
+    const additions = messages
+      .map((message) => message.id)
+      .filter((messageId) => messageId.length > 0 && !knownIds.has(messageId))
+    if (additions.length === 0) return
+    liveMessageOrderByThreadId.value = {
+      ...liveMessageOrderByThreadId.value,
+      [threadId]: [...previous, ...additions],
+    }
+  }
+
+  function pruneLiveMessageOrder(threadId: string): void {
+    const previous = liveMessageOrderByThreadId.value[threadId]
+    if (!previous) return
+    const activeIds = new Set([
+      ...(livePlanMessagesByThreadId.value[threadId] ?? []),
+      ...(liveAgentMessagesByThreadId.value[threadId] ?? []),
+      ...(liveCommandsByThreadId.value[threadId] ?? []),
+      ...(liveFileChangeMessagesByThreadId.value[threadId] ?? []),
+      ...(liveToolCallMessagesByThreadId.value[threadId] ?? []),
+    ].map((message) => message.id))
+    const next = previous.filter((messageId) => activeIds.has(messageId))
+    if (next.length === previous.length) return
+    liveMessageOrderByThreadId.value = next.length > 0
+      ? { ...liveMessageOrderByThreadId.value, [threadId]: next }
+      : omitKey(liveMessageOrderByThreadId.value, threadId)
+  }
+
+  function orderLiveMessages(threadId: string, messageGroups: readonly UiMessage[][]): UiMessage[] {
+    const messages = messageGroups.flat()
+    if (messages.length <= 1) return messages
+
+    const messageById = new Map(messages.map((message) => [message.id, message]))
+    const ordered: UiMessage[] = []
+    for (const messageId of liveMessageOrderByThreadId.value[threadId] ?? []) {
+      const message = messageById.get(messageId)
+      if (!message) continue
+      ordered.push(message)
+      messageById.delete(messageId)
+    }
+    // A message can be injected before its event is observed (for example
+    // during a refresh). Keep it visible after the known live sequence.
+    for (const message of messages) {
+      if (!messageById.has(message.id)) continue
+      ordered.push(message)
+      messageById.delete(message.id)
+    }
+    return ordered
+  }
+
   function setPersistedMessagesForThread(threadId: string, nextMessages: UiMessage[]): void {
     const previous = persistedMessagesByThreadId.value[threadId] ?? []
     if (areMessageArraysEqual(previous, nextMessages)) return
@@ -3739,12 +3801,15 @@ export function useDesktopState() {
       ...liveAgentMessagesByThreadId.value,
       [threadId]: nextMessages,
     }
+    recordLiveMessageOrder(threadId, nextMessages)
+    pruneLiveMessageOrder(threadId)
   }
 
   function clearLiveAgentMessagesForThread(threadId: string): void {
     if (!threadId) return
     if (!(threadId in liveAgentMessagesByThreadId.value)) return
     liveAgentMessagesByThreadId.value = omitKey(liveAgentMessagesByThreadId.value, threadId)
+    pruneLiveMessageOrder(threadId)
   }
 
   function setLiveFileChangeMessagesForThread(threadId: string, nextMessages: UiMessage[]): void {
@@ -3754,6 +3819,8 @@ export function useDesktopState() {
       ...liveFileChangeMessagesByThreadId.value,
       [threadId]: nextMessages,
     }
+    recordLiveMessageOrder(threadId, nextMessages)
+    pruneLiveMessageOrder(threadId)
   }
 
   function setLiveToolCallMessagesForThread(threadId: string, nextMessages: UiMessage[]): void {
@@ -3763,6 +3830,8 @@ export function useDesktopState() {
       ...liveToolCallMessagesByThreadId.value,
       [threadId]: nextMessages,
     }
+    recordLiveMessageOrder(threadId, nextMessages)
+    pruneLiveMessageOrder(threadId)
   }
 
   function setLivePlanMessagesForThread(threadId: string, nextMessages: UiMessage[]): void {
@@ -3772,6 +3841,8 @@ export function useDesktopState() {
       ...livePlanMessagesByThreadId.value,
       [threadId]: nextMessages,
     }
+    recordLiveMessageOrder(threadId, nextMessages)
+    pruneLiveMessageOrder(threadId)
   }
 
   function upsertLivePlanMessage(threadId: string, nextMessage: UiMessage): void {
@@ -3830,18 +3901,21 @@ export function useDesktopState() {
     if (!threadId) return
     if (!(threadId in livePlanMessagesByThreadId.value)) return
     livePlanMessagesByThreadId.value = omitKey(livePlanMessagesByThreadId.value, threadId)
+    pruneLiveMessageOrder(threadId)
   }
 
   function clearLiveFileChangesForThread(threadId: string): void {
     if (!threadId) return
     if (!(threadId in liveFileChangeMessagesByThreadId.value)) return
     liveFileChangeMessagesByThreadId.value = omitKey(liveFileChangeMessagesByThreadId.value, threadId)
+    pruneLiveMessageOrder(threadId)
   }
 
   function clearLiveToolCallsForThread(threadId: string): void {
     if (!threadId) return
     if (!(threadId in liveToolCallMessagesByThreadId.value)) return
     liveToolCallMessagesByThreadId.value = omitKey(liveToolCallMessagesByThreadId.value, threadId)
+    pruneLiveMessageOrder(threadId)
   }
 
   function clearCompletedTurnLiveState(threadId: string): void {
@@ -5127,6 +5201,8 @@ export function useDesktopState() {
     const next = upsertMessage(previous, msg)
     if (next === previous) return
     liveCommandsByThreadId.value = { ...liveCommandsByThreadId.value, [threadId]: next }
+    recordLiveMessageOrder(threadId, next)
+    pruneLiveMessageOrder(threadId)
   }
 
   function removeLiveCommandsPersistedIn(threadId: string, persistedMessages: UiMessage[]): void {
@@ -5140,6 +5216,7 @@ export function useDesktopState() {
     } else {
       liveCommandsByThreadId.value = { ...liveCommandsByThreadId.value, [threadId]: next }
     }
+    pruneLiveMessageOrder(threadId)
   }
 
   function removeLiveFileChangesPersistedIn(threadId: string, persistedMessages: UiMessage[]): void {
@@ -5167,6 +5244,7 @@ export function useDesktopState() {
     } else {
       liveFileChangeMessagesByThreadId.value = { ...liveFileChangeMessagesByThreadId.value, [threadId]: next }
     }
+    pruneLiveMessageOrder(threadId)
   }
 
   function removeLiveToolCallsPersistedIn(threadId: string, persistedMessages: UiMessage[]): void {
@@ -5180,6 +5258,7 @@ export function useDesktopState() {
     } else {
       liveToolCallMessagesByThreadId.value = { ...liveToolCallMessagesByThreadId.value, [threadId]: next }
     }
+    pruneLiveMessageOrder(threadId)
   }
 
   function isAgentContentEvent(notification: RpcNotification): boolean {
@@ -7768,6 +7847,7 @@ export function useDesktopState() {
     liveCommandsByThreadId.value = {}
     liveFileChangeMessagesByThreadId.value = {}
     liveToolCallMessagesByThreadId.value = {}
+    liveMessageOrderByThreadId.value = {}
     turnIndexByTurnIdByThreadId.value = {}
     turnActivityByThreadId.value = {}
     turnSummaryByThreadId.value = {}

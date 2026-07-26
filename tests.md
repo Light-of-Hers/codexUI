@@ -7471,3 +7471,14 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - Delete the disposable Mermaid test message or close the test thread. No persistent application data is created by rendering.
+
+## 保持同一 turn 内文本与命令的事件顺序
+
+- **前置条件：** 启动 CodexUI，并打开一个可执行命令的线程；准备一个会在回复过程中交替输出文本和命令的提示词。
+- **步骤：**
+  1. 发送提示词，使 agent 依次输出文本、运行一个命令、继续输出文本、连续运行两个命令、再输出文本并运行最后一个命令。
+  2. 在 turn 进行中观察对话列表；展开连续两个命令形成的折叠块。
+  3. 等待 turn 完成，并刷新线程以确认落盘消息。
+  4. 分别切换浅色主题和深色主题，重复观察上述顺序和折叠块。
+- **预期结果：** 文本和命令按 app-server 事件到达顺序交错显示；只有相邻的命令会合并为同一个折叠块。文本会把命令块分隔开，不会出现“所有文本在前、所有命令集中在后”的情况。浅色和深色主题下命令块、文本及展开内容均清晰可读。
+- **回滚/清理：** 无需清理；可删除测试线程。

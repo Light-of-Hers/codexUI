@@ -2381,6 +2381,44 @@ describe('live turn rendering', () => {
     expect(commandMessages[0].commandExecution?.aggregatedOutput).toBe('running\n')
   })
 
+  it('preserves live text and command event order within one turn', async () => {
+    const { state, notify } = await createLiveStateHarness()
+
+    notify(notification('turn/started', {
+      threadId: 'thread-a',
+      turn: { id: 'turn-1', threadId: 'thread-a', startedAt: '2026-05-23T00:00:00.000Z' },
+    }))
+    notify(notification('item/agentMessage/delta', {
+      threadId: 'thread-a', turnId: 'turn-1', itemId: 'text-0', delta: 'T0',
+    }))
+    notify(notification('item/started', {
+      threadId: 'thread-a', turnId: 'turn-1',
+      item: { id: 'command-0', type: 'commandExecution', command: 'C0', cwd: '/tmp/project' },
+    }))
+    notify(notification('item/agentMessage/delta', {
+      threadId: 'thread-a', turnId: 'turn-1', itemId: 'text-1', delta: 'T1',
+    }))
+    notify(notification('item/started', {
+      threadId: 'thread-a', turnId: 'turn-1',
+      item: { id: 'command-10', type: 'commandExecution', command: 'C10', cwd: '/tmp/project' },
+    }))
+    notify(notification('item/started', {
+      threadId: 'thread-a', turnId: 'turn-1',
+      item: { id: 'command-11', type: 'commandExecution', command: 'C11', cwd: '/tmp/project' },
+    }))
+    notify(notification('item/agentMessage/delta', {
+      threadId: 'thread-a', turnId: 'turn-1', itemId: 'text-2', delta: 'T2',
+    }))
+    notify(notification('item/started', {
+      threadId: 'thread-a', turnId: 'turn-1',
+      item: { id: 'command-2', type: 'commandExecution', command: 'C2', cwd: '/tmp/project' },
+    }))
+
+    expect(state.messages.value.map((message) => message.id)).toEqual([
+      'text-0', 'command-0', 'text-1', 'command-10', 'command-11', 'text-2', 'command-2',
+    ])
+  })
+
   it('keeps accumulated live reasoning when assistant text starts streaming', async () => {
     const { state, notify } = await createLiveStateHarness()
 
