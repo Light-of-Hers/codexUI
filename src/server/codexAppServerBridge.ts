@@ -343,17 +343,18 @@ type SessionModelStateCacheEntry = {
   modelState: SessionRecoveredModelState
 }
 
-type SessionSkillInputCacheEntry = {
+type SessionUserInputEnrichmentCacheEntry = {
   size: number
   mtimeMs: number
   skillsByTurnId: Map<string, SessionRecoveredSkillInput[]>
+  contextsByTurnId: Map<string, string[]>
 }
 
 const SESSION_MODEL_STATE_CACHE_LIMIT = 256
-const SESSION_SKILL_INPUT_CACHE_LIMIT = 64
+const SESSION_USER_INPUT_ENRICHMENT_CACHE_LIMIT = 64
 const SESSION_USER_MESSAGE_COUNT_CACHE_LIMIT = 256
 const sessionModelStateCache = new Map<string, SessionModelStateCacheEntry>()
-const sessionSkillInputCache = new Map<string, SessionSkillInputCacheEntry>()
+const sessionUserInputEnrichmentCache = new Map<string, SessionUserInputEnrichmentCacheEntry>()
 const sessionUserMessageCountCache = new Map<string, SessionUserMessageCountCacheEntry>()
 
 type SessionUserMessageCountCacheEntry = {
@@ -779,27 +780,6 @@ function buildSessionSkillInputsByTurn(sessionLogRaw: string): Map<string, Sessi
   return skillsByTurnId
 }
 
-async function readCachedSessionSkillInputsByTurn(sessionPath: string): Promise<Map<string, SessionRecoveredSkillInput[]>> {
-  const sessionStat = await stat(sessionPath)
-  const cached = sessionSkillInputCache.get(sessionPath)
-  if (cached && cached.size === sessionStat.size && cached.mtimeMs === sessionStat.mtimeMs) {
-    return cached.skillsByTurnId
-  }
-
-  const sessionLogRaw = await readFile(sessionPath, 'utf8')
-  const skillsByTurnId = buildSessionSkillInputsByTurn(sessionLogRaw)
-  sessionSkillInputCache.set(sessionPath, {
-    size: sessionStat.size,
-    mtimeMs: sessionStat.mtimeMs,
-    skillsByTurnId,
-  })
-  if (sessionSkillInputCache.size > SESSION_SKILL_INPUT_CACHE_LIMIT) {
-    const oldestKey = sessionSkillInputCache.keys().next().value
-    if (oldestKey) sessionSkillInputCache.delete(oldestKey)
-  }
-  return skillsByTurnId
-}
-
 function mergeSessionSkillInputsIntoTurnsFromMap(
   turns: unknown[],
   skillsByTurnId: Map<string, SessionRecoveredSkillInput[]>,
@@ -869,6 +849,144 @@ export function mergeSessionSkillInputsIntoTurns(turns: unknown[], sessionLogRaw
   return mergeSessionSkillInputsIntoTurnsFromMap(turns, buildSessionSkillInputsByTurn(sessionLogRaw))
 }
 
+function buildSessionUserPromptAdditionalContextsByTurn(sessionLogRaw: string): Map<string, string[]> {
+  let currentTurnId = ''
+  let awaitingAdditionalContext = false
+  const contextsByTurnId = new Map<string, string[]>()
+
+  for (const line of sessionLogRaw.split('\n')) {
+    if (!line.trim()) continue
+    let row: Record<string, unknown> | null = null
+    try {
+      row = JSON.parse(line) as Record<string, unknown>
+    } catch {
+      continue
+    }
+
+    const payloadRecord = asRecord(row.payload)
+    if (row.type === 'turn_context') {
+      currentTurnId = readNonEmptyString(payloadRecord?.turn_id) || currentTurnId
+      continue
+    }
+    if (row.type === 'event_msg') {
+      if (payloadRecord?.type === 'task_started') {
+        currentTurnId = readNonEmptyString(payloadRecord.turn_id) || currentTurnId
+      } else if (payloadRecord?.type === 'user_message') {
+        awaitingAdditionalContext = Boolean(currentTurnId)
+      } else if (payloadRecord?.type === 'task_complete') {
+        awaitingAdditionalContext = false
+        currentTurnId = ''
+      }
+      continue
+    }
+
+    if (row.type !== 'response_item' || !awaitingAdditionalContext || !currentTurnId) continue
+    if (payloadRecord?.type !== 'message') continue
+    if (payloadRecord.role === 'assistant') {
+      awaitingAdditionalContext = false
+      continue
+    }
+    if (payloadRecord.role !== 'developer') continue
+
+    const context = readSessionUserMessageText(payloadRecord).trim()
+    if (!context) continue
+    const existing = contextsByTurnId.get(currentTurnId) ?? []
+    if (!existing.includes(context)) {
+      existing.push(context)
+      contextsByTurnId.set(currentTurnId, existing)
+    }
+  }
+
+  return contextsByTurnId
+}
+
+async function readCachedSessionUserInputEnrichment(sessionPath: string): Promise<{
+  skillsByTurnId: Map<string, SessionRecoveredSkillInput[]>
+  contextsByTurnId: Map<string, string[]>
+}> {
+  const sessionStat = await stat(sessionPath)
+  const cached = sessionUserInputEnrichmentCache.get(sessionPath)
+  if (cached && cached.size === sessionStat.size && cached.mtimeMs === sessionStat.mtimeMs) {
+    return cached
+  }
+
+  const sessionLogRaw = await readFile(sessionPath, 'utf8')
+  const skillsByTurnId = buildSessionSkillInputsByTurn(sessionLogRaw)
+  const contextsByTurnId = buildSessionUserPromptAdditionalContextsByTurn(sessionLogRaw)
+  const enrichment = { skillsByTurnId, contextsByTurnId }
+  sessionUserInputEnrichmentCache.set(sessionPath, {
+    size: sessionStat.size,
+    mtimeMs: sessionStat.mtimeMs,
+    ...enrichment,
+  })
+  if (sessionUserInputEnrichmentCache.size > SESSION_USER_INPUT_ENRICHMENT_CACHE_LIMIT) {
+    const oldestKey = sessionUserInputEnrichmentCache.keys().next().value
+    if (oldestKey) sessionUserInputEnrichmentCache.delete(oldestKey)
+  }
+  return enrichment
+}
+
+function mergeSessionUserPromptAdditionalContextsIntoTurnsFromMap(
+  turns: unknown[],
+  contextsByTurnId: Map<string, string[]>,
+): unknown[] {
+  if (contextsByTurnId.size === 0) return turns
+
+  let changed = false
+  const mergedTurns = turns.map((turn) => {
+    const turnRecord = asRecord(turn)
+    const turnId = readNonEmptyString(turnRecord?.id)
+    const contexts = turnId ? contextsByTurnId.get(turnId) : undefined
+    const items = Array.isArray(turnRecord?.items) ? turnRecord.items : null
+    if (!turnRecord || !contexts || contexts.length === 0 || !items) return turn
+
+    let targetUserMessageIndex = -1
+    for (let index = items.length - 1; index >= 0; index -= 1) {
+      const itemRecord = asRecord(items[index])
+      if (itemRecord?.type === 'userMessage' && Array.isArray(itemRecord.content)) {
+        targetUserMessageIndex = index
+        break
+      }
+    }
+    if (targetUserMessageIndex < 0) return turn
+
+    let addedToMessage = false
+    const nextItems = items.map((item, index) => {
+      const itemRecord = asRecord(item)
+      const content = Array.isArray(itemRecord?.content) ? itemRecord.content : null
+      if (index !== targetUserMessageIndex || itemRecord?.type !== 'userMessage' || !content) return item
+
+      const existingContexts = new Set(
+        content.flatMap((contentItem) => {
+          const contentRecord = asRecord(contentItem)
+          const text = typeof contentRecord?.text === 'string' ? contentRecord.text.trim() : ''
+          return contentRecord?.type === 'additionalContext' && text ? [text] : []
+        }),
+      )
+      const missingContexts = contexts.filter((context) => !existingContexts.has(context))
+      if (missingContexts.length === 0) return item
+
+      addedToMessage = true
+      changed = true
+      return {
+        ...itemRecord,
+        content: [
+          ...content,
+          ...missingContexts.map((text) => ({ type: 'additionalContext', text })),
+        ],
+      }
+    })
+
+    return addedToMessage ? { ...turnRecord, items: nextItems } : turn
+  })
+
+  return changed ? mergedTurns : turns
+}
+
+export function mergeSessionUserPromptAdditionalContextsIntoTurns(turns: unknown[], sessionLogRaw: string): unknown[] {
+  return mergeSessionUserPromptAdditionalContextsIntoTurnsFromMap(turns, buildSessionUserPromptAdditionalContextsByTurn(sessionLogRaw))
+}
+
 async function mergeSessionSkillInputsIntoThreadResult(result: unknown): Promise<unknown> {
   const record = asRecord(result)
   const thread = asRecord(record?.thread)
@@ -879,8 +997,9 @@ async function mergeSessionSkillInputsIntoThreadResult(result: unknown): Promise
   }
 
   try {
-    const skillsByTurnId = await readCachedSessionSkillInputsByTurn(sessionPath)
-    const mergedTurns = mergeSessionSkillInputsIntoTurnsFromMap(turns, skillsByTurnId)
+    const enrichment = await readCachedSessionUserInputEnrichment(sessionPath)
+    const turnsWithSkills = mergeSessionSkillInputsIntoTurnsFromMap(turns, enrichment.skillsByTurnId)
+    const mergedTurns = mergeSessionUserPromptAdditionalContextsIntoTurnsFromMap(turnsWithSkills, enrichment.contextsByTurnId)
     if (mergedTurns === turns) return result
     return {
       ...record,

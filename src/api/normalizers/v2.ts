@@ -146,6 +146,7 @@ function parseUserMessageContent(
   content: UserInput[] | undefined,
 ): {
   text: string
+  additionalContext: string
   images: string[]
   skills: Array<{ name: string; path: string }>
   fileAttachments: UiFileAttachment[]
@@ -154,17 +155,22 @@ function parseUserMessageContent(
   automationDisplayName: string | null
 } {
   if (!Array.isArray(content)) {
-    return { text: '', images: [], skills: [], fileAttachments: [], rawBlocks: [], isAutomationRun: false, automationDisplayName: null }
+    return { text: '', additionalContext: '', images: [], skills: [], fileAttachments: [], rawBlocks: [], isAutomationRun: false, automationDisplayName: null }
   }
 
   const textChunks: string[] = []
+  const additionalContextChunks: string[] = []
   const images: string[] = []
   const skills: Array<{ name: string; path: string }> = []
   const rawBlocks: UiMessage[] = []
 
   for (const [index, block] of content.entries()) {
+    const contentBlock = block as UserInput | { type: 'additionalContext'; text: string }
     if (block.type === 'text' && typeof block.text === 'string' && block.text.length > 0) {
       textChunks.push(block.text)
+    }
+    if (contentBlock.type === 'additionalContext' && typeof contentBlock.text === 'string' && contentBlock.text.trim()) {
+      additionalContextChunks.push(contentBlock.text.trim())
     }
     if (block.type === 'image' && typeof block.url === 'string' && block.url.trim().length > 0) {
       images.push(block.url.trim())
@@ -180,7 +186,7 @@ function parseUserMessageContent(
       }
     }
 
-    if (block.type !== 'text' && block.type !== 'image' && block.type !== 'localImage' && block.type !== 'skill') {
+    if (block.type !== 'text' && block.type !== 'image' && block.type !== 'localImage' && block.type !== 'skill' && contentBlock.type !== 'additionalContext') {
       rawBlocks.push({
         id: `${itemId}:user-content:${index}`,
         role: 'user',
@@ -198,6 +204,7 @@ function parseUserMessageContent(
 
   return {
     text: heartbeat?.instructions ?? extractCodexUserRequestText(fullText),
+    additionalContext: additionalContextChunks.join('\n\n'),
     images,
     skills,
     fileAttachments,
@@ -580,13 +587,14 @@ function toUiMessages(item: ThreadItem): UiMessage[] {
   if (item.type === 'userMessage') {
     const parsed = parseUserMessageContent(item.id, item.content as UserInput[] | undefined)
     const messages: UiMessage[] = []
-    const hasRenderableUserContent = parsed.text.length > 0 || parsed.images.length > 0 || parsed.fileAttachments.length > 0 || parsed.skills.length > 0
+    const hasRenderableUserContent = parsed.text.length > 0 || parsed.additionalContext.length > 0 || parsed.images.length > 0 || parsed.fileAttachments.length > 0 || parsed.skills.length > 0
 
     if (hasRenderableUserContent) {
       messages.push({
         id: item.id,
         role: 'user',
         text: parsed.text,
+        additionalContext: parsed.additionalContext || undefined,
         images: parsed.images,
         skills: parsed.skills.length > 0 ? parsed.skills : undefined,
         fileAttachments: parsed.fileAttachments.length > 0 ? parsed.fileAttachments : undefined,

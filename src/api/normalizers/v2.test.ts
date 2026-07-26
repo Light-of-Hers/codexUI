@@ -152,6 +152,23 @@ describe('normalizeThreadMessagesV2', () => {
     expect(messages[0].isUnhandled).toBeUndefined()
   })
 
+  it('preserves recovered UserPromptSubmit additional context separately from the user prompt', () => {
+    const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
+      type: 'userMessage',
+      id: 'user-additional-context',
+      content: [
+        { type: 'text', text: 'Implement the feature', text_elements: [] },
+        { type: 'additionalContext', text: 'Agent mailbox messages:\n\n- Keep the workspace metadata current.' },
+      ] as never,
+    }]))
+
+    expect(messages[0]).toMatchObject({
+      id: 'user-additional-context',
+      text: 'Implement the feature',
+      additionalContext: 'Agent mailbox messages:\n\n- Keep the workspace metadata current.',
+    })
+  })
+
   it('decodes escaped heartbeat instructions without exposing raw XML', () => {
     const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
       type: 'userMessage',

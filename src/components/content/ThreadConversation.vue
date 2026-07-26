@@ -583,6 +583,14 @@
                 ></div>
               </article>
 
+              <details
+                v-if="message.role === 'user' && message.additionalContext"
+                class="message-additional-context"
+              >
+                <summary>Hook additional context</summary>
+                <pre v-text="message.additionalContext"></pre>
+              </details>
+
               <pre
                 v-if="showResponseSourceButton(message) && isResponseSourceVisible(message)"
                 :id="`message-source-${message.id}`"
@@ -6291,6 +6299,34 @@ onBeforeUnmount(() => {
 
 .message-text-flow {
   @apply flex flex-col gap-2;
+}
+
+.message-additional-context {
+  @apply mt-2 max-w-[min(var(--chat-card-max,76ch),100%)] rounded-xl border border-violet-200 bg-violet-50/80 px-3 py-2 text-xs text-violet-950;
+}
+
+.message-additional-context summary {
+  @apply cursor-pointer select-none font-medium text-violet-800;
+}
+
+.message-additional-context pre {
+  @apply m-0 mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-violet-950;
+  overflow-wrap: anywhere;
+}
+
+:global(:root.dark) .message-additional-context,
+:global(.dark) .message-additional-context {
+  @apply border-violet-500/35 bg-violet-950/35 text-violet-100;
+}
+
+:global(:root.dark) .message-additional-context summary,
+:global(.dark) .message-additional-context summary {
+  @apply text-violet-200;
+}
+
+:global(:root.dark) .message-additional-context pre,
+:global(.dark) .message-additional-context pre {
+  @apply text-violet-100;
 }
 
 .message-source-text {

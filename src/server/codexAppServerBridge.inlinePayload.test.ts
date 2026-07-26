@@ -10,6 +10,7 @@ import {
   buildSessionModelState,
   buildSessionUserMessageIndex,
   countSessionUserMessages,
+  mergeSessionUserPromptAdditionalContextsIntoTurns,
   createCodexBridgeMiddleware,
   getThreadTurnWindowBounds,
   mergeExplicitModelStateIntoThreadResult,
@@ -1441,6 +1442,45 @@ describe('thread session skill recovery', () => {
     expect(merged[0].items[0].content).toEqual([
       { type: 'text', text: 'use a skill', text_elements: [] },
       { type: 'skill', name: 'browser-use:browser', path: '/Users/igor/.codex/plugins/browser/SKILL.md' },
+    ])
+  })
+
+  it('adds UserPromptSubmit additional context to the matching user message', () => {
+    const turns = [{
+      id: 'turn-1',
+      items: [{
+        id: 'item-1',
+        type: 'userMessage',
+        content: [{ type: 'text', text: 'use the mailbox context', text_elements: [] }],
+      }],
+    }]
+    const sessionLog = [
+      JSON.stringify({ type: 'turn_context', payload: { turn_id: 'turn-1' } }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'developer',
+          content: [{ type: 'input_text', text: 'Base developer instructions must not be displayed.' }],
+        },
+      }),
+      JSON.stringify({ type: 'event_msg', payload: { type: 'user_message', message: 'use the mailbox context' } }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'developer',
+          content: [{ type: 'input_text', text: 'Agent mailbox messages:\n\n- Keep workspace state current.' }],
+        },
+      }),
+      JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'assistant', content: [] } }),
+    ].join('\n')
+
+    const merged = mergeSessionUserPromptAdditionalContextsIntoTurns(turns, sessionLog) as typeof turns
+
+    expect(merged[0].items[0].content).toEqual([
+      { type: 'text', text: 'use the mailbox context', text_elements: [] },
+      { type: 'additionalContext', text: 'Agent mailbox messages:\n\n- Keep workspace state current.' },
     ])
   })
 

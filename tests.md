@@ -1322,6 +1322,27 @@ Model, skill, thinking, and plan controls remain usable while a thread turn is i
 #### Rollback/Cleanup
 - No cleanup required.
 
+### Feature: Display UserPromptSubmit additional context
+
+#### Prerequisites
+- App is running from this repository.
+- The active Codex session has a `UserPromptSubmit` hook that emits non-empty `additionalContext`.
+
+#### Steps
+1. Send a user message that triggers the hook.
+2. When the user message appears in the conversation, locate the collapsed **Hook additional context** block directly beneath it.
+3. Expand the block and verify its content matches the hook-injected context, including newlines.
+4. Switch between light and dark themes and repeat step 3.
+
+#### Expected Results
+- The original user prompt remains unchanged.
+- Hook context is attached only to its matching user message and is collapsed by default.
+- Context is rendered as plain text rather than executable HTML or Markdown.
+- The collapsed block remains legible in both light and dark themes.
+
+#### Rollback/Cleanup
+- Revert the session JSONL recovery in `src/server/codexAppServerBridge.ts`, the `additionalContext` message field, and the conversation details block.
+
 ### Feature: Skills list request scoped to active thread cwd
 
 #### Prerequisites
