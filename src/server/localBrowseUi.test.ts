@@ -139,6 +139,7 @@ describe('local browse markdown preview', () => {
     expect(markdownEditorHtml).toContain('showFloatingCommentEditor')
     expect(markdownEditorHtml).toContain('submitFloatingCommentEditor')
     expect(markdownEditorHtml).toContain('floatingCommentEditor.addEventListener')
+    expect(markdownEditorHtml).toContain("event.key === 'Enter' && !event.shiftKey && !event.isComposing")
     expect(markdownEditorHtml).not.toContain('window.prompt')
     expect(markdownEditorHtml).toContain('removeCurrentHighlight')
     expect(markdownEditorHtml).toContain('unmarkCurrentMark')

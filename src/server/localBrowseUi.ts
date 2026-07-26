@@ -4509,7 +4509,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
           hideFloatingCommentEditor();
           return;
         }
-        if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+        if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
           event.preventDefault();
           event.stopPropagation();
           submitFloatingCommentEditor();
