@@ -435,6 +435,19 @@ export type LocalDirectoryListing = {
   entries: LocalDirectoryEntry[]
 }
 
+export type LocalEntry = {
+  name: string
+  path: string
+  isDirectory: boolean
+  editable: boolean
+}
+
+export type LocalEntryListing = {
+  path: string
+  parentPath: string
+  entries: LocalEntry[]
+}
+
 export type ThreadTerminalSession = {
   id: string
   threadId: string
@@ -3503,6 +3516,45 @@ export async function listLocalDirectories(path: string, options?: { showHidden?
       const name = typeof record.name === 'string' ? record.name.trim() : ''
       const entryPath = typeof record.path === 'string' ? normalizePathForUi(record.path) : ''
       return name && entryPath ? [{ name, path: entryPath }] : []
+    }),
+  }
+}
+
+export async function listLocalEntries(path: string, options?: { showHidden?: boolean }): Promise<LocalEntryListing> {
+  const query = new URLSearchParams({ path })
+  if (options?.showHidden === true) {
+    query.set('showHidden', '1')
+  }
+  const response = await fetch(`/codex-local-entries?${query.toString()}`)
+  const payload = await readJsonResponse(response)
+  if (!response.ok) {
+    const message = getErrorMessageFromPayload(payload, 'Failed to load local entries')
+    throw new Error(message)
+  }
+  const record =
+    payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? (payload as Record<string, unknown>)
+      : {}
+  const data =
+    record.data && typeof record.data === 'object' && !Array.isArray(record.data)
+      ? (record.data as Record<string, unknown>)
+      : {}
+  const entriesRaw = Array.isArray(data.entries) ? data.entries : []
+  return {
+    path: typeof data.path === 'string' ? normalizePathForUi(data.path) : '',
+    parentPath: typeof data.parentPath === 'string' ? normalizePathForUi(data.parentPath) : '',
+    entries: entriesRaw.flatMap((item) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return []
+      const row = item as Record<string, unknown>
+      const name = typeof row.name === 'string' ? row.name.trim() : ''
+      const entryPath = typeof row.path === 'string' ? normalizePathForUi(row.path) : ''
+      if (!name || !entryPath) return []
+      return [{
+        name,
+        path: entryPath,
+        isDirectory: row.isDirectory === true,
+        editable: row.editable === true,
+      }]
     }),
   }
 }

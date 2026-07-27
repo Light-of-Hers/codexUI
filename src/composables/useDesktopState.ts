@@ -2101,6 +2101,10 @@ export function useDesktopState() {
     const threadId = selectedThreadId.value
     return threadId ? loadingFullHistoryByThreadId.value[threadId] === true : false
   })
+  const hasLoadedFullHistory = computed(() => {
+    const threadId = selectedThreadId.value
+    return threadId ? loadedFullHistoryByThreadId.value[threadId] === true : false
+  })
   const userMessageNavigationTotal = computed<number | null>(() => {
     const threadId = selectedThreadId.value
     if (!threadId) return null
@@ -8004,6 +8008,7 @@ export function useDesktopState() {
     accountRateLimitSnapshots,
     messages,
     messageNavigationMessages,
+    hasLoadedFullHistory,
     hasMoreOlderMessages,
     isLoadingThreads,
     isThreadListFullyLoaded,

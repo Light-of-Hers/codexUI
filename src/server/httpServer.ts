@@ -6,7 +6,7 @@ import { writeFile, stat } from 'node:fs/promises'
 import express, { type Express } from 'express'
 import { createCodexBridgeMiddleware } from './codexAppServerBridge.js'
 import { createAuthSession } from './authMiddleware.js'
-import { LocalBrowseMutationError, createDirectoryListingHtml, createLocalBrowseEntry, createMarkdownPreviewHtml, createTextEditorHtml, decodeBrowsePath, deleteLocalBrowseEntry, getLocalDirectoryListing, isTextEditableFile, normalizeLocalPath, toEditHref } from './localBrowseUi.js'
+import { LocalBrowseMutationError, createDirectoryListingHtml, createLocalBrowseEntry, createMarkdownPreviewHtml, createTextEditorHtml, decodeBrowsePath, deleteLocalBrowseEntry, getDirectoryItemList, getLocalDirectoryListing, isTextEditableFile, normalizeLocalPath, toEditHref } from './localBrowseUi.js'
 import { LocalBrowseGitError, getLocalBrowseGitDiff } from './localBrowseGit.js'
 import { getKatexAssetContentType, KATEX_ASSET_ROUTE, resolveKatexAssetPath } from './katexAssets.js'
 import { WebSocketServer, type WebSocket } from 'ws'
@@ -162,6 +162,29 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
       }
       const data = await getLocalDirectoryListing(localPath, { showHidden })
       res.status(200).json({ data })
+    } catch {
+      res.status(404).json({ error: 'Directory not found.' })
+    }
+  })
+
+  app.get('/codex-local-entries', async (req, res) => {
+    const rawPath = typeof req.query.path === 'string' ? req.query.path : ''
+    const showHidden = typeof req.query.showHidden === 'string'
+      && ['1', 'true', 'yes', 'on'].includes(req.query.showHidden.toLowerCase())
+    const localPath = normalizeLocalPath(rawPath)
+    if (!localPath || !isAbsolute(localPath)) {
+      res.status(400).json({ error: 'Expected absolute local directory path.' })
+      return
+    }
+
+    try {
+      const fileStat = await stat(localPath)
+      if (!fileStat.isDirectory()) {
+        res.status(400).json({ error: 'Expected directory path.' })
+        return
+      }
+      const entries = await getDirectoryItemList(localPath, { showHidden })
+      res.status(200).json({ data: { path: localPath, parentPath: dirname(localPath), entries } })
     } catch {
       res.status(404).json({ error: 'Directory not found.' })
     }

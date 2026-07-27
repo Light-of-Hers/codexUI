@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { createDirectoryListingHtml, createEditorReferenceText, createLocalBrowseEntry, createMarkdownPreviewHtml, createTextEditorHtml, deleteLocalBrowseEntry, encodeAnnotationSourceForLocalBrowse, findAnnotationCommentInSource, findRenderedInlineCodeSelectionInSource, isMarkdownPath } from './localBrowseUi'
+import { createDirectoryListingHtml, createEditorReferenceText, createLocalBrowseEntry, createMarkdownPreviewHtml, createTextEditorHtml, deleteLocalBrowseEntry, encodeAnnotationSourceForLocalBrowse, findAnnotationCommentInSource, findRenderedInlineCodeSelectionInSource, getDirectoryItemList, isMarkdownPath } from './localBrowseUi'
 import { KATEX_STYLESHEET_HREF } from './katexAssets'
 
 let tempDir = ''
@@ -433,8 +433,27 @@ describe('local browse markdown preview', () => {
     expect(html).toContain('Delete note.txt')
     expect(html).toContain(`aria-label="Raw note.txt" href="/codex-local-browse${encodeURI(filePath)}?raw=1"`)
     expect(html).toContain(`class="file-link" href="/codex-local-browse${encodeURI(filePath)}"`)
-    expect((html.match(/class="icon-btn danger delete-entry-btn"/gu) ?? []).length).toBe(2)
+    const listingUl = html.slice(html.indexOf('<ul>'), html.indexOf('</ul>'));
+    expect((listingUl.match(/class="icon-btn danger delete-entry-btn"/gu) ?? []).length).toBe(2)
     expect(html).toContain('docs/')
+  })
+
+  it('lists files and directories directory-first via getDirectoryItemList', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'codexui-local-browse-itemlist-'))
+    await mkdir(join(tempDir, 'zdir'))
+    await mkdir(join(tempDir, 'adir'))
+    await writeFile(join(tempDir, 'b.txt'), 'x\n', 'utf8')
+    await writeFile(join(tempDir, '.hidden'), 'x\n', 'utf8')
+
+    const entries = await getDirectoryItemList(tempDir)
+    const names = entries.map((entry) => entry.name)
+    expect(names).toEqual(['adir', 'zdir', 'b.txt'])
+    expect(entries[0].isDirectory).toBe(true)
+    expect(entries[2].isDirectory).toBe(false)
+    expect(entries.find((entry) => entry.name === 'b.txt')?.editable).toBe(true)
+
+    const withHidden = await getDirectoryItemList(tempDir, { showHidden: true })
+    expect(withHidden.map((entry) => entry.name)).toContain('.hidden')
   })
 
   it('creates and deletes directory entries through the shared mutation helpers', async () => {

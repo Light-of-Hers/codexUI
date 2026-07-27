@@ -492,6 +492,18 @@
               :empty-label="t('No commands')"
               @update:model-value="onSelectHeaderTerminalCommand"
             />
+            <ThreadLinksDropdown
+              v-if="canShowThreadLinksDropdown"
+              class="content-header-links-dropdown"
+              :links="threadLinks"
+              :is-loading="!hasLoadedFullHistory"
+              @ensure-loaded="onEnsureThreadLinksLoaded"
+            />
+            <CwdExplorerDropdown
+              v-if="canShowCwdExplorer"
+              class="content-header-cwd-explorer"
+              :cwd="directoryCwd"
+            />
             <HeaderGitBranchDropdown
               v-if="canShowContentHeaderBranchDropdown"
               class="content-header-branch-dropdown"
@@ -1119,6 +1131,7 @@ import type { GitCommitOption, LocalDirectoryEntry, TelegramStatus, ThreadMessag
 import { getFreeModeStatus, setFreeMode, setCustomProvider } from './api/codexGateway'
 import { getPathLeafName, getPathParent, isProjectlessChatPath, normalizePathForUi } from './pathUtils.js'
 import { buildLiveThreadSearchResults, compareThreadSearchResultEntriesByRecency, type ThreadSearchUiResult } from './utils/threadMessageSearch'
+import { extractThreadLinks } from './utils/threadLinks'
 
 const ThreadConversation = defineAsyncComponent(() => import('./components/content/ThreadConversation.vue'))
 const ThreadTerminalPanel = defineAsyncComponent(() => import('./components/content/ThreadTerminalPanel.vue'))
@@ -1128,6 +1141,8 @@ const ThreadPendingRequestPanel = defineAsyncComponent(() => import('./component
 const QueuedMessages = defineAsyncComponent(() => import('./components/content/QueuedMessages.vue'))
 const RateLimitStatus = defineAsyncComponent(() => import('./components/content/RateLimitStatus.vue'))
 const HeaderGitBranchDropdown = defineAsyncComponent(() => import('./components/content/HeaderGitBranchDropdown.vue'))
+const ThreadLinksDropdown = defineAsyncComponent(() => import('./components/content/ThreadLinksDropdown.vue'))
+const CwdExplorerDropdown = defineAsyncComponent(() => import('./components/content/CwdExplorerDropdown.vue'))
 const ComposerRuntimeDropdown = defineAsyncComponent(() => import('./components/content/ComposerRuntimeDropdown.vue'))
 const AutomationsPanel = defineAsyncComponent(() => import('./components/content/AutomationsPanel.vue'))
 const { t, uiLanguage, uiLanguageOptions, setUiLanguage } = useUiLanguage()
@@ -1324,6 +1339,7 @@ const {
   accountRateLimitSnapshots,
   messages,
   messageNavigationMessages,
+  hasLoadedFullHistory,
   hasMoreOlderMessages,
   isLoadingThreads,
   isThreadListFullyLoaded,
@@ -1873,6 +1889,18 @@ const isTerminalKeyboardLayoutActive = computed(() => (
   (isComposerTerminalOpen.value && isTerminalKeyboardFocusFallbackActive.value)
 ))
 const directoryCwd = computed(() => selectedThread.value?.cwd?.trim() ?? newThreadCwd.value.trim())
+const threadLinks = computed(() => (hasLoadedFullHistory.value ? extractThreadLinks(messageNavigationMessages.value, directoryCwd.value) : []))
+const canShowThreadLinksDropdown = computed(() => route.name === 'thread' && selectedThreadId.value.length > 0)
+const canShowCwdExplorer = computed(() => route.name === 'thread' && selectedThreadId.value.length > 0 && directoryCwd.value.length > 0)
+function onEnsureThreadLinksLoaded(): void {
+  const threadId = selectedThreadId.value
+  if (threadId) void loadFullHistoryMessages(threadId)
+}
+watch(canShowThreadLinksDropdown, (canShow) => {
+  if (!canShow) return
+  const threadId = selectedThreadId.value
+  if (threadId) void loadFullHistoryMessages(threadId)
+}, { immediate: true })
 const isSelectedThreadInProgress = computed(() => !isHomeRoute.value && selectedThreadInProgress.value)
 const showThreadContextBadge = computed(() => !isHomeRoute.value && !isSkillsRoute.value && !isAutomationsRoute.value && selectedThreadId.value.trim().length > 0)
 const threadSessionId = computed(() => selectedThreadId.value.trim())

@@ -4,7 +4,7 @@ import { renderMarkdownContent } from '../components/content/markdownRenderer.js
 import { KATEX_STYLESHEET_HREF } from './katexAssets.js'
 import { EDITOR_LANGUAGE_OPTIONS, getEditorLanguageLabel, getEditorModeForPath } from '../utils/codeLanguage.js'
 
-type DirectoryItem = {
+export type DirectoryItem = {
   name: string
   path: string
   isDirectory: boolean
@@ -628,6 +628,31 @@ async function getDirectoryItems(localPath: string): Promise<DirectoryItem[]> {
   })
 }
 
+export async function getDirectoryItemList(
+  localPath: string,
+  options: { showHidden?: boolean } = {},
+): Promise<DirectoryItem[]> {
+  const entries = await readdir(localPath, { withFileTypes: true })
+  const withMeta = await Promise.all(entries.map(async (entry) => {
+    const entryPath = join(localPath, entry.name)
+    try {
+      const entryStat = await stat(entryPath)
+      const isDirectory = entryStat.isDirectory()
+      const editable = !isDirectory && await isTextEditableFile(entryPath)
+      return { name: entry.name, path: entryPath, isDirectory, editable, mtimeMs: entryStat.mtimeMs }
+    } catch {
+      return null
+    }
+  }))
+  return withMeta
+    .filter((item): item is DirectoryItem => item !== null)
+    .filter((item) => options.showHidden === true || !isHiddenName(item.name))
+    .sort((a, b) => {
+      if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1
+      return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+    })
+}
+
 function projectCreationTargetPath(parentPath: string, newProjectName: string): string {
   const normalizedName = normalizeNewProjectName(newProjectName)
   if (!normalizedName) return ''
@@ -713,7 +738,10 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
         ? ` <a class="icon-btn" aria-label="Raw ${escapeHtml(item.name)}" href="${escapeHtml(toBrowseHref(item.path, newProjectName, '', { raw: true }))}" title="Open raw">${rawFileIconHtml()}</a>`
         : ''
       const deleteAction = ` <button class="icon-btn danger delete-entry-btn" type="button" aria-label="Delete ${escapeHtml(item.name)}" title="Delete ${escapeHtml(item.name)}" data-path="${escapeHtml(item.path)}" data-name="${escapeHtml(item.name)}" data-is-dir="${item.isDirectory ? '1' : '0'}">${deleteFileIconHtml()}</button>`
-      return `<li class="file-row"><a class="file-link" href="${escapeHtml(toBrowseHref(item.path, newProjectName))}">${escapeHtml(item.name)}${suffix}</a><span class="row-actions">${rawAction}${deleteAction}</span></li>`
+      const expandBtn = item.isDirectory
+        ? `<button class="expand-btn" type="button" aria-label="Expand ${escapeHtml(item.name)}" title="Expand ${escapeHtml(item.name)}" data-path="${escapeHtml(item.path)}" data-expanded="0"><span class="expand-chevron"></span></button>`
+        : `<span class="expand-spacer"></span>`
+      return `<li class="file-row" data-depth="0" style="--depth:0">${expandBtn}<a class="file-link" href="${escapeHtml(toBrowseHref(item.path, newProjectName))}">${escapeHtml(item.name)}${suffix}</a><span class="row-actions">${rawAction}${deleteAction}</span></li>`
     })
     .join('\n')
 
@@ -809,7 +837,13 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
     a:hover { color: var(--link-hover-fg); text-decoration: underline; }
     h1 { font-size: 18px; margin: 0; word-break: break-all; color: var(--page-fg); }
     ul { list-style: none; padding: 0; margin: 12px 0 0; display: flex; flex-direction: column; gap: 8px; }
-    .file-row { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 10px; }
+    .file-row { display: grid; grid-template-columns: 22px minmax(0,1fr) auto; align-items: center; gap: 10px; padding-left: calc(var(--depth, 0) * 1.1rem + 6px); box-sizing: border-box; }
+    .expand-btn { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border: 0; background: transparent; color: var(--summary-fg); cursor: pointer; border-radius: 6px; padding: 0; }
+    .expand-btn:hover { background: var(--row-hover-bg); }
+    .expand-btn:disabled { cursor: default; opacity: 0.5; }
+    .expand-chevron { display: inline-block; width: 0; height: 0; border-left: 5px solid currentColor; border-top: 4px solid transparent; border-bottom: 4px solid transparent; transition: transform 0.12s ease; }
+    .expand-btn[data-expanded="1"] .expand-chevron { transform: rotate(90deg); }
+    .expand-spacer { display: inline-block; width: 22px; }
     .file-link { display: block; padding: 10px 12px; border: 1px solid var(--row-border); border-radius: 10px; background: var(--row-bg); box-shadow: 0 1px 2px var(--row-shadow); overflow-wrap: anywhere; color: var(--page-fg); }
     .file-link:hover { background: var(--row-hover-bg); text-decoration: none; }
     .header-actions { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
@@ -906,6 +940,28 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
         return null;
       }
     };
+    const RAW_ICON_HTML = ${JSON.stringify(rawFileIconHtml())};
+    const DELETE_ICON_HTML = ${JSON.stringify(deleteFileIconHtml())};
+    const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+    const createEntryLi = (entry, depth) => {
+      const li = document.createElement('li');
+      li.className = 'file-row';
+      li.setAttribute('data-depth', String(depth));
+      li.style.setProperty('--depth', String(depth));
+      const suffix = entry.isDirectory ? '/' : '';
+      const escapedName = escapeHtml(entry.name);
+      const escapedPath = escapeHtml(entry.path);
+      const browseHref = '/codex-local-browse' + encodeURI(entry.path);
+      const expandBtn = entry.isDirectory
+        ? '<button class="expand-btn" type="button" aria-label="Expand ' + escapedName + '" title="Expand ' + escapedName + '" data-path="' + escapedPath + '" data-expanded="0"><span class="expand-chevron"></span></button>'
+        : '<span class="expand-spacer"></span>';
+      const rawAction = entry.editable
+        ? '<a class="icon-btn" aria-label="Raw ' + escapedName + '" href="' + browseHref + '?raw=1" title="Open raw">' + RAW_ICON_HTML + '</a>'
+        : '';
+      const deleteAction = '<button class="icon-btn danger delete-entry-btn" type="button" aria-label="Delete ' + escapedName + '" title="Delete ' + escapedName + '" data-path="' + escapedPath + '" data-name="' + escapedName + '" data-is-dir="' + (entry.isDirectory ? '1' : '0') + '">' + DELETE_ICON_HTML + '</button>';
+      li.innerHTML = expandBtn + '<a class="file-link" href="' + browseHref + '">' + escapedName + suffix + '</a><span class="row-actions">' + rawAction + deleteAction + '</span>';
+      return li;
+    };
     const normalizeEntryName = (value) => {
       const trimmed = String(value || '').trim();
       if (!trimmed || trimmed === '.' || trimmed === '..' || /[\\\\/]/.test(trimmed)) return '';
@@ -991,6 +1047,50 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
     document.addEventListener('click', async (event) => {
       const target = event.target;
       if (!(target instanceof Element)) return;
+      const expandBtn = target.closest('.expand-btn');
+      if (expandBtn instanceof HTMLButtonElement) {
+        event.preventDefault();
+        const li = expandBtn.closest('.file-row');
+        if (!li) return;
+        const depth = Number(li.getAttribute('data-depth') || '0');
+        if (expandBtn.getAttribute('data-expanded') === '1') {
+          let next = li.nextElementSibling;
+          while (next && next instanceof HTMLElement && next.classList.contains('file-row') && Number(next.getAttribute('data-depth') || '0') > depth) {
+            const toRemove = next;
+            next = next.nextElementSibling;
+            toRemove.remove();
+          }
+          expandBtn.setAttribute('data-expanded', '0');
+          return;
+        }
+        const dirPath = expandBtn.getAttribute('data-path') || '';
+        if (!dirPath) return;
+        expandBtn.setAttribute('data-expanded', '1');
+        expandBtn.disabled = true;
+        setStatus('Loading...');
+        try {
+          const response = await fetch('/codex-local-entries?path=' + encodeURIComponent(dirPath));
+          const payload = await readJsonPayload(response);
+          if (!response.ok) {
+            setStatus(payload && payload.error ? String(payload.error) : 'Failed to load directory.');
+            expandBtn.setAttribute('data-expanded', '0');
+            return;
+          }
+          const entries = payload && payload.data && Array.isArray(payload.data.entries) ? payload.data.entries : [];
+          const fragment = document.createDocumentFragment();
+          for (const entry of entries) {
+            fragment.appendChild(createEntryLi(entry, depth + 1));
+          }
+          li.after(fragment);
+          setStatus('');
+        } catch {
+          setStatus('Failed to load directory.');
+          expandBtn.setAttribute('data-expanded', '0');
+        } finally {
+          expandBtn.disabled = false;
+        }
+        return;
+      }
       const deleteButton = target.closest('.delete-entry-btn');
       if (deleteButton instanceof HTMLButtonElement) {
         event.preventDefault();
