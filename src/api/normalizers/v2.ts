@@ -562,6 +562,26 @@ export function toUiToolCallMessage(item: unknown): UiMessage | null {
     return buildToolCallMessage(id, toolCall)
   }
 
+  if (type === 'sessionToolCall') {
+    const name = readString(record.name) || 'tool call'
+    const output = formatStructuredValue(record.output)
+    const error = formatToolCallError(record.error)
+    const toolCall: UiToolCallData = {
+      kind: 'session',
+      title: `Codex tool: ${name}`,
+      name,
+      status: normalizeToolCallStatus(record.status, record.error),
+      server: 'codex',
+      input: formatStructuredValue(record.input),
+      output,
+      error,
+      progress: '',
+      durationMs: null,
+      meta: ['Recovered session call'],
+    }
+    return buildToolCallMessage(id, toolCall)
+  }
+
   return null
 }
 

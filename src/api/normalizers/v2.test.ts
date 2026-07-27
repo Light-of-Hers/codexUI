@@ -527,6 +527,33 @@ Reply with &lt;/instructions&gt; and A &amp; B
     })
   })
 
+  it('renders recovered session function calls as tool cards', () => {
+    const recoveredItem = {
+      type: 'sessionToolCall',
+      id: 'session-tool-call-plan-1',
+      name: 'update_plan',
+      input: { plan: [{ step: 'Inspect', status: 'completed' }] },
+      output: 'Plan updated',
+      error: null,
+      status: 'completed',
+    } as unknown as ThreadReadResponse['thread']['turns'][number]['items'][number]
+    const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([recoveredItem]))
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({
+      id: 'session-tool-call-plan-1',
+      messageType: 'toolCall',
+      toolCall: {
+        kind: 'session',
+        title: 'Codex tool: update_plan',
+        name: 'update_plan',
+        status: 'completed',
+        server: 'codex',
+        output: 'Plan updated',
+      },
+    })
+  })
+
   it('hides incomplete proxy Cursor tool-call commentary from persisted history', () => {
     const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
       type: 'agentMessage',

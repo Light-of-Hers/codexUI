@@ -3380,12 +3380,23 @@ type SessionRecoveredFileChangeItem = {
   changes: Record<string, unknown>[]
 }
 
+type SessionRecoveredToolCall = {
+  id: string
+  type: 'sessionToolCall'
+  name: string
+  input: unknown
+  output: unknown
+  error: unknown
+  status: 'completed' | 'failed'
+}
+
 type SessionItemSlot = {
-  type: 'agentMessage' | 'commandExecution' | 'fileChange'
+  type: 'agentMessage' | 'commandExecution' | 'fileChange' | 'toolCall'
   text?: string
   cursorCallId?: string
   command?: SessionRecoveredCommand
   fileChange?: SessionRecoveredFileChangeItem
+  toolCall?: SessionRecoveredToolCall
 }
 
 type CursorToolPayloadCache = Map<string, Record<string, unknown> | null>
@@ -3534,6 +3545,7 @@ function buildSessionItemOrder(sessionLogRaw: string, turnIds: Set<string>): Map
   let orphanResponseTurnId = ''
   const orderByTurnId = new Map<string, SessionItemSlot[]>()
   const callIdToCommand = new Map<string, SessionRecoveredCommand>()
+  const callIdToToolCall = new Map<string, SessionRecoveredToolCall>()
   const cursorPayloadCache: CursorToolPayloadCache = new Map()
   const lines = sessionLogRaw.split('\n')
 
@@ -3624,21 +3636,49 @@ function buildSessionItemOrder(sessionLogRaw: string, turnIds: Set<string>): Map
       continue
     }
 
+    if (payload.type === 'function_call') {
+      const callId = readNonEmptyString(payload.call_id)
+      const name = readNonEmptyString(payload.name)
+      if (!callId || !name) continue
+      const argumentsValue = typeof payload.arguments === 'string' ? payload.arguments : ''
+      let input: unknown = argumentsValue
+      try {
+        input = JSON.parse(argumentsValue) as unknown
+      } catch { /* preserve the raw arguments for malformed legacy records */ }
+      const toolCall: SessionRecoveredToolCall = {
+        id: `session-tool-${callId}`,
+        type: 'sessionToolCall',
+        name,
+        input,
+        output: '',
+        error: null,
+        status: 'completed',
+      }
+      callIdToToolCall.set(callId, toolCall)
+      slots.push({ type: 'toolCall', toolCall })
+      continue
+    }
+
     if (payload.type === 'function_call_output' || payload.type === 'custom_tool_call_output') {
       const callId = readNonEmptyString(payload.call_id)
       if (!callId) continue
       const existing = callIdToCommand.get(callId)
-      if (!existing) continue
       const rawOutput = payload.type === 'custom_tool_call_output'
         ? readCustomToolCallOutput(payload.output)
         : typeof payload.output === 'string' ? payload.output : ''
-      const parsed = parseExecCommandOutput(rawOutput)
-      existing.aggregatedOutput = parsed.cleanOutput
-      existing.exitCode = parsed.exitCode
-      existing.durationMs = parsed.wallTime
-      if (parsed.exitCode !== null) {
-        existing.status = parsed.exitCode === 0 ? 'completed' : 'failed'
+      if (existing) {
+        const parsed = parseExecCommandOutput(rawOutput)
+        existing.aggregatedOutput = parsed.cleanOutput
+        existing.exitCode = parsed.exitCode
+        existing.durationMs = parsed.wallTime
+        if (parsed.exitCode !== null) {
+          existing.status = parsed.exitCode === 0 ? 'completed' : 'failed'
+        }
+        continue
       }
+
+      const toolCall = callIdToToolCall.get(callId)
+      if (toolCall) toolCall.output = rawOutput
     }
 
     if (payload.type === 'custom_tool_call' && payload.name === 'apply_patch' && payload.status === 'completed') {
@@ -4108,6 +4148,8 @@ function mergeSessionCommandsIntoTurns(turns: unknown[], sessionLogRaw: string):
           fileChangeMessages,
           usedFileChangeIndexes,
         ) ?? slot.fileChange as unknown as Record<string, unknown>)
+      } else if (slot.type === 'toolCall' && slot.toolCall) {
+        interleaved.push(slot.toolCall as unknown as Record<string, unknown>)
       }
     }
 

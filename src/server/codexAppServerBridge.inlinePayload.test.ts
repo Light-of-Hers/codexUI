@@ -892,6 +892,46 @@ describe('thread session skill recovery', () => {
     })
   })
 
+  it('recovers non-shell function calls as session tool cards', () => {
+    const result = {
+      thread: {
+        id: 'thread-generic-tool',
+        path: '/tmp/session.jsonl',
+        turns: [{
+          id: 'turn-1',
+          items: [{ id: 'user-1', type: 'userMessage', content: [{ type: 'text', text: 'update plan', text_elements: [] }] }],
+        }],
+      },
+    }
+    const sessionLog = [
+      JSON.stringify({ type: 'turn_context', payload: { turn_id: 'turn-1' } }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: { type: 'function_call', name: 'update_plan', call_id: 'call-plan-1', arguments: '{"plan":[{"step":"Inspect","status":"completed"}]}' },
+      }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: { type: 'function_call_output', call_id: 'call-plan-1', output: 'Plan updated' },
+      }),
+    ].join('\n')
+
+    const merged = mergeRecoveredTurnItemsIntoThreadResult(
+      result,
+      (_threadId, turns) => turns,
+      sessionLog,
+    ) as typeof result
+    const items = merged.thread.turns[0].items
+
+    expect(items.map((item) => item.type)).toEqual(['userMessage', 'sessionToolCall'])
+    expect(items[1]).toMatchObject({
+      id: 'session-tool-call-plan-1',
+      name: 'update_plan',
+      input: { plan: [{ step: 'Inspect', status: 'completed' }] },
+      output: 'Plan updated',
+      status: 'completed',
+    })
+  })
+
   it('recovers Cursor shell payload references from session JSONL as command executions', async () => {
     const codexHome = await mkdtemp(join(tmpdir(), 'codex-home-'))
     vi.stubEnv('CODEX_HOME', codexHome)
