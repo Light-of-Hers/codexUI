@@ -3430,12 +3430,20 @@ function hasCursorErrorOutput(value: Record<string, unknown> | null): boolean {
   return Boolean(value?.error || value?.failure)
 }
 
-function cursorToolCallIdFromMessageText(text: string): string {
-  const payloadPath = cursorToolPayloadPathFromText(text)
-  if (payloadPath) return basename(payloadPath).replace(/\.json$/iu, '')
+function cursorToolCallIdFromMessageText(
+  text: string,
+  payloadCache: CursorToolPayloadCache = new Map(),
+): string {
+  const inlinePayload = readInlineCursorToolPayloadRecord(text)
+  const inlineCallId = readNonEmptyString(inlinePayload?.call_id)
+  if (inlineCallId) return inlineCallId
 
-  const record = readInlineCursorToolPayloadRecord(text)
-  return record ? readNonEmptyString(record.call_id) : ''
+  const payload = readCursorToolPayloadFromMessageText(text, payloadCache)
+  const payloadCallId = readNonEmptyString(payload?.call_id)
+  if (payloadCallId) return payloadCallId
+
+  const payloadPath = cursorToolPayloadPathFromText(text)
+  return payloadPath ? basename(payloadPath).replace(/\.json$/iu, '') : ''
 }
 
 function buildCursorRecoveredCommand(payload: Record<string, unknown>): SessionRecoveredCommand | null {
@@ -4049,10 +4057,11 @@ function mergeSessionCommandsIntoTurns(turns: unknown[], sessionLogRaw: string):
       const cursorCallId = slot.cursorCallId || slot.command?.cursorCallId || ''
       if (cursorCallId) representedCursorCallIds.add(cursorCallId)
     }
+    const existingCursorPayloadCache: CursorToolPayloadCache = new Map()
     const agentMessages = existingItems.filter((it) => {
       if (it.type !== 'agentMessage') return false
       const text = typeof it.text === 'string' ? it.text : ''
-      const cursorCallId = text ? cursorToolCallIdFromMessageText(text) : ''
+      const cursorCallId = text ? cursorToolCallIdFromMessageText(text, existingCursorPayloadCache) : ''
       return !cursorCallId || !representedCursorCallIds.has(cursorCallId)
     })
     const splitAgentMessages = splitMergedAgentMessageFromSessionSlots(agentMessages, slots)

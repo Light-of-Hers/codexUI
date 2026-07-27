@@ -66,11 +66,13 @@ This file tracks manual regression and feature verification steps.
 4. For a thread whose stored `thread/read` result already contains command execution entries grouped before the assistant text, confirm those existing command cards are reordered between the matching assistant text fragments.
 5. For a thread that contains `response_item` entries after `task_complete`, confirm recovered command cards appear in the matching `rollout-*` section rather than the previous completed turn.
 6. For a session with custom `exec` wrappers, confirm each wrapped `tools.exec_command(...)` is rendered as a command card with its command text, working directory, output, exit code, and duration.
-7. Load older messages in the same thread, if available, and confirm recovered command entries remain visible after pagination.
-8. Switch to light theme and dark theme, then repeat the same thread rendering check.
+7. For a Cursor-derived history whose `payload` filename differs from the embedded `call_id`, confirm each `Called Cursor tool` completion renders once, while its matching `Calling Cursor tool` and `Running`/`Ran` source records do not create duplicate cards.
+8. Load older messages in the same thread, if available, and confirm recovered command entries remain visible after pagination.
+9. Switch to light theme and dark theme, then repeat the same thread rendering check.
 
 #### Expected Results
 - Historical `exec_command` calls and custom `exec` wrappers recovered from session JSONL render as command execution cards in `thread/read` results.
+- Cursor shell commands and non-shell Cursor tool calls use the payload's canonical `call_id` for reconciliation, so each completed call has one card even when its payload filename is opaque.
 - Command cards preserve command text, output, exit code, and duration when available.
 - When session assistant text fragments can be matched to a merged stored assistant message, recovered command cards are interleaved between those fragments instead of being grouped before or after the whole message.
 - Existing recovered command cards are reused and reordered instead of duplicated.

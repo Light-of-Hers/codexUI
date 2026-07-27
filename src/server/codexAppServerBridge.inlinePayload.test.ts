@@ -1004,6 +1004,63 @@ describe('thread session skill recovery', () => {
     }
   })
 
+  it('deduplicates Cursor tool history by payload call id when the payload filename differs', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'codex-home-'))
+    vi.stubEnv('CODEX_HOME', codexHome)
+    const payloadDir = join(codexHome, 'cursor-tool-payloads', 'thread-1')
+    const payloadPath = join(payloadDir, 'opaque-payload-key.json')
+    await mkdir(payloadDir, { recursive: true })
+    await writeFile(payloadPath, JSON.stringify({
+      type: 'cursor_tool_call',
+      subtype: 'completed',
+      call_id: 'call-canonical-id',
+      tool: 'updatetodos',
+      arguments: { merge: true },
+      output: { success: { todos: [] } },
+      status: null,
+    }), 'utf8')
+
+    try {
+      const callingText = `Calling Cursor tool \`updatetodos\`\n  └ payload: ${payloadPath}`
+      const calledText = `Called Cursor tool \`updatetodos\`\n  └ output: {"success":{"todos":[]}}\n  └ payload: ${payloadPath}`
+      const result = {
+        thread: {
+          id: 'thread-1',
+          path: '/tmp/session.jsonl',
+          turns: [{
+            id: 'turn-1',
+            items: [
+              { id: 'user-1', type: 'userMessage', content: [{ type: 'text', text: 'update todos', text_elements: [] }] },
+              { id: 'calling-1', type: 'agentMessage', text: callingText },
+              { id: 'called-1', type: 'agentMessage', text: calledText },
+            ],
+          }],
+        },
+      }
+      const sessionLog = [
+        JSON.stringify({ type: 'turn_context', payload: { turn_id: 'turn-1' } }),
+        JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: callingText }] } }),
+        JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: calledText }] } }),
+      ].join('\n')
+
+      const merged = mergeRecoveredTurnItemsIntoThreadResult(
+        result,
+        (_threadId, turns) => turns,
+        sessionLog,
+      ) as typeof result
+      const items = merged.thread.turns[0].items
+
+      expect(items).toHaveLength(2)
+      expect(items.map((item) => item.type)).toEqual(['userMessage', 'agentMessage'])
+      expect(items[1]).toMatchObject({
+        id: 'session-cursor-call-canonical-id',
+        text: expect.stringContaining('<codex-ui-data>'),
+      })
+    } finally {
+      await rm(codexHome, { recursive: true, force: true })
+    }
+  })
+
   it('recovers Cursor shell commands with backslash escapes from payload references', async () => {
     const codexHome = await mkdtemp(join(tmpdir(), 'codex-home-'))
     vi.stubEnv('CODEX_HOME', codexHome)
