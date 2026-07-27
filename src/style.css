@@ -367,6 +367,10 @@
   @apply hover:bg-zinc-800;
 }
 
+:root.dark .thread-row-item[data-drop-target='true'] .thread-row {
+  @apply bg-zinc-700/80;
+}
+
 :root.dark .thread-row[data-active='true'] {
   @apply bg-zinc-800;
 }

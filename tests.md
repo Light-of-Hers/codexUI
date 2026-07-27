@@ -7567,3 +7567,30 @@ Markdown files opened through the local editor expose a preview button that rend
   6. 在系统深色模式下打开该页面，确认配色自动切换为深色。
 - **预期结果：** 目录行可展开/折叠，子条目懒加载、按深度缩进；文件/目录名链接、Raw、Delete 等既有功能不受影响；深色配色正确。
 - **回滚/清理：** 无需清理；页面为实时读取本地文件系统，不写入持久数据。
+
+---
+
+### Feature: Drag to reorder pinned sidebar threads
+
+#### Prerequisites
+- App is running from this repository.
+- At least two pinned threads exist in the sidebar `Pinned` section.
+- Sidebar search is empty (reorder is disabled while searching).
+
+#### Steps
+1. Open the app in light theme and expand the `Pinned` section.
+2. Drag a pinned thread title onto another pinned thread.
+3. Confirm the list order updates immediately after drop.
+4. Refresh the page and confirm the new pin order is restored.
+5. Switch to dark theme and repeat a drag reorder.
+6. Confirm the dragged row fades and the drop target row highlights in both themes.
+7. Confirm click-to-select, delete, and the thread menu still work on pinned rows.
+
+#### Expected Results
+- Pinned threads can be manually reordered by dragging the title.
+- Order persists via `PUT /codex-api/thread-pins` / `thread-pinned-ids`.
+- Light and dark themes both show clear dragging/drop-target feedback.
+- Search mode does not allow pinned reordering.
+
+#### Rollback/Cleanup
+- Unpin or re-pin test threads if needed.

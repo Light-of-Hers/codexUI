@@ -13,6 +13,7 @@ const zhCN: Record<string, string> = {
   'Chats': '聊天',
   'Projects': '项目',
   'Pinned': '已固定',
+  'Drag to reorder pinned thread': '拖动以调整固定线程顺序',
   'Chats first': '聊天优先',
   'Sort by': '排序',
   'Created': '创建时间',

@@ -21,6 +21,11 @@
           :key="thread.id"
           class="thread-row-item"
           :data-menu-open="isThreadMenuOpen(thread.id) ? 'true' : 'false'"
+          :data-dragging="isDraggingPinnedThread(thread.id) ? 'true' : 'false'"
+          :data-drop-target="isPinnedDropTarget(thread.id) ? 'true' : 'false'"
+          @dragover.prevent="onPinnedDragOver(thread.id)"
+          @dragleave="onPinnedDragLeave(thread.id)"
+          @drop.prevent="onPinnedDrop(thread.id)"
         >
           <SidebarMenuRow
             class="thread-row"
@@ -47,7 +52,15 @@
                 </button>
               </span>
             </template>
-            <button class="thread-main-button" type="button" @click.stop="onSelect(thread.id)">
+            <button
+              class="thread-main-button pinned-thread-main-button"
+              type="button"
+              draggable="true"
+              :title="t('Drag to reorder pinned thread')"
+              @dragstart="onPinnedDragStart($event, thread.id)"
+              @dragend="resetPinnedDragState"
+              @click.stop="onSelect(thread.id)"
+            >
               <span class="thread-row-title-wrap">
                 <span class="thread-row-title-line">
                   <span class="thread-row-title">{{ thread.title }}</span>
@@ -896,7 +909,7 @@ import { useUiLanguage } from '../../composables/useUiLanguage'
 import { useFeedbackDiagnostics } from '../../composables/useFeedbackDiagnostics'
 import { getPathLeafName, getPathParent, isAbsoluteLikePath, isProjectlessChatPath } from '../../pathUtils.js'
 import SidebarMenuRow from './SidebarMenuRow.vue'
-import { reconcilePinnedThreadIds } from './pinnedThreadUtils'
+import { reconcilePinnedThreadIds, reorderPinnedThreadIds } from './pinnedThreadUtils'
 
 const props = defineProps<{
   groups: UiProjectGroup[]
@@ -989,6 +1002,8 @@ const chatSortMode = ref<ChatSortMode>(loadChatSortMode())
 let hasLoadedPinnedThreadState = false
 const pinnedThreadIds = ref<string[]>([])
 const hydratedPinnedThreadById = ref<Record<string, UiThread>>({})
+const draggedPinnedThreadId = ref('')
+const dropTargetPinnedThreadId = ref('')
 const inlineDeleteConfirmThreadId = ref('')
 const optimisticallyArchivedThreadIds = ref<string[]>([])
 const openProjectMenuId = ref('')
@@ -1521,6 +1536,66 @@ function togglePin(threadId: string): void {
   }
 
   pinnedThreadIds.value = [threadId, ...pinnedThreadIds.value]
+}
+
+function isDraggingPinnedThread(threadId: string): boolean {
+  return draggedPinnedThreadId.value === threadId
+}
+
+function isPinnedDropTarget(threadId: string): boolean {
+  return (
+    dropTargetPinnedThreadId.value === threadId &&
+    draggedPinnedThreadId.value !== '' &&
+    draggedPinnedThreadId.value !== threadId
+  )
+}
+
+function onPinnedDragStart(event: DragEvent, threadId: string): void {
+  if (isSearchActive.value || pinnedThreads.value.length < 2) {
+    event.preventDefault()
+    return
+  }
+
+  draggedPinnedThreadId.value = threadId
+  dropTargetPinnedThreadId.value = ''
+  event.dataTransfer?.setData('text/plain', threadId)
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move'
+  }
+
+  const row = event.currentTarget instanceof HTMLElement
+    ? event.currentTarget.closest('.thread-row-item')
+    : null
+  if (row instanceof HTMLElement && event.dataTransfer) {
+    const rect = row.getBoundingClientRect()
+    event.dataTransfer.setDragImage(row, Math.min(24, rect.width / 2), Math.min(16, rect.height / 2))
+  }
+}
+
+function onPinnedDragOver(threadId: string): void {
+  if (!draggedPinnedThreadId.value || draggedPinnedThreadId.value === threadId) return
+  dropTargetPinnedThreadId.value = threadId
+}
+
+function onPinnedDragLeave(threadId: string): void {
+  if (dropTargetPinnedThreadId.value === threadId) {
+    dropTargetPinnedThreadId.value = ''
+  }
+}
+
+function onPinnedDrop(targetId: string): void {
+  const draggedId = draggedPinnedThreadId.value
+  resetPinnedDragState()
+  if (!draggedId || draggedId === targetId) return
+
+  const next = reorderPinnedThreadIds(pinnedThreadIds.value, draggedId, targetId)
+  if (next === pinnedThreadIds.value) return
+  pinnedThreadIds.value = next
+}
+
+function resetPinnedDragState(): void {
+  draggedPinnedThreadId.value = ''
+  dropTargetPinnedThreadId.value = ''
 }
 
 function onTogglePinFromMenu(threadId: string): void {
@@ -3164,6 +3239,14 @@ onBeforeUnmount(() => {
   @apply relative z-40;
 }
 
+.thread-row-item[data-dragging='true'] {
+  @apply opacity-50;
+}
+
+.thread-row-item[data-drop-target='true'] .thread-row {
+  @apply bg-zinc-200/80;
+}
+
 .thread-row {
   @apply hover:bg-zinc-200;
 }
@@ -3190,6 +3273,14 @@ onBeforeUnmount(() => {
 
 .thread-main-button {
   @apply min-w-0 w-full text-left rounded px-0 py-0 flex items-center min-h-5;
+}
+
+.pinned-thread-main-button {
+  @apply cursor-grab;
+}
+
+.pinned-thread-main-button:active {
+  @apply cursor-grabbing;
 }
 
 .thread-row-title-wrap {
