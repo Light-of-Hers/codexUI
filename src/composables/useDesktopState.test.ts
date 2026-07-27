@@ -2666,3 +2666,154 @@ describe('optimistic user message', () => {
     expect(userMessages[0]?.id.startsWith('optimistic-user-')).toBe(true)
   })
 })
+
+describe('skills list refresh', () => {
+  function mockSkillsBaseline() {
+    gatewayMocks.getAvailableCollaborationModes.mockResolvedValue([{ value: 'default', label: 'Default' }])
+    gatewayMocks.getAccountRateLimits.mockResolvedValue(null)
+    gatewayMocks.getCurrentModelConfig.mockResolvedValue({
+      model: 'gpt-5.5',
+      providerId: 'codex',
+      reasoningEffort: 'medium',
+      speedMode: 'standard',
+    })
+    gatewayMocks.getAvailableModelIds.mockResolvedValue(['gpt-5.5'])
+    gatewayMocks.setThreadQueueState.mockResolvedValue(undefined)
+  }
+
+  it('reloads skills for an explicit cwd even when selected thread cwd differs', async () => {
+    installTestWindow()
+    mockSkillsBaseline()
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({
+      groups: [{
+        projectName: 'repo-a',
+        threads: [
+          thread('thread-a', '/tmp/repo-a'),
+          thread('thread-b', '/tmp/repo-b'),
+        ],
+      }],
+      nextCursor: null,
+    })
+    gatewayMocks.getSkillsList.mockResolvedValue([])
+
+    const state = useDesktopState()
+    await state.refreshAll({ includeSelectedThreadMessages: false, awaitAncillaryRefreshes: true })
+    state.primeSelectedThread('thread-a')
+
+    gatewayMocks.getSkillsList.mockClear()
+    gatewayMocks.getSkillsList.mockResolvedValue([
+      {
+        name: 'repo-b-skill',
+        description: 'from repo b',
+        path: '/tmp/repo-b/.agents/skills/repo-b-skill/SKILL.md',
+        scope: 'repo',
+        enabled: true,
+      },
+    ])
+
+    await state.refreshSkills({ cwd: '/tmp/repo-b' })
+
+    expect(gatewayMocks.getSkillsList).toHaveBeenCalledWith(['/tmp/repo-b'], expect.anything())
+    expect(state.installedSkills.value.map((skill) => skill.name)).toEqual(['repo-b-skill'])
+  })
+
+  it('queues a second skills/list when cwd changes during an in-flight request', async () => {
+    installTestWindow()
+    mockSkillsBaseline()
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({
+      groups: [{
+        projectName: 'repo-a',
+        threads: [
+          thread('thread-a', '/tmp/repo-a'),
+          thread('thread-b', '/tmp/repo-b'),
+        ],
+      }],
+      nextCursor: null,
+    })
+    gatewayMocks.getSkillsList.mockResolvedValue([])
+
+    const state = useDesktopState()
+    await state.refreshAll({ includeSelectedThreadMessages: false, awaitAncillaryRefreshes: true })
+
+    let resolveFirst: ((value: unknown[]) => void) | null = null
+    gatewayMocks.getSkillsList.mockReset()
+    gatewayMocks.getSkillsList
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveFirst = resolve as (value: unknown[]) => void
+      }))
+      .mockResolvedValueOnce([
+        {
+          name: 'repo-b-skill',
+          description: 'from repo b',
+          path: '/tmp/repo-b/.agents/skills/repo-b-skill/SKILL.md',
+          scope: 'repo',
+          enabled: true,
+        },
+      ])
+
+    const first = state.refreshSkills({ cwd: '/tmp/repo-a' })
+    const second = state.refreshSkills({ cwd: '/tmp/repo-b' })
+
+    await vi.waitFor(() => {
+      expect(resolveFirst).not.toBeNull()
+    })
+    resolveFirst?.([
+      {
+        name: 'repo-a-skill',
+        description: 'from repo a',
+        path: '/tmp/repo-a/.agents/skills/repo-a-skill/SKILL.md',
+        scope: 'repo',
+        enabled: true,
+      },
+    ])
+    await Promise.all([first, second])
+
+    expect(gatewayMocks.getSkillsList.mock.calls.length).toBeGreaterThanOrEqual(2)
+    expect(gatewayMocks.getSkillsList.mock.calls[0]?.[0]).toEqual(['/tmp/repo-a'])
+    expect(gatewayMocks.getSkillsList.mock.calls.at(-1)?.[0]).toEqual(['/tmp/repo-b'])
+    expect(state.installedSkills.value.map((skill) => skill.name)).toEqual(['repo-b-skill'])
+  })
+
+  it('force-reloads skills when skills/changed notification arrives', async () => {
+    installTestWindow()
+    mockSkillsBaseline()
+    let notificationHandler: ((notification: RpcNotification) => void) | null = null
+    gatewayMocks.subscribeCodexNotifications.mockImplementation((handler: (notification: RpcNotification) => void) => {
+      notificationHandler = handler
+      return () => {
+        notificationHandler = null
+      }
+    })
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({ groups: [], nextCursor: null })
+    gatewayMocks.getSkillsList.mockResolvedValue([])
+
+    const state = useDesktopState()
+    await state.refreshAll({ includeSelectedThreadMessages: false, awaitAncillaryRefreshes: true })
+    state.startPolling()
+    expect(notificationHandler).not.toBeNull()
+
+    gatewayMocks.getSkillsList.mockReset()
+    gatewayMocks.getSkillsList.mockResolvedValue([
+      {
+        name: 'fresh-user-skill',
+        description: 'installed into ~/.codex/skills',
+        path: '/root/.codex/skills/fresh-user-skill/SKILL.md',
+        scope: 'user',
+        enabled: true,
+      },
+    ])
+
+    notificationHandler?.({
+      method: 'skills/changed',
+      params: {},
+      atIso: new Date().toISOString(),
+    })
+    await vi.waitFor(() => {
+      expect(gatewayMocks.getSkillsList).toHaveBeenCalled()
+    })
+
+    const forceCalls = gatewayMocks.getSkillsList.mock.calls.filter((call) => call[1]?.forceReload === true)
+    expect(forceCalls.length).toBeGreaterThan(0)
+    expect(state.installedSkills.value.map((skill) => skill.name)).toContain('fresh-user-skill')
+  })
+})

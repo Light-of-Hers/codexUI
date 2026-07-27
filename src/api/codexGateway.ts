@@ -4069,10 +4069,14 @@ type SkillsListResponseEntry = {
   errors: unknown[]
 }
 
-export async function getSkillsList(cwds?: string[]): Promise<SkillInfo[]> {
+export async function getSkillsList(
+  cwds?: string[],
+  options: { forceReload?: boolean } = {},
+): Promise<SkillInfo[]> {
   try {
     const params: Record<string, unknown> = {}
     if (cwds && cwds.length > 0) params.cwds = cwds
+    if (options.forceReload) params.forceReload = true
     const payload = await callRpc<{ data: SkillsListResponseEntry[] }>('skills/list', params)
     const allSkills = payload.data.flatMap((entry) => entry.skills)
     const pathSet = new Set(allSkills.map((skill) => normalizeSkillMarkdownPath(skill.path)).filter(Boolean))

@@ -1323,6 +1323,30 @@ Model, skill, thinking, and plan controls remain usable while a thread turn is i
 #### Rollback/Cleanup
 - No cleanup required.
 
+### Feature: Realtime skills list refresh for $ mentions
+
+#### Prerequisites
+- App is running from this repository.
+- At least one repo thread whose cwd contains `./.agents/skills`.
+- `~/.codex/skills` is writable.
+
+#### Steps
+1. Open a thread in repo A and type `$` in the composer; note the visible repo/user skills.
+2. Quickly switch to a thread in repo B and type `$` again without reloading the page.
+3. Confirm repo B's `./.agents/skills` appear (badge `R`) and repo A-only skills are gone.
+4. Install or edit a skill under `~/.codex/skills` (or Skills Hub install/uninstall).
+5. Without restarting, type `$` again and confirm the new/updated user skill appears (badge `U`).
+6. In Network tab, confirm `skills/list` after step 5 includes `forceReload: true` when driven by `skills/changed` or Skills Hub actions.
+
+#### Expected Results
+- `$` mention suggestions follow the currently selected composer/thread cwd.
+- Switching threads does not leave a stale skills list from the previous cwd.
+- Changes under `~/.codex/skills` and watched skill roots are picked up via `skills/changed` + force reload without app restart.
+- Repo skills continue to come from app-server scanning of `<cwd>/.agents/skills`.
+
+#### Rollback/Cleanup
+- Revert `refreshSkills` race handling in `useDesktopState.ts`, the `skills/changed` handler, `composerCwd` watch in `App.vue`, and `getSkillsList(..., { forceReload })`.
+
 ### Feature: Display UserPromptSubmit additional context
 
 #### Prerequisites

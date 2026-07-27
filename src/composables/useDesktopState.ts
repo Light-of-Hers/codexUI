@@ -1940,6 +1940,8 @@ export function useDesktopState() {
   const loadUserMessageCountPromiseByThreadId = new Map<string, Promise<void>>()
   const loadUserMessageIndexPromiseByThreadId = new Map<string, Promise<void>>()
   let refreshSkillsPromise: Promise<void> | null = null
+  let skillsRefreshDesiredCwd: string | null = null
+  let skillsRefreshQueuedForceReload = false
   let rateLimitRefreshPromise: Promise<void> | null = null
   let pendingThreadsRefresh = false
   const pendingThreadMessageRefresh = new Set<string>()
@@ -5302,6 +5304,12 @@ export function useDesktopState() {
       scheduleRateLimitRefresh()
     }
 
+    if (notification.method === 'skills/changed') {
+      // App-server watches ~/.codex/skills and repo .agents/skills roots.
+      // Force-reload so $ mention and picker pick up installs/edits immediately.
+      void refreshSkills({ forceReload: true })
+    }
+
     if (notification.method === 'thread/name/updated') {
       const params = asRecord(notification.params)
       const threadId = readString(params?.threadId)
@@ -6405,7 +6413,18 @@ export function useDesktopState() {
     await loadMessages(threadId, options)
   }
 
-  async function refreshSkills(): Promise<void> {
+  function resolveSkillsRefreshCwd(): string {
+    return selectedThread.value?.cwd?.trim() ?? ''
+  }
+
+  async function refreshSkills(options: { forceReload?: boolean; cwd?: string } = {}): Promise<void> {
+    if (options.forceReload === true) {
+      skillsRefreshQueuedForceReload = true
+    }
+    skillsRefreshDesiredCwd = typeof options.cwd === 'string'
+      ? options.cwd.trim()
+      : resolveSkillsRefreshCwd()
+
     if (refreshSkillsPromise) {
       await refreshSkillsPromise
       return
@@ -6413,10 +6432,28 @@ export function useDesktopState() {
 
     refreshSkillsPromise = (async () => {
       try {
-        const selectedCwd = selectedThread.value?.cwd?.trim() ?? ''
-        installedSkills.value = await getSkillsList(selectedCwd ? [selectedCwd] : undefined)
-      } catch {
-        // keep previous skills on failure
+        while (true) {
+          const selectedCwd = skillsRefreshDesiredCwd ?? resolveSkillsRefreshCwd()
+          const shouldForceReload = skillsRefreshQueuedForceReload
+          skillsRefreshQueuedForceReload = false
+          const intentCwd = selectedCwd
+          try {
+            const nextSkills = await getSkillsList(
+              selectedCwd ? [selectedCwd] : undefined,
+              { forceReload: shouldForceReload },
+            )
+            installedSkills.value = nextSkills
+          } catch {
+            // keep previous skills on failure
+          }
+
+          const latestDesiredCwd = skillsRefreshDesiredCwd ?? resolveSkillsRefreshCwd()
+          if (skillsRefreshQueuedForceReload || latestDesiredCwd !== intentCwd) {
+            // A newer cwd/force request arrived while scanning; loop with latest intent.
+            continue
+          }
+          break
+        }
       } finally {
         refreshSkillsPromise = null
       }
@@ -6580,6 +6617,7 @@ export function useDesktopState() {
       if (nextSelectedThreadId) {
         void loadMessages(nextSelectedThreadId, { silent: true })
       }
+      void refreshSkills()
     }
 
     try {

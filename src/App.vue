@@ -892,6 +892,7 @@
                   :dictation-click-to-toggle="dictationClickToToggle" :dictation-auto-send="dictationAutoSend"
                   :dictation-language="dictationLanguage"
                   @submit="onSubmitThreadMessage"
+                  @refresh-skills="onComposerRefreshSkills"
                   @update:selected-collaboration-mode="onSelectCollaborationMode"
                   @update:selected-model="onSelectModel"
                   @update:selected-reasoning-effort="onSelectReasoningEffort"
@@ -987,7 +988,9 @@
                     :dictation-click-to-toggle="dictationClickToToggle" :dictation-auto-send="dictationAutoSend"
                     :dictation-language="dictationLanguage"
                     @update:selected-collaboration-mode="onSelectCollaborationMode"
-                    @submit="onSubmitThreadMessage" @update:selected-model="onSelectModel"
+                    @submit="onSubmitThreadMessage"
+                    @refresh-skills="onComposerRefreshSkills"
+                    @update:selected-model="onSelectModel"
                     @update:selected-reasoning-effort="onSelectReasoningEffort"
                     @update:selected-speed-mode="onSelectSpeedMode"
                     @interrupt="onInterruptTurn" />
@@ -2518,7 +2521,14 @@ watch(accounts, () => {
 }, { deep: true })
 
 function onSkillsChanged(): void {
-  void refreshSkills()
+  void refreshSkills({ forceReload: true, cwd: composerCwd.value })
+}
+
+function onComposerRefreshSkills(payload?: { forceReload?: boolean }): void {
+  void refreshSkills({
+    forceReload: payload?.forceReload === true,
+    cwd: composerCwd.value,
+  })
 }
 
 async function refreshTelegramStatus(): Promise<void> {
@@ -4621,9 +4631,12 @@ watch(
 
 watch(
   () => composerCwd.value,
-  () => {
+  (cwd) => {
     if (!hasInitialized.value) return
     void refreshTerminalQuickCommands()
+    // Keep $ skill mentions aligned with active composer cwd:
+    // thread session cwd, home new-thread folder, worktree, etc.
+    void refreshSkills({ cwd })
   },
 )
 

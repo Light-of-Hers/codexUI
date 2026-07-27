@@ -609,6 +609,7 @@ const emit = defineEmits<{
   'update:selected-model': [modelId: string]
   'update:selected-reasoning-effort': [effort: ReasoningEffort | '']
   'update:selected-speed-mode': [mode: SpeedMode]
+  'refresh-skills': [payload?: { forceReload?: boolean }]
 }>()
 const { t } = useUiLanguage()
 
@@ -1837,6 +1838,7 @@ function closeInlineMention(): void {
   mentionQuery.value = ''
   fileMentionSuggestions.value = []
   skillMentionSuggestions.value = []
+  skillMentionWasOpen = false
   mentionHighlightedIndex.value = 0
   if (fileMentionDebounceTimer) {
     clearTimeout(fileMentionDebounceTimer)
@@ -1891,12 +1893,21 @@ function scrollHighlightedMentionIntoView(): void {
   }
 }
 
+let skillMentionWasOpen = false
+
 async function refreshSkillMentionSuggestions(): Promise<void> {
   const { filterComposerSkillMentionSuggestions } = await loadComposerSkillMentionsModule()
   if (!isSkillMentionOpen.value) return
   skillMentionSuggestions.value = filterComposerSkillMentionSuggestions(props.skills ?? [], mentionQuery.value, 20)
   mentionHighlightedIndex.value = 0
   resetMentionListScroll()
+}
+
+function requestSkillsListRefreshOnSkillMentionOpen(): void {
+  // Only force-reload when `$` first opens, not on every subsequent keystroke.
+  if (skillMentionWasOpen) return
+  skillMentionWasOpen = true
+  emit('refresh-skills', { forceReload: true })
 }
 
 function updateInlineMentionState(): void {
@@ -1930,6 +1941,7 @@ function updateInlineMentionState(): void {
 
   fileMentionSuggestions.value = []
   skillMentionSuggestions.value = []
+  requestSkillsListRefreshOnSkillMentionOpen()
   void refreshSkillMentionSuggestions()
 }
 
