@@ -4962,7 +4962,7 @@ export function useDesktopState() {
     return ''
   }
 
-  function readAgentMessageDelta(notification: RpcNotification): { messageId: string; delta: string } | null {
+  function readAgentMessageDelta(notification: RpcNotification): { messageId: string; delta: string; turnId: string } | null {
     const params = asRecord(notification.params)
     if (!params) return null
 
@@ -4971,7 +4971,8 @@ export function useDesktopState() {
       const messageId = readString(params.itemId)
       const delta = readString(params.delta)
       if (!messageId || !delta) return null
-      return { messageId, delta }
+      const turnId = readString(params.turnId) || readString(params.turn_id)
+      return { messageId, delta, turnId }
     }
 
     return null
@@ -4998,6 +4999,7 @@ export function useDesktopState() {
           role: 'assistant',
           text,
           messageType: 'agentMessage.live',
+          turnId: readString(params.turnId) || readString(params.turn_id) || undefined,
         },
         sourceItemId: id,
         sourceText: text,
@@ -5520,6 +5522,7 @@ export function useDesktopState() {
           role: 'assistant',
           text: nextText,
           messageType: 'agentMessage.live',
+          turnId: liveAgentMessageDelta.turnId || undefined,
         })
       }
     }
