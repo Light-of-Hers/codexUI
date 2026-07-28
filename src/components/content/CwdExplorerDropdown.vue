@@ -14,7 +14,19 @@
 
     <div v-if="isOpen" class="cwd-explorer-menu-wrap">
       <div class="cwd-explorer-menu">
-        <div class="cwd-explorer-cwd" :title="cwd">{{ cwd }}</div>
+        <div class="cwd-explorer-cwd">
+          <span class="cwd-explorer-cwd-text" :title="cwd">{{ cwd }}</span>
+          <button
+            class="cwd-explorer-hidden-toggle"
+            type="button"
+            :class="{ 'is-active': showHidden }"
+            :title="showHidden ? t('Hide hidden files') : t('Show hidden files')"
+            :aria-pressed="showHidden"
+            @click="toggleShowHidden"
+          >
+            <IconTablerEye class="cwd-explorer-hidden-icon" />
+          </button>
+        </div>
         <div class="cwd-explorer-body">
           <div v-if="rootLoading && !rootEntries.length" class="cwd-explorer-loading">{{ t('Loading…') }}</div>
           <div v-else-if="rootError" class="cwd-explorer-error">{{ rootError }}</div>
@@ -75,6 +87,7 @@ import IconTablerChevronDown from '../icons/IconTablerChevronDown.vue'
 import IconTablerChevronRight from '../icons/IconTablerChevronRight.vue'
 import IconTablerFilePencil from '../icons/IconTablerFilePencil.vue'
 import IconTablerFolder from '../icons/IconTablerFolder.vue'
+import IconTablerEye from '../icons/IconTablerEye.vue'
 
 const props = defineProps<{
   cwd: string
@@ -88,6 +101,7 @@ const entriesByPath = ref<Record<string, LocalEntry[]>>({})
 const loadingPaths = ref<Set<string>>(new Set())
 const errorByPath = ref<Record<string, string>>({})
 const expanded = ref<Set<string>>(new Set())
+const showHidden = ref(false)
 
 const triggerTitle = computed(() => props.cwd ? `Browse ${props.cwd}` : 'Browse cwd')
 const rootEntries = computed(() => entriesByPath.value[props.cwd] ?? [])
@@ -129,7 +143,7 @@ async function loadEntries(path: string): Promise<void> {
   nextLoading.add(path)
   loadingPaths.value = nextLoading
   try {
-    const listing = await listLocalEntries(path)
+    const listing = await listLocalEntries(path, { showHidden: showHidden.value })
     entriesByPath.value = { ...entriesByPath.value, [path]: listing.entries }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to load directory'
@@ -150,6 +164,17 @@ function toggleDir(path: string): void {
     if (!entriesByPath.value[path]) void loadEntries(path)
   }
   expanded.value = next
+}
+
+function toggleShowHidden(): void {
+  showHidden.value = !showHidden.value
+  entriesByPath.value = {}
+  loadingPaths.value = new Set()
+  errorByPath.value = {}
+  if (!isOpen.value || !props.cwd) return
+  const paths = new Set(expanded.value)
+  paths.add(props.cwd)
+  for (const target of paths) void loadEntries(target)
 }
 
 function toggleOpen(): void {
@@ -209,8 +234,21 @@ onBeforeUnmount(() => window.removeEventListener('pointerdown', onDocumentPointe
   @apply w-96 max-w-[calc(100vw-1.5rem)] rounded-xl border border-zinc-200 bg-white p-1 shadow-lg;
 }
 
+
 .cwd-explorer-cwd {
-  @apply mx-1 mb-1 truncate rounded-md bg-zinc-50 px-2 py-1 font-mono text-[0.68rem] text-zinc-500;
+  @apply mx-1 mb-1 flex items-center gap-1 rounded-md bg-zinc-50 px-2 py-1 font-mono text-[0.68rem] text-zinc-500;
+}
+.cwd-explorer-cwd-text {
+  @apply min-w-0 flex-1 truncate;
+}
+.cwd-explorer-hidden-toggle {
+  @apply flex h-5 w-5 shrink-0 items-center justify-center rounded border-0 bg-transparent text-zinc-400 transition hover:bg-zinc-200;
+}
+.cwd-explorer-hidden-toggle.is-active {
+  @apply text-zinc-700;
+}
+.cwd-explorer-hidden-icon {
+  @apply h-3.5 w-3.5;
 }
 
 .cwd-explorer-body {
@@ -268,6 +306,14 @@ onBeforeUnmount(() => window.removeEventListener('pointerdown', onDocumentPointe
 
 :global(:root.dark .cwd-explorer-cwd) {
   @apply bg-zinc-800 text-zinc-400;
+}
+
+:global(:root.dark .cwd-explorer-hidden-toggle) {
+  @apply text-zinc-500 hover:bg-zinc-700;
+}
+
+:global(:root.dark .cwd-explorer-hidden-toggle.is-active) {
+  @apply text-zinc-200;
 }
 
 :global(:root.dark .cwd-explorer-row) {
