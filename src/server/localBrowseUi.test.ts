@@ -177,6 +177,10 @@ describe('local browse markdown preview', () => {
     expect(markdownEditorHtml).toContain('/codex-local-preview')
     const inlineScript = markdownEditorHtml.match(/<script>\s*([\s\S]*?)\s*<\/script>\s*<\/body>/u)?.[1] ?? ''
     expect(inlineScript).toContain('const saveBtn = document.getElementById')
+    expect(inlineScript).toContain('const isFloatingCommentEditorOpen = () => Boolean(')
+    expect(inlineScript).toContain('if (!isFloatingCommentEditorOpen()) {\n        hideFloatingCommentEditor();\n      }')
+    expect(inlineScript).toContain('if (isFloatingCommentEditorOpen()) return;')
+    expect(inlineScript).not.toContain("event.stopPropagation();\n          hideFloatingCommentEditor();\n          return;")
     expect(() => new Function(inlineScript)).not.toThrow()
     expect(inlineScript.indexOf('let lineWrapEnabled = true;')).toBeLessThan(inlineScript.indexOf('editor.session.setUseWrapMode(lineWrapEnabled);'))
     const referenceHelperIndex = markdownEditorHtml.indexOf('const createEditorReferenceText =')

@@ -2850,6 +2850,10 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       if (floatingCommentInput) floatingCommentInput.value = '';
     };
 
+    const isFloatingCommentEditorOpen = () => Boolean(
+      floatingCommentEditor && !floatingCommentEditor.hidden
+    );
+
     const hideFloatingActionGroups = () => {
       if (floatingSelectionActions) floatingSelectionActions.hidden = true;
       if (floatingHighlightBtn) floatingHighlightBtn.hidden = true;
@@ -2865,7 +2869,9 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
 
     const hideFloatingHighlightActions = () => {
       hideFloatingActionGroups();
-      hideFloatingCommentEditor();
+      if (!isFloatingCommentEditorOpen()) {
+        hideFloatingCommentEditor();
+      }
     };
 
     const dismissFloatingHighlightActions = () => {
@@ -2989,8 +2995,8 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
 
     const showFloatingHighlightButton = (rect) => {
       if (!supportsMarkdownPreview) return;
+      if (isFloatingCommentEditorOpen()) return;
       lastFloatingCommentEditorRect = rect || lastFloatingCommentEditorRect;
-      hideFloatingCommentEditor();
       if (floatingSelectionActions) {
         if (floatingHighlightBtn) floatingHighlightBtn.hidden = false;
         if (floatingMarkBtn) floatingMarkBtn.hidden = false;
@@ -3014,8 +3020,8 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
 
     const showFloatingRemoveHighlightButton = (rect) => {
       if (!supportsMarkdownPreview) return;
+      if (isFloatingCommentEditorOpen()) return;
       lastFloatingCommentEditorRect = rect || lastFloatingCommentEditorRect;
-      hideFloatingCommentEditor();
       if (floatingSelectionActions) floatingSelectionActions.hidden = true;
       if (floatingHighlightBtn) floatingHighlightBtn.hidden = true;
       if (floatingMarkBtn) floatingMarkBtn.hidden = true;
@@ -3033,8 +3039,8 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
 
     const showFloatingMarkActions = (rect) => {
       if (!supportsMarkdownPreview || !floatingMarkActions) return;
+      if (isFloatingCommentEditorOpen()) return;
       lastFloatingCommentEditorRect = rect || lastFloatingCommentEditorRect;
-      hideFloatingCommentEditor();
       if (floatingSelectionActions) floatingSelectionActions.hidden = true;
       if (floatingHighlightBtn) floatingHighlightBtn.hidden = true;
       if (floatingMarkBtn) floatingMarkBtn.hidden = true;
@@ -3048,8 +3054,8 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
 
     const showFloatingCommentActions = (rect) => {
       if (!supportsMarkdownPreview || !floatingCommentActions) return;
+      if (isFloatingCommentEditorOpen()) return;
       lastFloatingCommentEditorRect = rect || lastFloatingCommentEditorRect;
-      hideFloatingCommentEditor();
       if (floatingSelectionActions) floatingSelectionActions.hidden = true;
       if (floatingHighlightBtn) floatingHighlightBtn.hidden = true;
       if (floatingMarkBtn) floatingMarkBtn.hidden = true;
@@ -4623,7 +4629,6 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
         if (event.key === 'Escape') {
           event.preventDefault();
           event.stopPropagation();
-          hideFloatingCommentEditor();
           return;
         }
         if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {

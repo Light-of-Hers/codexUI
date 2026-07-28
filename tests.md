@@ -7622,3 +7622,31 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - Restore the two localStorage entries or reload the app after completing the check.
+
+### Feature: Persistent Markdown comment editor
+
+#### Prerequisites
+- App server is running from this repository.
+- Open a Markdown file in the local editor and enable `Preview`.
+- The file contains selectable text and at least one `\\mark{...}` or `\\comment{...}` annotation.
+
+#### Steps
+1. In light theme, select text in the preview and choose `Add comment`, or click an existing annotation and choose `Edit comment`.
+2. Enter text in the comment editor, then click ordinary preview content, the editor surface, and a different annotation without using the editor controls.
+3. Confirm the editor stays visible and its text is unchanged. Confirm new selection/annotation action controls do not replace the active editor.
+4. Press `Escape` inside the editor and confirm it remains open.
+5. Press `Shift+Enter` to add a line break, then press `Enter` to submit; confirm the comment is inserted or updated and the editor closes after the successful submit.
+6. Open the editor again, enter draft text, click `Cancel`, and confirm the editor closes without applying the draft.
+7. Repeat steps 1-6 in dark theme.
+
+#### Expected Results
+- A visible add-comment or edit-comment editor remains open while users click outside it, including in the preview iframe.
+- Only explicit cancellation discards a draft; successful submission closes the editor after applying the comment.
+- The active editor is not redirected from its original annotation by subsequent preview selections.
+- Light and dark themes retain readable editor controls and annotation content.
+
+#### Performance Audit
+- The change only adds constant-time visibility checks to existing local event handlers. It performs no additional rendering passes, network requests, filesystem requests, or persistent storage work.
+
+#### Rollback/Cleanup
+- Use `Cancel` to discard any manual-test draft. Remove any test annotation inserted during the verification if it should not remain in the file.
