@@ -22,7 +22,7 @@
       </li>
       <template v-for="(message, messageIndex) in visibleMessages" :key="message.id">
       <li
-        v-if="!hiddenGroupedCommandIds.has(message.id) && !hiddenGroupedToolCallIds.has(message.id) && !hiddenFileChangeMessageIds.has(message.id)"
+        v-if="!hiddenGroupedRunnableItemIds.has(message.id) && !hiddenFileChangeMessageIds.has(message.id)"
         class="conversation-item"
         :class="{ 'conversation-item-jump-highlight': highlightedMessageId === message.id }"
         :data-role="message.role"
@@ -49,11 +49,11 @@
               :class="{ 'cmd-group-visible': isCommandGroupExpanded(message) }"
             >
               <div class="cmd-group-inner">
-                <div
+                <template
                   v-for="cmd in getCommandBlockForLatest(message)"
                   :key="`grouped-cmd-${cmd.id}`"
-                  class="worked-cmd-item"
                 >
+                <div v-if="isCommandMessage(cmd)" class="worked-cmd-item">
                   <button
                     type="button"
                     class="cmd-row"
@@ -121,6 +121,47 @@
                     </Transition>
                   </div>
                 </div>
+                <div v-else class="worked-cmd-item">
+                  <button
+                    type="button"
+                    class="tool-call-row"
+                    :class="[toolCallStatusClass(cmd), { 'tool-call-expanded': isToolCallExpanded(cmd) }]"
+                    @click="toggleToolCallExpand(cmd)"
+                  >
+                    <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isToolCallExpanded(cmd) }">▶</span>
+                    <span class="tool-call-main">
+                      <span class="tool-call-title" :title="toolCallDisplayTitle(cmd)">{{ toolCallDisplayTitle(cmd) }}</span>
+                      <span v-if="toolCallMetaLabel(cmd)" class="tool-call-meta" :title="toolCallMetaLabel(cmd)">
+                        {{ toolCallMetaLabel(cmd) }}
+                      </span>
+                    </span>
+                    <span class="tool-call-status">{{ toolCallStatusLabel(cmd) }}</span>
+                  </button>
+                  <div class="tool-call-detail-wrap" :class="{ 'tool-call-detail-visible': isToolCallExpanded(cmd) }">
+                    <div class="tool-call-detail-inner">
+                      <div v-if="toolCallProgressText(cmd)" class="tool-call-section">
+                        <span class="tool-call-section-label">Progress</span>
+                        <p class="tool-call-progress" v-text="toolCallProgressText(cmd)"></p>
+                      </div>
+                      <div v-if="toolCallInputText(cmd)" class="tool-call-section">
+                        <span class="tool-call-section-label">Input</span>
+                        <pre class="tool-call-code-box" v-text="toolCallInputText(cmd)"></pre>
+                      </div>
+                      <div v-if="toolCallOutputText(cmd)" class="tool-call-section">
+                        <span class="tool-call-section-label">Output</span>
+                        <pre class="tool-call-code-box" v-text="toolCallOutputText(cmd)"></pre>
+                      </div>
+                      <div v-if="toolCallErrorText(cmd)" class="tool-call-section">
+                        <span class="tool-call-section-label">Error</span>
+                        <pre class="tool-call-code-box tool-call-code-box-error" v-text="toolCallErrorText(cmd)"></pre>
+                      </div>
+                      <div v-if="!hasToolCallDetails(cmd)" class="tool-call-section">
+                        <p class="tool-call-progress">No additional details.</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                </template>
               </div>
             </div>
             <template v-else>
@@ -197,7 +238,7 @@
         <div v-else-if="isToolCallMessage(message)" class="message-row" data-role="system">
           <div class="message-stack" data-role="system">
             <button
-              v-if="getGroupedToolCallsForLatest(message).length > 0"
+              v-if="getGroupedCommandsForLatest(message).length > 0"
               type="button"
               class="cmd-row cmd-row-group cmd-compact"
               :class="[toolCallGroupStatusClass(message), { 'cmd-expanded': isToolCallGroupExpanded(message) }]"
@@ -208,16 +249,16 @@
               <span class="cmd-status">{{ toolCallGroupSummaryStatus(message) }}</span>
             </button>
             <div
-              v-if="getGroupedToolCallsForLatest(message).length > 0"
+              v-if="getGroupedCommandsForLatest(message).length > 0"
               class="cmd-group-wrap"
               :class="{ 'cmd-group-visible': isToolCallGroupExpanded(message) }"
             >
               <div class="cmd-group-inner">
-                <div
-                  v-for="call in getToolCallBlockForLatest(message)"
+                <template
+                  v-for="call in getCommandBlockForLatest(message)"
                   :key="`grouped-tool-call-${call.id}`"
-                  class="worked-cmd-item"
                 >
+                <div v-if="isToolCallMessage(call)" class="worked-cmd-item">
                   <button
                     type="button"
                     class="tool-call-row"
@@ -257,6 +298,75 @@
                     </div>
                   </div>
                 </div>
+                <div v-else class="worked-cmd-item">
+                  <button
+                    type="button"
+                    class="cmd-row"
+                    :class="[
+                      commandStatusClass(call),
+                      {
+                        'cmd-expanded': isCommandExpanded(call),
+                        'cmd-compact': true,
+                      },
+                    ]"
+                    @click="toggleCommandExpand(call)"
+                  >
+                    <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isCommandExpanded(call) }">▶</span>
+                    <code class="cmd-label" :title="commandDisplayText(call)">{{ commandDisplayText(call) }}</code>
+                    <span class="cmd-status">{{ commandStatusLabel(call) }}</span>
+                  </button>
+                  <div
+                    class="cmd-output-wrap"
+                    :class="{ 'cmd-output-visible': isCommandExpanded(call) }"
+                  >
+                    <Transition :duration="350" name="cmd-output-fade">
+                    <div v-if="isCommandExpanded(call)" class="cmd-output-inner">
+                      <div class="cmd-output-section">
+                        <span class="cmd-output-section-label">Command</span>
+                        <div class="cmd-code-box" tabindex="0" @keydown="onCodeBoxKeydown">
+                          <button class="cmd-code-copy-button" type="button" title="Copy command" aria-label="Copy command" @click.stop="copyCommandCodeBox($event)">
+                            <span class="message-code-copy-icon" aria-hidden="true"></span>
+                          </button>
+                          <div class="cmd-code-box-lines">
+                            <div
+                              v-for="(line, lineIndex) in commandDisplayLines(call)"
+                              :key="`grouped-command-line-${call.id}-${lineIndex}`"
+                              class="cmd-code-box-line"
+                              :data-line-number="lineIndex + 1"
+                            >
+                              <code class="cmd-code-box-line-code" v-text="line || ' '"></code>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="cmd-output-section">
+                        <span class="cmd-output-section-label">Output</span>
+                        <div
+                          class="cmd-code-box cmd-code-box-output"
+                          :class="{ 'cmd-code-box-condensed': isCommandOutputCondensed(call) }"
+                          tabindex="0"
+                          @keydown="onCodeBoxKeydown"
+                        >
+                          <button class="cmd-code-copy-button" type="button" title="Copy output" aria-label="Copy output" @click.stop="copyCommandCodeBox($event)">
+                            <span class="message-code-copy-icon" aria-hidden="true"></span>
+                          </button>
+                          <div class="cmd-code-box-lines">
+                            <div
+                              v-for="(line, lineIndex) in outputDisplayLines(call)"
+                              :key="`grouped-output-line-${call.id}-${lineIndex}`"
+                              class="cmd-code-box-line"
+                              :data-line-number="lineIndex + 1"
+                            >
+                              <code class="cmd-code-box-line-code" v-text="line || ' '"></code>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    </Transition>
+                  </div>
+                </div>
+                </template>
               </div>
             </div>
             <template v-else>
@@ -964,7 +1074,7 @@ import { useFeedbackDiagnostics } from '../../composables/useFeedbackDiagnostics
 import { useMobile } from '../../composables/useMobile'
 import { useUiLanguage } from '../../composables/useUiLanguage'
 import { getHighlightLanguageForPath, normalizeHighlightLanguage } from '../../utils/codeLanguage.js'
-import { groupConsecutiveToolCallsByLatestId } from './threadConversationGrouping'
+import { groupConsecutiveRunnableItemsByLatestId } from './threadConversationGrouping'
 import { resolveAutoFollowAfterScroll, resolveLatestRenderWindow } from './threadConversationScroll'
 import { buildUserMessageNavigationItems, type UserMessageNavigationItem } from './threadMessageNavigation'
 import { observeMermaidTheme, renderMermaidDiagrams } from './mermaidRenderer'
@@ -987,7 +1097,6 @@ const expandedCommandIds = ref<Set<string>>(new Set())
 const collapsedAutoCommandIds = ref<Set<string>>(new Set())
 const expandedCommandGroupIds = ref<Set<string>>(new Set())
 const expandedToolCallIds = ref<Set<string>>(new Set())
-const expandedToolCallGroupIds = ref<Set<string>>(new Set())
 const expandedFileChangeSummaryIds = ref<Set<string>>(new Set())
 const expandedResponseSourceIds = ref<Set<string>>(new Set())
 const activeDiffViewerSummary = ref<TurnFileChangeSummary | null>(null)
@@ -1334,46 +1443,15 @@ const isLiveTurnRuntime = computed(() =>
   isRenderingLatest.value && (Boolean(props.liveOverlay) || activeCommandMessageId.value.length > 0 || hasLiveAssistantText.value),
 )
 
-const groupedCommandsByLatestId = computed<Record<string, UiMessage[]>>(() => {
-  const next: Record<string, UiMessage[]> = {}
-  const renderedMessages = visibleMessages.value
-  for (let index = 0; index < renderedMessages.length;) {
-    const message = renderedMessages[index]
-    if (!isCommandMessage(message)) {
-      index += 1
-      continue
-    }
+const groupedRunnableItemsByLatestId = computed<Record<string, UiMessage[]>>(() =>
+  groupConsecutiveRunnableItemsByLatestId(visibleMessages.value),
+)
 
-    const block: UiMessage[] = []
-    while (index < renderedMessages.length && isCommandMessage(renderedMessages[index])) {
-      block.push(renderedMessages[index])
-      index += 1
-    }
-
-    if (block.length <= 1) continue
-    const latest = block[block.length - 1]
-    next[latest.id] = block.slice(0, -1)
-  }
-  return next
-})
-
-const hiddenGroupedCommandIds = computed(() => {
+const hiddenGroupedRunnableItemIds = computed(() => {
   const next = new Set<string>()
-  for (const commands of Object.values(groupedCommandsByLatestId.value)) {
-    for (const command of commands) {
-      next.add(command.id)
-    }
-  }
-  return next
-})
-
-const groupedToolCallsByLatestId = computed<Record<string, UiMessage[]>>(() => groupConsecutiveToolCallsByLatestId(visibleMessages.value))
-
-const hiddenGroupedToolCallIds = computed(() => {
-  const next = new Set<string>()
-  for (const toolCalls of Object.values(groupedToolCallsByLatestId.value)) {
-    for (const toolCall of toolCalls) {
-      next.add(toolCall.id)
+  for (const items of Object.values(groupedRunnableItemsByLatestId.value)) {
+    for (const item of items) {
+      next.add(item.id)
     }
   }
   return next
@@ -1439,11 +1517,11 @@ function toggleCommandExpand(message: UiMessage): void {
 }
 
 function getGroupedCommandsForLatest(message: UiMessage): UiMessage[] {
-  return groupedCommandsByLatestId.value[message.id] ?? []
+  return groupedRunnableItemsByLatestId.value[message.id] ?? []
 }
 
 function getCommandBlockForLatest(message: UiMessage): UiMessage[] {
-  if (!isCommandMessage(message)) return []
+  if (!isCommandMessage(message) && !isToolCallMessage(message)) return []
   return [...getGroupedCommandsForLatest(message), message]
 }
 
@@ -1461,10 +1539,14 @@ function isCommandGroupExpanded(message: UiMessage): boolean {
 }
 
 function commandGroupSummaryLabel(message: UiMessage): string {
-  const commands = getCommandBlockForLatest(message)
-  const count = commands.length
+  const items = getCommandBlockForLatest(message)
+  const count = items.length
   const latestCommand = message.commandExecution?.command?.trim() || '(command)'
-  const countLabel = count === 1 ? '1 command' : `${count} commands`
+  const toolCallCount = items.filter(isToolCallMessage).length
+  const commandCount = items.length - toolCallCount
+  const countLabel = toolCallCount > 0
+    ? `${commandCount} command${commandCount === 1 ? '' : 's'} · ${toolCallCount} tool call${toolCallCount === 1 ? '' : 's'}`
+    : count === 1 ? '1 command' : `${count} commands`
   return `${countLabel} · latest: ${latestCommand}`
 }
 
@@ -1472,33 +1554,28 @@ function commandGroupSummaryStatus(message: UiMessage): string {
   return commandStatusLabel(message)
 }
 
-function getGroupedToolCallsForLatest(message: UiMessage): UiMessage[] {
-  return groupedToolCallsByLatestId.value[message.id] ?? []
-}
-
-function getToolCallBlockForLatest(message: UiMessage): UiMessage[] {
-  if (!isToolCallMessage(message)) return []
-  return [...getGroupedToolCallsForLatest(message), message]
-}
-
 function toggleToolCallGroup(message: UiMessage): void {
-  const grouped = getGroupedToolCallsForLatest(message)
+  const grouped = getGroupedCommandsForLatest(message)
   if (grouped.length === 0) return
-  const next = new Set(expandedToolCallGroupIds.value)
+  const next = new Set(expandedCommandGroupIds.value)
   if (next.has(message.id)) next.delete(message.id)
   else next.add(message.id)
-  expandedToolCallGroupIds.value = next
+  expandedCommandGroupIds.value = next
 }
 
 function isToolCallGroupExpanded(message: UiMessage): boolean {
-  return expandedToolCallGroupIds.value.has(message.id)
+  return expandedCommandGroupIds.value.has(message.id)
 }
 
 function toolCallGroupSummaryLabel(message: UiMessage): string {
-  const calls = getToolCallBlockForLatest(message)
-  const count = calls.length
+  const items = getCommandBlockForLatest(message)
+  const count = items.length
   const latestTool = message.toolCall?.name?.trim() || message.toolCall?.title?.trim() || '(tool)'
-  const countLabel = count === 1 ? '1 tool call' : `${count} tool calls`
+  const commandCount = items.filter(isCommandMessage).length
+  const toolCallCount = items.length - commandCount
+  const countLabel = commandCount > 0
+    ? `${commandCount} command${commandCount === 1 ? '' : 's'} · ${toolCallCount} tool call${toolCallCount === 1 ? '' : 's'}`
+    : `${count} tool calls`
   return `${countLabel} · latest: ${latestTool}`
 }
 
@@ -5184,14 +5261,9 @@ function jumpToLatest(): void {
 }
 
 function resolveRevealMessageId(messageId: string): string {
-  if (hiddenGroupedCommandIds.value.has(messageId)) {
-    for (const [latestId, commands] of Object.entries(groupedCommandsByLatestId.value)) {
-      if (commands.some((message) => message.id === messageId)) return latestId
-    }
-  }
-  if (hiddenGroupedToolCallIds.value.has(messageId)) {
-    for (const [latestId, calls] of Object.entries(groupedToolCallsByLatestId.value)) {
-      if (calls.some((message) => message.id === messageId)) return latestId
+  if (hiddenGroupedRunnableItemIds.value.has(messageId)) {
+    for (const [latestId, items] of Object.entries(groupedRunnableItemsByLatestId.value)) {
+      if (items.some((message) => message.id === messageId)) return latestId
     }
   }
   if (hiddenFileChangeMessageIds.value.has(messageId)) {
@@ -5578,15 +5650,11 @@ watch(
     collapsedAutoCommandIds.value = pruneCommandIdSet(collapsedAutoCommandIds.value, commandIds)
     expandedCommandGroupIds.value = pruneCommandIdSet(
       expandedCommandGroupIds.value,
-      new Set(Object.keys(groupedCommandsByLatestId.value)),
+      new Set(Object.keys(groupedRunnableItemsByLatestId.value)),
     )
     expandedToolCallIds.value = pruneCommandIdSet(
       expandedToolCallIds.value,
       new Set(renderedMessages.filter((message) => isToolCallMessage(message)).map((message) => message.id)),
-    )
-    expandedToolCallGroupIds.value = pruneCommandIdSet(
-      expandedToolCallGroupIds.value,
-      new Set(Object.keys(groupedToolCallsByLatestId.value)),
     )
     expandedFileChangeSummaryIds.value = pruneCommandIdSet(
       expandedFileChangeSummaryIds.value,
