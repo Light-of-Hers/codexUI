@@ -7595,3 +7595,30 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - Unpin or re-pin test threads if needed.
+
+### Feature: Resume historical thread provider and model
+
+#### Prerequisites
+- App server is running from this repository.
+- A historical thread exists whose rollout was created with a non-default provider, such as `cursor`, and a model different from the currently active provider's default.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Clear the browser's `codex-web-local.selected-model-by-context.v1` and `codex-web-local.provider-by-context.v1` entries, then reload the app.
+2. Open the historical thread and confirm its model/provider reflect the latest persisted rollout settings rather than the active runtime default.
+3. While a turn is running in that thread, submit a follow-up using `Steer`.
+4. Confirm the follow-up remains on the restored provider/model and does not insert a model-switch message.
+5. Repeat steps 2-4 in light theme and dark theme.
+
+#### Expected Results
+- A resume with no browser-cached selection performs one metadata-only `thread/read`, then resumes with the recovered model and provider.
+- `Steer` reuses the provider recovered by resume.
+- Threads with an existing cached model or provider do not perform the additional metadata read.
+- Light and dark theme rendering is unchanged.
+
+#### Performance Audit
+- The recovery read is conditional on both model and provider being absent, requests `includeTurns: false`, and occurs only before a required resume. Normal cached resumes keep their existing request count.
+- The `thread/read` result is already enriched from the rollout by the bridge's bounded session-state cache, so recovery does not load full turns or add an unbounded fanout.
+
+#### Rollback/Cleanup
+- Restore the two localStorage entries or reload the app after completing the check.

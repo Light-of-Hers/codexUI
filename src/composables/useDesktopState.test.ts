@@ -2030,6 +2030,35 @@ describe('active turn state reconciliation', () => {
     expect(gatewayMocks.startThreadTurn).not.toHaveBeenCalled()
   })
 
+  it('uses the provider recovered by resume when steering a thread with an empty UI cache', async () => {
+    const state = await createThreadHarness()
+    gatewayMocks.getThreadDetail.mockResolvedValue(activeTurnDetail('turn-active'))
+    gatewayMocks.resumeThread.mockResolvedValue({
+      model: 'gpt-5.6-sol-xhigh',
+      modelProvider: 'cursor',
+      reasoningEffort: 'xhigh',
+      messages: [],
+      inProgress: true,
+      activeTurnId: 'turn-active',
+      hasMoreOlder: false,
+      turnIndexByTurnId: { 'turn-active': 0 },
+    })
+    gatewayMocks.steerThreadTurn.mockResolvedValue('turn-active')
+
+    await state.sendMessageToSelectedThread('continue on the existing runtime')
+    await waitForAsyncCondition(() => gatewayMocks.steerThreadTurn.mock.calls.length > 0)
+
+    expect(gatewayMocks.steerThreadTurn).toHaveBeenCalledWith(
+      'thread-a',
+      'turn-active',
+      'continue on the existing runtime',
+      [],
+      undefined,
+      [],
+      'cursor',
+    )
+  })
+
   it('starts a new turn when stale running state steers into an idle backend', async () => {
     const state = await createThreadHarness()
     gatewayMocks.getThreadDetail.mockResolvedValue(activeTurnDetail('turn-stale'))
@@ -2757,7 +2786,9 @@ describe('skills list refresh', () => {
     await vi.waitFor(() => {
       expect(resolveFirst).not.toBeNull()
     })
-    resolveFirst?.([
+    if (!resolveFirst) throw new Error('Expected the first skills refresh to be pending')
+    const resolvePendingRefresh = resolveFirst as (value: unknown[]) => void
+    resolvePendingRefresh([
       {
         name: 'repo-a-skill',
         description: 'from repo a',
@@ -2803,7 +2834,9 @@ describe('skills list refresh', () => {
       },
     ])
 
-    notificationHandler?.({
+    if (!notificationHandler) throw new Error('Expected the notification subscription to be registered')
+    const dispatchNotification = notificationHandler as (notification: RpcNotification) => void
+    dispatchNotification({
       method: 'skills/changed',
       params: {},
       atIso: new Date().toISOString(),

@@ -7194,7 +7194,7 @@ export function useDesktopState() {
     if (!expectedTurnId) {
       throw new Error('Could not determine active turn id for steering')
     }
-    const activeTurnProviderId = activeTurnProviderIdByThreadId.value[threadId]
+    let activeTurnProviderId = activeTurnProviderIdByThreadId.value[threadId]
       || readThreadRpcProviderId(threadId)
 
     if (shouldResumeThread(threadId)) {
@@ -7208,6 +7208,7 @@ export function useDesktopState() {
         resumedThread.model,
         resumedThread.modelProvider,
       )
+      activeTurnProviderId = activeTurnProviderId || readThreadRpcProviderId(threadId)
     }
 
     const steeredTurnId = await steerThreadTurn(

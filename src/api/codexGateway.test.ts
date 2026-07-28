@@ -233,7 +233,7 @@ describe('thread history persistence payloads', () => {
     })
 
     await startThread('/tmp/project', 'gpt-5.4')
-    await resumeThread('thread-1')
+    await resumeThread('thread-1', 'gpt-5.4')
     await forkThread('thread-1')
 
     expect(requests.map((request) => request.method)).toEqual([
@@ -242,6 +242,38 @@ describe('thread history persistence payloads', () => {
       'thread/fork',
     ])
     expect(requests.every((request) => request.params.persistExtendedHistory === true)).toBe(true)
+  })
+
+  it('recovers missing resume model settings from the persisted thread before resuming', async () => {
+    const { requests } = mockRpcFetchWithResponder((request) => {
+      if (request.method === 'thread/read') {
+        return {
+          ...emptyThreadResult('thread-1'),
+          model: 'gpt-5.6-sol-xhigh',
+          modelProvider: 'cursor',
+        }
+      }
+      if (request.method === 'thread/resume') return emptyThreadResult('thread-1')
+      return {}
+    })
+
+    await resumeThread('thread-1')
+
+    expect(requests).toEqual([
+      {
+        method: 'thread/read',
+        params: { threadId: 'thread-1', includeTurns: false },
+      },
+      {
+        method: 'thread/resume',
+        params: {
+          threadId: 'thread-1',
+          persistExtendedHistory: true,
+          model: 'gpt-5.6-sol-xhigh',
+          modelProvider: 'cursor',
+        },
+      },
+    ])
   })
 
   it('passes explicit model provider overrides to thread lifecycle RPCs', async () => {

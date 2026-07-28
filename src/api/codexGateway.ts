@@ -889,6 +889,24 @@ async function getThreadSummaryV2(threadId: string): Promise<UiThread> {
   return normalizeThreadSummaryV2(payload)
 }
 
+async function recoverThreadResumeModelState(threadId: string): Promise<{ model: string; modelProvider: string }> {
+  try {
+    // The bridge enriches thread/read with the last persisted rollout settings.
+    const payload = await callRpc<ThreadReadResponse>('thread/read', {
+      threadId,
+      includeTurns: false,
+    })
+    return {
+      model: normalizeThreadModelFromPayload(payload),
+      modelProvider: normalizeThreadModelProviderFromPayload(payload),
+    }
+  } catch {
+    // Preserve the existing default-runtime behavior when a legacy rollout
+    // cannot be read; resume will still surface its own actionable error.
+    return { model: '', modelProvider: '' }
+  }
+}
+
 async function getThreadDetailV2(threadId: string): Promise<{
   messages: UiMessage[]
   inProgress: boolean
@@ -1740,15 +1758,23 @@ export async function resumeThread(
   model?: string,
   modelProvider?: string,
 ): Promise<ResumedThread> {
+  let resolvedModel = typeof model === 'string' ? model.trim() : ''
+  let resolvedModelProvider = typeof modelProvider === 'string' ? modelProvider.trim() : ''
+  if (!resolvedModel && !resolvedModelProvider) {
+    const recovered = await recoverThreadResumeModelState(threadId)
+    resolvedModel = recovered.model
+    resolvedModelProvider = recovered.modelProvider
+  }
+
   const params: Record<string, unknown> = {
     threadId,
     persistExtendedHistory: true,
   }
-  if (typeof model === 'string' && model.trim().length > 0) {
-    params.model = model.trim()
+  if (resolvedModel) {
+    params.model = resolvedModel
   }
-  if (typeof modelProvider === 'string' && modelProvider.trim().length > 0) {
-    params.modelProvider = modelProvider.trim()
+  if (resolvedModelProvider) {
+    params.modelProvider = resolvedModelProvider
   }
   const payload = await callRpc<ThreadResumeResponse>('thread/resume', params)
   const startTurnIndex = readThreadTurnStartIndex(payload)
