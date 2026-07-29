@@ -49,7 +49,7 @@
                   type="button"
                   :title="copiedId === entry.link.id ? t('Copied') : t('Copy')"
                   :aria-label="t('Copy')"
-                  @click.stop="copyLink(entry.link)"
+                  @click.stop.prevent="copyLink(entry.link)"
                 >
                   <IconTablerCopy class="thread-links-copy-icon" />
                 </button>
@@ -74,7 +74,7 @@
                   type="button"
                   :title="copiedId === entry.link.id ? t('Copied') : t('Copy')"
                   :aria-label="t('Copy')"
-                  @click.stop="copyLink(entry.link)"
+                  @click.stop.prevent="copyLink(entry.link)"
                 >
                   <IconTablerCopy class="thread-links-copy-icon" />
                 </button>
