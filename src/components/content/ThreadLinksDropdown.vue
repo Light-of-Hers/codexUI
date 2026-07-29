@@ -30,77 +30,58 @@
         <div class="thread-links-body">
           <div v-if="isLoading" class="thread-links-loading">{{ t('Loading all messages…') }}</div>
           <template v-else>
-          <div v-if="filteredWebLinks.length" class="thread-links-section">
-            <div class="thread-links-section-header">{{ t('Links') }}</div>
-            <a
-              v-for="link in filteredWebLinks"
-              :key="link.id"
-              class="thread-links-row thread-links-web-row"
-              :href="link.href"
-              target="_blank"
-              rel="noopener noreferrer"
-              :title="link.value"
-            >
-              <IconTablerLink class="thread-links-row-icon" />
-              <span class="thread-links-row-label">{{ link.label }}</span>
-              <span class="thread-links-row-role">{{ link.role === 'user' ? 'user' : 'agent' }}</span>
-              <button
-                class="thread-links-copy"
-                type="button"
-                :title="copiedId === link.id ? t('Copied') : t('Copy')"
-                :aria-label="t('Copy')"
-                @click.stop="copyLink(link)"
+            <div v-if="fuzzyWebLinks.length" class="thread-links-section">
+              <div class="thread-links-section-header">{{ t('Links') }}</div>
+              <a
+                v-for="entry in fuzzyWebLinks"
+                :key="entry.link.id"
+                class="thread-links-row thread-links-web-row"
+                :href="entry.link.href"
+                target="_blank"
+                rel="noopener noreferrer"
+                :title="entry.link.value"
               >
-                <IconTablerCopy class="thread-links-copy-icon" />
-              </button>
-            </a>
-          </div>
-
-          <div v-if="fileRows.length" class="thread-links-section">
-            <div class="thread-links-section-header">{{ t('Files') }}</div>
-            <div
-              v-for="row in fileRows"
-              :key="row.node.path"
-              class="thread-links-row thread-links-file-row"
-              :style="{ paddingLeft: `${0.5 + row.depth * 0.9}rem` }"
-            >
-              <button
-                v-if="isDir(row.node)"
-                class="thread-links-dir-toggle"
-                type="button"
-                :title="row.node.path"
-                @click="toggleDir(row.node.path)"
-              >
-                <IconTablerChevronRight class="thread-links-chevron" :class="{ 'is-expanded': isExpanded(row.node.path) }" />
-                <IconTablerFolder class="thread-links-row-icon" />
-                <span class="thread-links-row-label">{{ row.node.name }}</span>
-              </button>
-              <template v-else>
-                <a
-                  class="thread-links-file-link"
-                  :href="row.node.link?.href || '#'"
-                  :title="row.node.link?.value"
-                  @click="onFileClick(row.node.link, $event)"
-                >
-                  <IconTablerFilePencil class="thread-links-row-icon" />
-                  <span class="thread-links-row-label">{{ row.node.name }}</span>
-                  <span v-if="row.node.link" class="thread-links-row-role">{{ row.node.link.role === 'user' ? 'user' : 'agent' }}</span>
-                </a>
+                <IconTablerLink class="thread-links-row-icon" />
+                <span class="thread-links-row-label" v-html="highlightHtml(entry.link.value, entry.indices)"></span>
+                <span class="thread-links-row-role">{{ entry.link.role === 'user' ? 'user' : 'agent' }}</span>
                 <button
-                  v-if="row.node.link"
                   class="thread-links-copy"
                   type="button"
-                  :title="copiedId === row.node.link.id ? t('Copied') : t('Copy')"
+                  :title="copiedId === entry.link.id ? t('Copied') : t('Copy')"
                   :aria-label="t('Copy')"
-                  @click.stop="copyLink(row.node.link)"
+                  @click.stop="copyLink(entry.link)"
                 >
                   <IconTablerCopy class="thread-links-copy-icon" />
                 </button>
-              </template>
+              </a>
             </div>
-          </div>
 
-          <div v-if="!filteredWebLinks.length && !fileRows.length" class="thread-links-empty">{{ t('No links found') }}</div>
+            <div v-if="fuzzyFileLinks.length" class="thread-links-section">
+              <div class="thread-links-section-header">{{ t('Files') }}</div>
+              <a
+                v-for="entry in fuzzyFileLinks"
+                :key="entry.link.id"
+                class="thread-links-row thread-links-file-row"
+                :href="entry.link.href || '#'"
+                :title="entry.link.value"
+                @click="onFileClick(entry.link, $event)"
+              >
+                <IconTablerFilePencil class="thread-links-row-icon" />
+                <span class="thread-links-row-label" v-html="highlightHtml(entry.link.value, entry.indices)"></span>
+                <span class="thread-links-row-role">{{ entry.link.role === 'user' ? 'user' : 'agent' }}</span>
+                <button
+                  class="thread-links-copy"
+                  type="button"
+                  :title="copiedId === entry.link.id ? t('Copied') : t('Copy')"
+                  :aria-label="t('Copy')"
+                  @click.stop="copyLink(entry.link)"
+                >
+                  <IconTablerCopy class="thread-links-copy-icon" />
+                </button>
+              </a>
+            </div>
+
+            <div v-if="!fuzzyWebLinks.length && !fuzzyFileLinks.length" class="thread-links-empty">{{ t('No links found') }}</div>
           </template>
         </div>
       </div>
@@ -111,15 +92,14 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { ThreadLink } from '../../utils/threadLinks'
-import { buildLinkTree, flattenLinkTree, isLinkDir, type LinkTreeNode } from '../../utils/threadLinks'
 import { useUiLanguage } from '../../composables/useUiLanguage'
 import IconTablerChevronDown from '../icons/IconTablerChevronDown.vue'
-import IconTablerChevronRight from '../icons/IconTablerChevronRight.vue'
 import IconTablerCopy from '../icons/IconTablerCopy.vue'
 import IconTablerFilePencil from '../icons/IconTablerFilePencil.vue'
-import IconTablerFolder from '../icons/IconTablerFolder.vue'
 import IconTablerLink from '../icons/IconTablerLink.vue'
 import IconTablerSearch from '../icons/IconTablerSearch.vue'
+
+type FuzzyEntry = { link: ThreadLink; indices: number[] | null }
 
 const props = defineProps<{
   links: ThreadLink[]
@@ -137,62 +117,73 @@ const rootRef = ref<HTMLElement | null>(null)
 const searchInputRef = ref<HTMLInputElement | null>(null)
 const isOpen = ref(false)
 const searchQuery = ref('')
-const expanded = ref<Set<string>>(new Set())
 const copiedId = ref<string | null>(null)
 let copyResetTimer: ReturnType<typeof setTimeout> | null = null
 
 const triggerTitle = computed(() => t('Links'))
 const isLoading = computed(() => props.isLoading === true)
-const disabled = computed(() => props.disabled === true || (!isLoading.value && false))
+const disabled = computed(() => props.disabled === true)
 
-const webLinks = computed(() => props.links.filter((link) => link.kind === 'web'))
-const fileLinks = computed(() => props.links.filter((link) => link.kind === 'file'))
-const fileTree = computed(() => buildLinkTree(fileLinks.value))
+const sortCompare = (a: ThreadLink, b: ThreadLink): number => (
+  a.value.localeCompare(b.value, undefined, { numeric: true, sensitivity: 'base' })
+)
 
-const queryText = computed(() => searchQuery.value.trim().toLowerCase())
-const filteredWebLinks = computed(() => {
-  const query = queryText.value
-  if (!query) return webLinks.value
-  return webLinks.value.filter((link) => (
-    link.value.toLowerCase().includes(query)
-    || link.label.toLowerCase().includes(query)
-    || link.role.toLowerCase().includes(query)
-  ))
-})
+const webLinks = computed(() => props.links.filter((link) => link.kind === 'web').slice().sort(sortCompare))
+const fileLinks = computed(() => props.links.filter((link) => link.kind === 'file').slice().sort(sortCompare))
 
-function linkMatches(link: ThreadLink, query: string): boolean {
-  return link.value.toLowerCase().includes(query)
-    || link.label.toLowerCase().includes(query)
-    || link.role.toLowerCase().includes(query)
-}
+const queryText = computed(() => searchQuery.value.trim())
 
-const fileRows = computed(() => {
-  const query = queryText.value
-  if (query) {
-    return fileLinks.value
-      .filter((link) => linkMatches(link, query))
-      .map((link) => ({
-        node: { name: link.label, path: link.value, link, children: [] } as LinkTreeNode,
-        depth: 0,
-      }))
+function fuzzyMatch(query: string, target: string): number[] | null {
+  if (!query) return []
+  const q = query.toLowerCase()
+  const t = target.toLowerCase()
+  const indices: number[] = []
+  let ti = 0
+  for (let qi = 0; qi < q.length; qi += 1) {
+    const ch = q[qi]
+    let found = false
+    while (ti < t.length) {
+      if (t[ti] === ch) {
+        indices.push(ti)
+        ti += 1
+        found = true
+        break
+      }
+      ti += 1
+    }
+    if (!found) return null
   }
-  return flattenLinkTree(fileTree.value, expanded.value)
+  return indices
+}
+
+const HTML_ESCAPES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch] ?? ch)
+}
+
+function highlightHtml(target: string, indices: number[] | null): string {
+  if (!indices || indices.length === 0) return escapeHtml(target)
+  const matchSet = new Set(indices)
+  let out = ''
+  for (let i = 0; i < target.length; i += 1) {
+    const escaped = escapeHtml(target[i])
+    out += matchSet.has(i) ? `<mark>${escaped}</mark>` : escaped
+  }
+  return out
+}
+
+const fuzzyWebLinks = computed<FuzzyEntry[]>(() => {
+  const query = queryText.value
+  return webLinks.value.map((link) => ({ link, indices: fuzzyMatch(query, link.value) }))
+    .filter((entry) => entry.indices !== null)
 })
 
-function isDir(node: LinkTreeNode): boolean {
-  return isLinkDir(node)
-}
-
-function isExpanded(path: string): boolean {
-  return expanded.value.has(path)
-}
-
-function toggleDir(path: string): void {
-  const next = new Set(expanded.value)
-  if (next.has(path)) next.delete(path)
-  else next.add(path)
-  expanded.value = next
-}
+const fuzzyFileLinks = computed<FuzzyEntry[]>(() => {
+  const query = queryText.value
+  return fileLinks.value.map((link) => ({ link, indices: fuzzyMatch(query, link.value) }))
+    .filter((entry) => entry.indices !== null)
+})
 
 function toggleOpen(): void {
   if (disabled.value) return
@@ -208,11 +199,7 @@ function onEscapeSearch(): void {
   isOpen.value = false
 }
 
-function onFileClick(link: ThreadLink | null, event: MouseEvent): void {
-  if (!link) {
-    event.preventDefault()
-    return
-  }
+function onFileClick(link: ThreadLink, event: MouseEvent): void {
   if (!link.href || link.href === '#') {
     event.preventDefault()
     void copyLink(link)
@@ -241,10 +228,6 @@ function onDocumentPointerDown(event: PointerEvent): void {
   isOpen.value = false
   searchQuery.value = ''
 }
-
-watch(fileTree, (tree) => {
-  expanded.value = new Set(tree.filter((node) => isLinkDir(node)).map((node) => node.path))
-}, { immediate: true })
 
 watch(isOpen, (open) => {
   if (open) {
@@ -329,28 +312,16 @@ onBeforeUnmount(() => {
   @apply py-1;
 }
 
-.thread-links-dir-toggle {
-  @apply flex min-w-0 flex-1 items-center gap-1.5 border-0 bg-transparent px-0 py-0 text-left text-sm text-zinc-700;
-}
-
-.thread-links-file-link {
-  @apply flex min-w-0 flex-1 items-center gap-1.5 text-sm text-zinc-700;
-}
-
-.thread-links-chevron {
-  @apply h-3.5 w-3.5 shrink-0 text-zinc-400 transition-transform;
-}
-
-.thread-links-chevron.is-expanded {
-  @apply rotate-90;
-}
-
 .thread-links-row-icon {
   @apply h-4 w-4 shrink-0 text-zinc-500;
 }
 
 .thread-links-row-label {
   @apply min-w-0 flex-1 truncate font-mono text-xs;
+}
+
+.thread-links-row-label :global(mark) {
+  @apply rounded-sm bg-amber-200 px-0.5 text-zinc-900;
 }
 
 .thread-links-row-role {
@@ -397,24 +368,16 @@ onBeforeUnmount(() => {
   @apply text-zinc-200 hover:bg-zinc-800;
 }
 
-:global(:root.dark .thread-links-dir-toggle) {
-  @apply text-zinc-200;
-}
-
-:global(:root.dark .thread-links-file-link) {
-  @apply text-zinc-200;
-}
-
-:global(:root.dark .thread-links-chevron) {
-  @apply text-zinc-500;
-}
-
 :global(:root.dark .thread-links-row-icon) {
   @apply text-zinc-400;
 }
 
 :global(:root.dark .thread-links-row-role) {
   @apply bg-zinc-800 text-zinc-400;
+}
+
+:global(:root.dark .thread-links-row-label mark) {
+  @apply bg-amber-500/40 text-zinc-100;
 }
 
 :global(:root.dark .thread-links-copy) {

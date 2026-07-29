@@ -2,10 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { UiMessage } from '../types/codex'
 import {
   buildFileBrowseHref,
-  buildLinkTree,
-  collectDirPaths,
   extractThreadLinks,
-  flattenLinkTree,
   isFilePathLike,
   resolveRelativePath,
 } from './threadLinks'
@@ -181,69 +178,5 @@ describe('threadLinks path helpers', () => {
   it('buildFileBrowseHref returns browse route for resolved paths', () => {
     expect(buildFileBrowseHref('src/a.ts', '/root/proj')).toBe('/codex-local-browse/root/proj/src/a.ts')
     expect(buildFileBrowseHref('', '/root/proj')).toBe('#')
-  })
-})
-
-describe('threadLinks tree builder', () => {
-  function fileLink(value: string, id = value): import('../types/codex').UiMessage & {} {
-    return { id, role: 'assistant', text: value }
-  }
-
-  it('merges shared prefixes into directory nodes', () => {
-    const links = extractThreadLinks([
-      fileLink('see /root/proj/src/app.ts and /root/proj/src/utils/helpers.ts'),
-    ], '/root/proj')
-    const tree = buildLinkTree(links)
-    expect(tree).toHaveLength(1)
-    expect(tree[0].name).toBe('root')
-    expect(tree[0].children).toHaveLength(1)
-    expect(tree[0].children[0].name).toBe('proj')
-    const proj = tree[0].children[0]
-    expect(proj.children.map((n) => n.name)).toEqual(['src'])
-    const src = proj.children[0]
-    expect(src.children.map((n) => n.name).sort()).toEqual(['app.ts', 'utils'])
-    const utils = src.children.find((n) => n.name === 'utils')!
-    expect(utils.children.map((n) => n.name)).toEqual(['helpers.ts'])
-    expect(utils.children[0].link?.value).toBe('/root/proj/src/utils/helpers.ts')
-  })
-
-  it('keeps separate top-level roots for unrelated paths', () => {
-    const links = extractThreadLinks([
-      fileLink('a /root/x.ts b ./src/y.ts c /data00/run/z/'),
-    ], '/root/proj')
-    const tree = buildLinkTree(links)
-    expect(tree.map((n) => n.name).sort()).toEqual(['data00', 'root', 'src'])
-  })
-
-  it('lists directories before files, alphabetically', () => {
-    const links = extractThreadLinks([
-      fileLink('/proj/z.ts and /proj/mid/a.ts and /proj/b.ts and /proj/mid/other/b.ts'),
-    ])
-    const tree = buildLinkTree(links)
-    expect(tree).toHaveLength(1)
-    expect(tree[0].name).toBe('proj')
-    expect(tree[0].children.map((n) => n.name)).toEqual(['mid', 'b.ts', 'z.ts'])
-  })
-
-  it('flattens with expansion and respects collapsed dirs', () => {
-    const links = extractThreadLinks([
-      fileLink('/root/proj/src/app.ts and /root/proj/src/utils/helpers.ts'),
-    ], '/root/proj')
-    const tree = buildLinkTree(links)
-    const allDirs = new Set(collectDirPaths(tree))
-    const expanded = flattenLinkTree(tree, allDirs)
-    expect(expanded.length).toBeGreaterThan(5)
-    const collapsed = flattenLinkTree(tree, new Set())
-    // only top-level root visible when everything collapsed
-    expect(collapsed).toHaveLength(1)
-    expect(collapsed[0].node.name).toBe('root')
-  })
-
-  it('ignores web links when building the file tree', () => {
-    const links = extractThreadLinks([
-      fileLink('see https://example.com and /a/b.ts'),
-    ], '/root/proj')
-    const tree = buildLinkTree(links)
-    expect(tree.map((n) => n.name)).toEqual(['a'])
   })
 })
