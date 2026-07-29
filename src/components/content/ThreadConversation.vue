@@ -805,19 +805,6 @@
       ref="messageNavigationRef"
       class="message-nav"
     >
-      <button
-        type="button"
-        class="message-nav-toggle"
-        :data-open="isMessageNavigationOpen ? 'true' : 'false'"
-        aria-haspopup="menu"
-        :aria-expanded="isMessageNavigationOpen"
-        title="Jump to user message"
-        @click="toggleMessageNavigation"
-      >
-        <span class="message-nav-toggle-label">User messages</span>
-        <span class="message-nav-count">{{ messageNavigationCountLabel }}</span>
-        <IconTablerChevronDown class="message-nav-chevron" />
-      </button>
 
       <div
         v-if="isMessageNavigationOpen"
@@ -5557,6 +5544,9 @@ async function loadMoreBelow(): Promise<void> {
 defineExpose({
   jumpToLatest,
   revealMessage,
+  toggleMessageNavigation,
+  isMessageNavigationOpen,
+  messageNavigationCountLabel,
 })
 
 function bindPendingImageHandlers(): void {

@@ -504,6 +504,18 @@
               class="content-header-cwd-explorer"
               :cwd="directoryCwd"
             />
+            <button
+              v-if="canShowUserMessageNav"
+              class="content-header-message-nav"
+              type="button"
+              :class="{ 'is-active': threadConversationRef?.isMessageNavigationOpen }"
+              :title="t('User messages')"
+              :aria-expanded="threadConversationRef?.isMessageNavigationOpen"
+              @click="threadConversationRef?.toggleMessageNavigation()"
+            >
+              <IconTablerMessage class="content-header-message-nav-icon" />
+              <span v-if="threadConversationRef?.messageNavigationCountLabel" class="content-header-message-nav-count">{{ threadConversationRef.messageNavigationCountLabel }}</span>
+            </button>
             <HeaderGitBranchDropdown
               v-if="canShowContentHeaderBranchDropdown"
               class="content-header-branch-dropdown"
@@ -1087,6 +1099,7 @@ import IconTablerBolt from './components/icons/IconTablerBolt.vue'
 import IconTablerChevronLeft from './components/icons/IconTablerChevronLeft.vue'
 import IconTablerChevronRight from './components/icons/IconTablerChevronRight.vue'
 import IconTablerCopy from './components/icons/IconTablerCopy.vue'
+import IconTablerMessage from './components/icons/IconTablerMessage.vue'
 import IconTablerSearch from './components/icons/IconTablerSearch.vue'
 import IconTablerSettings from './components/icons/IconTablerSettings.vue'
 import IconTablerTerminal from './components/icons/IconTablerTerminal.vue'
@@ -1440,7 +1453,7 @@ function prepareFeedbackLink(event: MouseEvent, message?: string): void {
 }
 const homeThreadComposerRef = ref<ThreadComposerExposed | null>(null)
 const threadComposerRef = ref<ThreadComposerExposed | null>(null)
-const threadConversationRef = ref<{ jumpToLatest: () => void; revealMessage: (messageId: string) => Promise<boolean> } | null>(null)
+const threadConversationRef = ref<{ jumpToLatest: () => void; revealMessage: (messageId: string) => Promise<boolean>; toggleMessageNavigation: () => void; isMessageNavigationOpen: boolean; messageNavigationCountLabel: string } | null>(null)
 const threadSearchInputRef = ref<HTMLInputElement | null>(null)
 const homeTerminalPanelRef = ref<ThreadTerminalPanelExposed | null>(null)
 const threadTerminalPanelRef = ref<ThreadTerminalPanelExposed | null>(null)
@@ -1895,6 +1908,7 @@ const directoryCwd = computed(() => selectedThread.value?.cwd?.trim() ?? newThre
 const threadLinks = computed(() => (hasLoadedFullHistory.value ? extractThreadLinks(messageNavigationMessages.value, directoryCwd.value) : []))
 const canShowThreadLinksDropdown = computed(() => route.name === 'thread' && selectedThreadId.value.length > 0)
 const canShowCwdExplorer = computed(() => route.name === 'thread' && selectedThreadId.value.length > 0 && directoryCwd.value.length > 0)
+const canShowUserMessageNav = computed(() => route.name === 'thread' && selectedThreadId.value.length > 0)
 function onEnsureThreadLinksLoaded(): void {
   const threadId = selectedThreadId.value
   if (threadId) void loadFullHistoryMessages(threadId)
@@ -5212,6 +5226,34 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 }
 
 .content-header-terminal-command :deep(.composer-dropdown-prefix-icon),
+.content-header-message-nav {
+  @apply inline-flex min-h-7 items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-2.5 py-1.5 text-xs text-zinc-700 outline-none transition hover:bg-zinc-50;
+}
+
+.content-header-message-nav.is-active {
+  @apply border-zinc-900 bg-zinc-900 text-white hover:bg-zinc-800;
+}
+
+.content-header-message-nav-icon {
+  @apply h-4 w-4 shrink-0;
+}
+
+.content-header-message-nav-count {
+  @apply inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-zinc-100 px-1 text-[10px] leading-none text-zinc-500;
+}
+
+:global(:root.dark .content-header-message-nav) {
+  @apply border-zinc-700 bg-zinc-900 text-zinc-200 hover:bg-zinc-800;
+}
+
+:global(:root.dark .content-header-message-nav.is-active) {
+  @apply border-zinc-100 bg-zinc-100 text-zinc-900;
+}
+
+:global(:root.dark .content-header-message-nav-count) {
+  @apply bg-zinc-800 text-zinc-400;
+}
+
 .content-header-branch-dropdown :deep(.composer-dropdown-prefix-icon) {
   @apply h-4 w-4 text-zinc-600;
 }
