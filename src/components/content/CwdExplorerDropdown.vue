@@ -101,7 +101,7 @@ const entriesByPath = ref<Record<string, LocalEntry[]>>({})
 const loadingPaths = ref<Set<string>>(new Set())
 const errorByPath = ref<Record<string, string>>({})
 const expanded = ref<Set<string>>(new Set())
-const showHidden = ref(false)
+const showHidden = ref(true)
 
 const triggerTitle = computed(() => props.cwd ? `Browse ${props.cwd}` : 'Browse cwd')
 const rootEntries = computed(() => entriesByPath.value[props.cwd] ?? [])
