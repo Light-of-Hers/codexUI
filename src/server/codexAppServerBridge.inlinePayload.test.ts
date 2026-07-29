@@ -414,6 +414,48 @@ describe('session model state recovery', () => {
     })
   })
 
+  it('uses the latest thread settings provider when turn context omits it', () => {
+    const state = buildSessionModelState([
+      JSON.stringify({
+        type: 'session_meta',
+        payload: {
+          model_provider: 'super_relay',
+        },
+      }),
+      JSON.stringify({
+        type: 'event_msg',
+        payload: {
+          type: 'thread_settings_applied',
+          thread_settings: {
+            model: 'gpt-5.6-terra',
+            model_provider_id: 'rustcat',
+            reasoning_effort: 'xhigh',
+          },
+        },
+      }),
+      JSON.stringify({
+        type: 'turn_context',
+        payload: {
+          turn_id: 'turn-2',
+          model: 'gpt-5.6-terra',
+          collaboration_mode: {
+            mode: 'default',
+            settings: {
+              model: 'gpt-5.6-terra',
+              reasoning_effort: 'xhigh',
+            },
+          },
+        },
+      }),
+    ].join('\n'))
+
+    expect(state).toEqual({
+      model: 'gpt-5.6-terra',
+      modelProvider: 'rustcat',
+      reasoningEffort: 'xhigh',
+    })
+  })
+
   it('keeps explicit lifecycle model state ahead of recovered session metadata', () => {
     const result = mergeExplicitModelStateIntoThreadResult({
       model: 'ark-code-latest',

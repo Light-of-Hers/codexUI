@@ -385,6 +385,27 @@ export function buildSessionModelState(sessionLogRaw: string): SessionRecoveredM
     reasoningEffort: '',
   }
 
+  const applySettings = (settings: Record<string, unknown>): void => {
+    const collaborationMode = asRecord(settings.collaboration_mode)
+    const collaborationSettings = asRecord(collaborationMode?.settings)
+
+    state.model = readNonEmptyString(settings.model)
+      || readNonEmptyString(collaborationSettings?.model)
+      || state.model
+    state.modelProvider = readNonEmptyString(settings.model_provider_id)
+      || readNonEmptyString(settings.model_provider)
+      || readNonEmptyString(settings.modelProvider)
+      || readNonEmptyString(collaborationSettings?.model_provider)
+      || readNonEmptyString(collaborationSettings?.modelProvider)
+      || state.modelProvider
+    state.reasoningEffort = normalizeSessionReasoningEffort(settings.effort)
+      || normalizeSessionReasoningEffort(settings.reasoning_effort)
+      || normalizeSessionReasoningEffort(settings.reasoningEffort)
+      || normalizeSessionReasoningEffort(collaborationSettings?.reasoning_effort)
+      || normalizeSessionReasoningEffort(collaborationSettings?.reasoningEffort)
+      || state.reasoningEffort
+  }
+
   for (const line of sessionLogRaw.split('\n')) {
     if (!line.trim()) continue
     let row: Record<string, unknown> | null = null
@@ -404,24 +425,14 @@ export function buildSessionModelState(sessionLogRaw: string): SessionRecoveredM
       continue
     }
 
-    if (row.type !== 'turn_context') continue
-    const collaborationMode = asRecord(payloadRecord.collaboration_mode)
-    const collaborationSettings = asRecord(collaborationMode?.settings)
+    if (row.type === 'event_msg' && payloadRecord.type === 'thread_settings_applied') {
+      const threadSettings = asRecord(payloadRecord.thread_settings)
+      if (threadSettings) applySettings(threadSettings)
+      continue
+    }
 
-    state.model = readNonEmptyString(payloadRecord.model)
-      || readNonEmptyString(collaborationSettings?.model)
-      || state.model
-    state.modelProvider = readNonEmptyString(payloadRecord.model_provider)
-      || readNonEmptyString(payloadRecord.modelProvider)
-      || readNonEmptyString(collaborationSettings?.model_provider)
-      || readNonEmptyString(collaborationSettings?.modelProvider)
-      || state.modelProvider
-    state.reasoningEffort = normalizeSessionReasoningEffort(payloadRecord.effort)
-      || normalizeSessionReasoningEffort(payloadRecord.reasoning_effort)
-      || normalizeSessionReasoningEffort(payloadRecord.reasoningEffort)
-      || normalizeSessionReasoningEffort(collaborationSettings?.reasoning_effort)
-      || normalizeSessionReasoningEffort(collaborationSettings?.reasoningEffort)
-      || state.reasoningEffort
+    if (row.type !== 'turn_context') continue
+    applySettings(payloadRecord)
   }
 
   return state

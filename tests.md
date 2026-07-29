@@ -7604,13 +7604,14 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Steps
 1. Clear the browser's `codex-web-local.selected-model-by-context.v1` and `codex-web-local.provider-by-context.v1` entries, then reload the app.
-2. Open the historical thread and confirm its model/provider reflect the latest persisted rollout settings rather than the active runtime default.
+2. Open a historical thread whose latest provider is represented by `thread_settings_applied` while its subsequent `turn_context` omits a provider, then confirm its model/provider reflect those latest persisted settings rather than the session's initial provider or the active runtime default.
 3. While a turn is running in that thread, submit a follow-up using `Steer`.
 4. Confirm the follow-up remains on the restored provider/model and does not insert a model-switch message.
 5. Repeat steps 2-4 in light theme and dark theme.
 
 #### Expected Results
 - A resume with no browser-cached selection performs one metadata-only `thread/read`, then resumes with the recovered model and provider.
+- Provider recovery uses the latest `thread_settings_applied` record when the rollout's `turn_context` does not repeat its provider.
 - `Steer` reuses the provider recovered by resume.
 - Threads with an existing cached model or provider do not perform the additional metadata read.
 - Light and dark theme rendering is unchanged.
@@ -7618,6 +7619,7 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Performance Audit
 - The recovery read is conditional on both model and provider being absent, requests `includeTurns: false`, and occurs only before a required resume. Normal cached resumes keep their existing request count.
 - The `thread/read` result is already enriched from the rollout by the bridge's bounded session-state cache, so recovery does not load full turns or add an unbounded fanout.
+- Reading `thread_settings_applied` adds constant-time field extraction to the existing one-pass, cached session-log parse; it adds no RPCs, filesystem reads, or cache invalidations.
 
 #### Rollback/Cleanup
 - Restore the two localStorage entries or reload the app after completing the check.
