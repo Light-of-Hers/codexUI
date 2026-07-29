@@ -301,7 +301,7 @@ onBeforeUnmount(() => {
 }
 
 .thread-links-row {
-  @apply flex min-w-0 items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100;
+  @apply flex w-max min-w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100;
 }
 
 .thread-links-web-row {
