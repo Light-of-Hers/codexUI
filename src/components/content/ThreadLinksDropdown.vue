@@ -269,7 +269,7 @@ onBeforeUnmount(() => {
 }
 
 .thread-links-menu {
-  @apply w-96 max-w-[calc(100vw-1.5rem)] rounded-xl border border-zinc-200 bg-white p-1 shadow-lg;
+  @apply w-[36rem] max-w-[calc(100vw-1.5rem)] rounded-xl border border-zinc-200 bg-white p-1 shadow-lg;
 }
 
 .thread-links-search-wrap {
