@@ -269,7 +269,7 @@ onBeforeUnmount(() => {
 }
 
 .thread-links-menu {
-  @apply w-[36rem] max-w-[calc(100vw-1.5rem)] rounded-xl border border-zinc-200 bg-white p-1 shadow-lg;
+  @apply w-96 max-w-[calc(100vw-1.5rem)] rounded-xl border border-zinc-200 bg-white p-1 shadow-lg;
 }
 
 .thread-links-search-wrap {
@@ -285,7 +285,7 @@ onBeforeUnmount(() => {
 }
 
 .thread-links-body {
-  @apply max-h-[22rem] overflow-y-auto;
+  @apply max-h-[22rem] overflow-auto;
 }
 
 .thread-links-loading {
@@ -317,7 +317,7 @@ onBeforeUnmount(() => {
 }
 
 .thread-links-row-label {
-  @apply min-w-0 flex-1 truncate font-mono text-xs;
+  @apply shrink-0 font-mono text-xs whitespace-nowrap;
 }
 
 .thread-links-row-label :global(mark) {
