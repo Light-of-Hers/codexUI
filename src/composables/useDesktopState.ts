@@ -5484,6 +5484,21 @@ export function useDesktopState() {
           void applyFallbackModelSelection()
         }
       }
+      // When codex gives up retrying (willRetry: false), the turn has effectively
+      // terminated even though no turn/completed notification was emitted.
+      // Clear the in-progress state so the UI stops showing "Thinking".
+      if (errorThreadId && !notificationErrorState.transient) {
+        setThreadInProgress(errorThreadId, false)
+        setTurnActivityForThread(errorThreadId, null)
+        if (activeTurnIdByThreadId.value[errorThreadId]) {
+          activeTurnIdByThreadId.value = omitKey(activeTurnIdByThreadId.value, errorThreadId)
+        }
+        if (activeTurnProviderIdByThreadId.value[errorThreadId]) {
+          activeTurnProviderIdByThreadId.value = omitKey(activeTurnProviderIdByThreadId.value, errorThreadId)
+        }
+        clearPendingTurnRequest(errorThreadId)
+        scheduleQueueStateRefresh(errorThreadId)
+      }
     }
 
     const planUpdate = readPlanUpdate(notification)

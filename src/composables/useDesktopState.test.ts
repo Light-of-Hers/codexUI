@@ -2589,6 +2589,36 @@ describe('live turn rendering', () => {
     expect(state.selectedLiveOverlay.value).toBeNull()
   })
 
+  it('clears running state when codex gives up retrying (error willRetry=false)', async () => {
+    const { state, notify } = await createLiveStateHarness()
+
+    notify(notification('turn/started', {
+      threadId: 'thread-a',
+      turn: { id: 'turn-1', threadId: 'thread-a', startedAt: '2026-05-23T00:00:00.000Z' },
+    }))
+    expect(state.selectedThreadInProgress.value).toBe(true)
+    expect(state.selectedLiveOverlay.value?.activityLabel).toBe('Thinking')
+
+    // A retryable error must NOT clear the running state.
+    notify(notification('error', {
+      threadId: 'thread-a',
+      turnId: 'turn-1',
+      willRetry: true,
+      error: { message: 'Reconnecting... 1/5' },
+    }))
+    expect(state.selectedThreadInProgress.value).toBe(true)
+
+    // A terminal error (willRetry=false) without a turn/completed must clear it.
+    notify(notification('error', {
+      threadId: 'thread-a',
+      turnId: 'turn-1',
+      willRetry: false,
+      error: { message: 'agent process exited with status exit status: 1' },
+    }))
+
+    expect(state.selectedThreadInProgress.value).toBe(false)
+  })
+
   it('exposes selected running state even before the thread is listed', () => {
     installTestWindow()
     const notificationHandlers: Array<(notification: RpcNotification) => void> = []
