@@ -7603,23 +7603,26 @@ Markdown files opened through the local editor expose a preview button that rend
 - Light and dark themes are both available from Settings.
 
 #### Steps
-1. Clear the browser's `codex-web-local.selected-model-by-context.v1` and `codex-web-local.provider-by-context.v1` entries, then reload the app.
-2. Open a historical thread whose latest provider is represented by `thread_settings_applied` while its subsequent `turn_context` omits a provider, then confirm its model/provider reflect those latest persisted settings rather than the session's initial provider or the active runtime default.
-3. While a turn is running in that thread, submit a follow-up using `Steer`.
-4. Confirm the follow-up remains on the restored provider/model and does not insert a model-switch message.
-5. Repeat steps 2-4 in light theme and dark theme.
+1. In browser localStorage, seed this historical thread's `codex-web-local.selected-model-by-context.v1` / `codex-web-local.provider-by-context.v1` entries with a stale Ark Coding Plan model/provider, then reload the app.
+2. Open a historical thread whose latest provider is represented by `thread_settings_applied` while its subsequent `turn_context` omits a provider, then confirm its model/provider reflect those latest persisted settings rather than the stale Ark cache, the session's initial provider, or the active runtime default.
+3. Switch to a provider deliberately in the composer and send a message; confirm that intentional selection is used for that send.
+4. While a turn is running in the restored thread, submit a follow-up using `Steer`.
+5. Confirm the follow-up remains on the restored provider/model and does not insert a model-switch message.
+6. Repeat steps 2-5 in light theme and dark theme.
 
 #### Expected Results
-- A resume with no browser-cached selection performs one metadata-only `thread/read`, then resumes with the recovered model and provider.
+- Navigation-time resume does not replay browser-cached model/provider arguments; it performs one metadata-only `thread/read`, then resumes with the recovered model and provider.
 - Provider recovery uses the latest `thread_settings_applied` record when the rollout's `turn_context` does not repeat its provider.
+- Recovered non-empty provider state replaces a stale per-thread browser cache entry, so Ark Coding Plan cannot become sticky after a provider switch.
+- A deliberate composer selection still supplies its chosen provider/model when sending.
 - `Steer` reuses the provider recovered by resume.
-- Threads with an existing cached model or provider do not perform the additional metadata read.
 - Light and dark theme rendering is unchanged.
 
 #### Performance Audit
-- The recovery read is conditional on both model and provider being absent, requests `includeTurns: false`, and occurs only before a required resume. Normal cached resumes keep their existing request count.
-- The `thread/read` result is already enriched from the rollout by the bridge's bounded session-state cache, so recovery does not load full turns or add an unbounded fanout.
-- Reading `thread_settings_applied` adds constant-time field extraction to the existing one-pass, cached session-log parse; it adds no RPCs, filesystem reads, or cache invalidations.
+- Each required navigation/runtime resume adds one bounded, metadata-only `thread/read` with `includeTurns: false` before its existing `thread/resume`; cached-first rendering still returns the current thread view immediately and performs the synchronization in the background.
+- Profile baseline recorded on July 30, 2026 for a local historical-thread route: 8.57 s total, 248.4 KB API payload, one `thread/resume`, and eight `thread/read` requests. The changed path contributes exactly the single pre-resume metadata read; the other reads come from the existing thread/history/index loading paths. There is no pre-change profile artifact for that route, so the count is recorded for follow-up rather than claimed as an improvement.
+- The read result is enriched from the rollout by the bridge's bounded session-state cache, so recovery does not load full turns or add an unbounded fanout.
+- Reading `thread_settings_applied` adds constant-time field extraction to the existing one-pass, cached session-log parse; it adds no extra RPCs beyond the one metadata read, filesystem reads, or cache invalidations.
 
 #### Rollback/Cleanup
 - Restore the two localStorage entries or reload the app after completing the check.

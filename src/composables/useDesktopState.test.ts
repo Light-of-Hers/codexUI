@@ -1571,12 +1571,50 @@ describe('session composer model state', () => {
 
     await state.loadMessages('thread-a')
 
-    expect(gatewayMocks.resumeThread).toHaveBeenCalledWith('thread-a', undefined, undefined)
+    expect(gatewayMocks.resumeThread).toHaveBeenCalledWith('thread-a')
     expect(state.readModelIdForThread('thread-a')).toBe('ark-code-latest')
     expect(state.selectedModelId.value).toBe('ark-code-latest')
     expect(state.selectedProvider.value).toBe('moon')
     expect(state.readReasoningEffortForThread('thread-a')).toBe('high')
     expect(state.selectedReasoningEffort.value).toBe('high')
+  })
+
+  it('restores persisted provider state instead of replaying stale Ark browser cache on navigation', async () => {
+    installTestWindow({
+      'codex-web-local.selected-model-by-context.v1': JSON.stringify({
+        'thread-a': 'ark-code-latest',
+      }),
+      'codex-web-local.provider-by-context.v1': JSON.stringify({
+        'thread-a': 'ark',
+      }),
+      'codex-web-local.reasoning-effort-by-context.v1': JSON.stringify({
+        'thread-a': 'xhigh',
+      }),
+    })
+    gatewayMocks.resumeThread.mockResolvedValue({
+      model: 'gpt-5.6-terra',
+      modelProvider: 'rustcat',
+      reasoningEffort: 'xhigh',
+      messages: [],
+      inProgress: false,
+      activeTurnId: '',
+      hasMoreOlder: false,
+      turnIndexByTurnId: {},
+    })
+
+    const state = useDesktopState()
+    state.primeSelectedThread('thread-a')
+
+    await state.loadMessages('thread-a')
+
+    // Navigation must let resumeThread recover the rollout state instead of
+    // sending the stale local Ark selection back to the server.
+    expect(gatewayMocks.resumeThread).toHaveBeenCalledWith('thread-a')
+    expect(state.readModelIdForThread('thread-a')).toBe('gpt-5.6-terra')
+    expect(state.selectedProvider.value).toBe('rustcat')
+    expect(JSON.parse(window.localStorage.getItem('codex-web-local.provider-by-context.v1') ?? '{}')).toEqual({
+      'thread-a': 'rustcat',
+    })
   })
 
   it('does not let provider refresh overwrite an existing valid provider model or reasoning effort', async () => {
@@ -1669,8 +1707,8 @@ describe('session composer model state', () => {
         turnIndexByTurnId: {},
       })
       .mockResolvedValueOnce({
-        model: 'ark-code-latest',
-        modelProvider: 'moon',
+        model: 'gpt-5.5',
+        modelProvider: 'rustcat',
         reasoningEffort: 'xhigh',
         messages: [],
         inProgress: false,
@@ -1689,7 +1727,7 @@ describe('session composer model state', () => {
     await state.refreshAncillaryState({ providerChanged: true, includeProviderModels: true })
     await state.sendMessageToSelectedThread('use codex now')
 
-    expect(gatewayMocks.resumeThread).toHaveBeenNthCalledWith(1, 'thread-a', 'ark-code-latest', 'moon')
+    expect(gatewayMocks.resumeThread).toHaveBeenNthCalledWith(1, 'thread-a')
     expect(gatewayMocks.resumeThread).toHaveBeenNthCalledWith(2, 'thread-a', 'gpt-5.5', 'rustcat')
     expect(gatewayMocks.startThreadTurn).toHaveBeenCalledWith(
       'thread-a',
@@ -1710,8 +1748,8 @@ describe('session composer model state', () => {
 
     await state.loadMessages('thread-a', { force: true })
 
-    expect(gatewayMocks.resumeThread).toHaveBeenNthCalledWith(3, 'thread-a', 'gpt-5.5', 'rustcat')
-    expect(state.selectedProvider.value).toBe('codex')
+    expect(gatewayMocks.resumeThread).toHaveBeenNthCalledWith(3, 'thread-a')
+    expect(state.selectedProvider.value).toBe('rustcat')
     expect(state.readModelIdForThread('thread-a')).toBe('gpt-5.5')
   })
 
@@ -1840,7 +1878,7 @@ describe('session composer model state', () => {
       ])
       gatewayMocks.resumeThread.mockImplementation(async (_threadId: unknown, model: unknown, provider: unknown) => ({
         model: String(model ?? scenario.initialModel),
-        modelProvider: String(provider ?? ''),
+        modelProvider: String(provider ?? scenario.initialRpcProvider),
         reasoningEffort: 'xhigh',
         messages: [],
         inProgress: false,
@@ -1862,12 +1900,7 @@ describe('session composer model state', () => {
       }
       await state.sendMessageToSelectedThread(`use ${scenario.targetProvider} now`)
 
-      expect(gatewayMocks.resumeThread).toHaveBeenNthCalledWith(
-        1,
-        'thread-a',
-        scenario.initialModel,
-        scenario.initialRpcProvider,
-      )
+      expect(gatewayMocks.resumeThread).toHaveBeenNthCalledWith(1, 'thread-a')
       expect(gatewayMocks.resumeThread).toHaveBeenNthCalledWith(
         2,
         'thread-a',

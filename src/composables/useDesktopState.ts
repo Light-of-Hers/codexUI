@@ -2255,7 +2255,13 @@ export function useDesktopState() {
     const explicitProvider = Object.prototype.hasOwnProperty.call(selectedProviderByContext.value, providerContextId)
       ? normalizeProviderId(selectedProviderByContext.value[providerContextId])
       : ''
-    if (explicitProvider && (!incomingProvider || explicitProvider !== incomingProvider)) return
+    // A non-empty provider from thread/resume is the latest state recovered
+    // from the rollout.  It must replace an old browser cache entry: that
+    // cache may have been written while a different provider runtime was
+    // active, and feeding it back into the next resume would otherwise make
+    // the stale provider permanently win.  Preserve the local choice only
+    // when the backend supplied no provider at all.
+    if (explicitProvider && !incomingProvider) return
 
     setThreadModelId(normalizedThreadId, modelId)
 
@@ -6230,12 +6236,12 @@ export function useDesktopState() {
           return
         }
 
+        // Do not seed a navigation-time resume with browser-cached model
+        // settings.  They can predate a provider switch in the persisted
+        // rollout; resumeThread performs a metadata-only thread/read first
+        // and resumes on that recovered provider instead.
         const resumedThread = needsResume
-          ? await resumeThread(
-              threadId,
-              readModelIdForThread(threadId) || undefined,
-              readThreadRpcProviderId(threadId) || undefined,
-            )
+          ? await resumeThread(threadId)
           : null
         const detail = resumedThread ?? await getThreadDetail(threadId)
 
