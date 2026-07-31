@@ -1814,6 +1814,7 @@ export function useDesktopState() {
     model: string
     modelProvider: StoredProviderId
     reasoningEffort: ReasoningEffort | ''
+    modelSelectionOverride: boolean
   }
   type PendingTurnRequest = {
     text: string
@@ -2223,7 +2224,11 @@ export function useDesktopState() {
     }
   }
 
-  function setSelectedReasoningEffortForThread(threadId: string, effort: ReasoningEffort | ''): void {
+  function setSelectedReasoningEffortForThread(
+    threadId: string,
+    effort: ReasoningEffort | '',
+    invalidateResume = true,
+  ): void {
     const normalizedEffort = normalizeStoredReasoningEffort(effort)
     if (effort && !normalizedEffort) return
 
@@ -2237,6 +2242,9 @@ export function useDesktopState() {
       selectedReasoningEffort.value = readReasoningEffortForThread(selectedThreadId.value)
     }
 
+    if (invalidateResume && toThreadContextId(threadId) !== NEW_THREAD_COLLABORATION_MODE_CONTEXT) {
+      invalidateThreadResumeState(threadId)
+    }
     saveSelectedReasoningEffortMap(selectedReasoningEffortByContext.value)
   }
 
@@ -2267,7 +2275,7 @@ export function useDesktopState() {
 
     const normalizedReasoningEffort = normalizeStoredReasoningEffort(reasoningEffort)
     if (normalizedReasoningEffort) {
-      setSelectedReasoningEffortForThread(normalizedThreadId, normalizedReasoningEffort)
+      setSelectedReasoningEffortForThread(normalizedThreadId, normalizedReasoningEffort, false)
     }
 
     // When the thread has an explicit modelProvider (non-empty), use it directly.
@@ -5878,6 +5886,7 @@ export function useDesktopState() {
         model: message.model,
         modelProvider: toStoredRpcModelProviderId(message.modelProvider, activeCodexProviderId.value),
         reasoningEffort: message.reasoningEffort,
+        modelSelectionOverride: message.modelSelectionOverride,
       }))
     }
     return next
@@ -5893,6 +5902,7 @@ export function useDesktopState() {
         model: typeof message.model === 'string' ? message.model.trim() : readModelIdForThread(normalizedThreadId),
         modelProvider: normalizeStoredProviderId(message.modelProvider),
         reasoningEffort: normalizeStoredReasoningEffort(message.reasoningEffort),
+        modelSelectionOverride: message.modelSelectionOverride === true,
       }))
     }
     return next
@@ -6872,6 +6882,10 @@ export function useDesktopState() {
         model: readModelIdForThread(threadId),
         modelProvider: readThreadRpcProviderId(threadId),
         reasoningEffort: readReasoningEffortForThread(threadId),
+        // A queue normally continues with the persisted thread settings when
+        // it drains. Preserve the snapshot only after the user intentionally
+        // changed composer settings and invalidated the current resume state.
+        modelSelectionOverride: shouldResumeThread(threadId),
       })
       queuedMessagesByThreadId.value = {
         ...queuedMessagesByThreadId.value,

@@ -1922,6 +1922,94 @@ describe('backend queue scheduling', () => {
     }
   })
 
+  it('recovers the latest session provider instead of replaying a legacy queued snapshot', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-queue-provider-recovery-'))
+    const sessionPath = join(tempDir, 'session.jsonl')
+    vi.stubEnv('CODEX_HOME', tempDir)
+    await writeFile(sessionPath, [
+      JSON.stringify({
+        type: 'session_meta',
+        payload: { model_provider: 'moon' },
+      }),
+      JSON.stringify({
+        type: 'event_msg',
+        payload: {
+          type: 'thread_settings_applied',
+          thread_settings: {
+            model: 'gpt-5.6-terra',
+            model_provider_id: 'rustcat',
+            reasoning_effort: 'xhigh',
+          },
+        },
+      }),
+      JSON.stringify({
+        type: 'turn_context',
+        payload: {
+          turn_id: 'turn-1',
+          model: 'gpt-5.6-terra',
+        },
+      }),
+    ].join('\n'), 'utf8')
+    await writeFile(join(tempDir, '.codex-global-state.json'), JSON.stringify(queuedTurnState('continue on the restored runtime')), 'utf8')
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = []
+    const processor = new BackendQueueProcessor({
+      onNotification: () => () => undefined,
+      async rpc(method: string, params: Record<string, unknown>): Promise<unknown> {
+        calls.push({ method, params })
+        if (method === 'thread/read') {
+          return {
+            thread: {
+              id: 'thread-1',
+              path: sessionPath,
+              status: { type: 'idle' },
+              turns: [{ id: 'turn-1', status: 'completed' }],
+            },
+          }
+        }
+        return {}
+      },
+    } as never)
+
+    try {
+      await processor.processThreadQueue('thread-1')
+
+      expect(calls).toEqual([
+        { method: 'thread/read', params: { threadId: 'thread-1', includeTurns: true } },
+        {
+          method: 'thread/resume',
+          params: {
+            threadId: 'thread-1',
+            persistExtendedHistory: true,
+            model: 'gpt-5.6-terra',
+            modelProvider: 'rustcat',
+          },
+        },
+        {
+          method: 'turn/start',
+          params: {
+            threadId: 'thread-1',
+            input: [{ type: 'text', text: 'continue on the restored runtime' }],
+            model: 'gpt-5.6-terra',
+            modelProvider: 'rustcat',
+            effort: 'xhigh',
+            collaborationMode: {
+              mode: 'default',
+              settings: {
+                model: 'gpt-5.6-terra',
+                reasoning_effort: 'xhigh',
+                developer_instructions: null,
+                model_provider: 'rustcat',
+              },
+            },
+          },
+        },
+      ])
+    } finally {
+      processor.dispose()
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
   it('detects interrupted idle turns that were not intentionally stopped', () => {
     const snapshot = shouldAutoContinueInterruptedThreadFromThreadRead({
       thread: {
@@ -2069,6 +2157,7 @@ describe('backend queue scheduling', () => {
             model: string
             modelProvider: string
             reasoningEffort: 'xhigh'
+            modelSelectionOverride: boolean
           }
         }) => Promise<void>
       }).startQueuedTurn({
@@ -2083,6 +2172,7 @@ describe('backend queue scheduling', () => {
           model: 'gpt-5.5-medium',
           modelProvider: 'cursor',
           reasoningEffort: 'xhigh',
+          modelSelectionOverride: true,
         },
       })
 

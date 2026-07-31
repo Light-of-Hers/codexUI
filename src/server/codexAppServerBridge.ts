@@ -5478,6 +5478,7 @@ type StoredQueuedMessage = {
   model: string
   modelProvider: string
   reasoningEffort: ReasoningEffort | ''
+  modelSelectionOverride: boolean
 }
 
 type ThreadQueueState = Record<string, StoredQueuedMessage[]>
@@ -5537,6 +5538,7 @@ function normalizeStoredQueuedMessage(value: unknown): StoredQueuedMessage | nul
     model: readNonEmptyString(record.model),
     modelProvider: readNonEmptyString(record.modelProvider) || readNonEmptyString(record.model_provider),
     reasoningEffort: normalizeReasoningEffort(record.reasoningEffort ?? record.reasoning_effort),
+    modelSelectionOverride: record.modelSelectionOverride === true || record.model_selection_override === true,
   }
 }
 
@@ -5779,6 +5781,7 @@ ${escapeHeartbeatXmlText(automation.prompt)}
     model: '',
     modelProvider: '',
     reasoningEffort: '',
+    modelSelectionOverride: false,
   }
 }
 
@@ -7355,8 +7358,8 @@ export class BackendQueueProcessor {
     if (this.processingThreadIds.has(threadId)) return
     this.processingThreadIds.add(threadId)
     try {
-      const canStart = await this.canStartQueuedTurn(threadId)
-      if (!canStart) {
+      const recoveredModelState = await this.readQueuedTurnRecoveryState(threadId)
+      if (!recoveredModelState) {
         if (await this.hasQueuedTurns(threadId)) {
           this.scheduleThreadQueueDrain(threadId)
         }
@@ -7365,7 +7368,7 @@ export class BackendQueueProcessor {
       const next = await this.popNextQueuedTurn(threadId)
       if (!next) return
       try {
-        await this.startQueuedTurn(next)
+        await this.startQueuedTurn(next, recoveredModelState)
         if (await this.hasQueuedTurns(threadId)) {
           this.scheduleThreadQueueDrain(threadId)
         }
@@ -7609,32 +7612,33 @@ export class BackendQueueProcessor {
     return Array.isArray(queue) && queue.length > 0
   }
 
-  private async canStartQueuedTurn(threadId: string): Promise<boolean> {
-    const response = asRecord(await this.appServer.rpc('thread/read', { threadId, includeTurns: true }))
+  private async readQueuedTurnRecoveryState(threadId: string): Promise<SessionRecoveredModelState | null> {
+    const rawResponse = await this.appServer.rpc('thread/read', { threadId, includeTurns: true })
+    const response = asRecord(await mergeSessionModelStateIntoThreadResult(rawResponse))
     const thread = asRecord(response?.thread)
-    if (!thread) return false
+    if (!thread) return null
 
     const status = asRecord(thread.status)
     const statusType = readProtocolToken(status?.type)
-    if (isRunningProtocolToken(statusType)) return false
+    if (isRunningProtocolToken(statusType)) return null
 
     const turns = Array.isArray(thread.turns) ? thread.turns : []
-    if (turns.some((turn) => isRunningProtocolToken(readProtocolToken(asRecord(turn)?.status)))) return false
+    if (turns.some((turn) => isRunningProtocolToken(readProtocolToken(asRecord(turn)?.status)))) return null
 
     const latestTurn = asRecord(turns.at(-1))
-    if (!latestTurn) return true
+    if (!latestTurn) return readThreadResultModelState(response)
 
     const latestStatus = readProtocolToken(latestTurn.status)
     if (latestStatus === 'interrupted') {
       await this.intentionalInterruptStateReady
-      if (this.intentionalInterruptThreadIds.has(threadId)) return true
+      if (this.intentionalInterruptThreadIds.has(threadId)) return readThreadResultModelState(response)
       const latestTurnId = readNonEmptyString(latestTurn.id)
-      if (latestTurnId && this.intentionalInterruptTurnIds.has(latestTurnId)) return true
-      return !isInterruptedTurnAutoContinueEnabled()
+      if (latestTurnId && this.intentionalInterruptTurnIds.has(latestTurnId)) return readThreadResultModelState(response)
+      return isInterruptedTurnAutoContinueEnabled() ? null : readThreadResultModelState(response)
     }
-    if (isTerminalProtocolToken(latestStatus)) return true
+    if (isTerminalProtocolToken(latestStatus)) return readThreadResultModelState(response)
 
-    return turnHasAssistantResult(latestTurn)
+    return turnHasAssistantResult(latestTurn) ? readThreadResultModelState(response) : null
   }
 
   private async popNextQueuedTurn(threadId: string): Promise<BackendQueuedTurn | null> {
@@ -7720,6 +7724,7 @@ export class BackendQueueProcessor {
 
   private async buildQueuedTurnParams(
     turn: BackendQueuedTurn,
+    modelState: SessionRecoveredModelState,
     appServer: AppServerProcess = this.appServer,
   ): Promise<Record<string, unknown>> {
     const localImageAttachments: StoredQueuedMessage['fileAttachments'] = []
@@ -7769,28 +7774,34 @@ export class BackendQueueProcessor {
       const queuedModel = readNonEmptyString(turn.message.model)
       const queuedModelProvider = readNonEmptyString(turn.message.modelProvider)
       const queuedReasoningEffort = normalizeReasoningEffort(turn.message.reasoningEffort)
+      const shouldUseQueuedSelection = turn.message.modelSelectionOverride === true
+      const model = shouldUseQueuedSelection ? queuedModel : modelState.model || queuedModel
+      const modelProvider = shouldUseQueuedSelection ? queuedModelProvider : modelState.modelProvider || queuedModelProvider
+      const reasoningEffort = shouldUseQueuedSelection
+        ? queuedReasoningEffort
+        : modelState.reasoningEffort || queuedReasoningEffort
       const settings = await this.resolveCollaborationModeSettings(
         turn.message.collaborationMode,
-        queuedModel,
-        queuedReasoningEffort,
+        model,
+        reasoningEffort,
         appServer,
       )
-      if (queuedModel) {
-        params.model = queuedModel
+      if (model) {
+        params.model = model
       }
-      if (queuedModelProvider) {
-        params.modelProvider = queuedModelProvider
+      if (modelProvider) {
+        params.modelProvider = modelProvider
       }
-      if (queuedReasoningEffort) {
-        params.effort = queuedReasoningEffort
+      if (reasoningEffort) {
+        params.effort = reasoningEffort
       }
       const settingsRecord: Record<string, unknown> = {
         model: settings.model,
         reasoning_effort: settings.reasoningEffort,
         developer_instructions: null,
       }
-      if (queuedModelProvider) {
-        settingsRecord.model_provider = queuedModelProvider
+      if (modelProvider) {
+        settingsRecord.model_provider = modelProvider
       }
       params.collaborationMode = {
         mode: turn.message.collaborationMode,
@@ -7803,22 +7814,36 @@ export class BackendQueueProcessor {
     return params
   }
 
-  private async startQueuedTurn(turn: BackendQueuedTurn): Promise<void> {
+  private async startQueuedTurn(
+    turn: BackendQueuedTurn,
+    recoveredModelState: SessionRecoveredModelState = { model: '', modelProvider: '', reasoningEffort: '' },
+  ): Promise<void> {
     const resumeParams: Record<string, unknown> = {
       threadId: turn.threadId,
       persistExtendedHistory: true,
     }
     const queuedModel = readNonEmptyString(turn.message.model)
     const queuedModelProvider = readNonEmptyString(turn.message.modelProvider)
-    if (queuedModel) {
-      resumeParams.model = queuedModel
+    const shouldUseQueuedSelection = turn.message.modelSelectionOverride === true
+    const model = shouldUseQueuedSelection ? queuedModel : recoveredModelState.model || queuedModel
+    const modelProvider = shouldUseQueuedSelection
+      ? queuedModelProvider
+      : recoveredModelState.modelProvider || queuedModelProvider
+    if (model) {
+      resumeParams.model = model
     }
-    if (queuedModelProvider) {
-      resumeParams.modelProvider = queuedModelProvider
+    if (modelProvider) {
+      resumeParams.modelProvider = modelProvider
     }
     const queueAppServer = this.resolveAppServerForRpc('thread/resume', resumeParams)
     await queueAppServer.rpc('thread/resume', resumeParams)
-    const turnStartParams = await this.buildQueuedTurnParams(turn, queueAppServer)
+    const turnStartParams = await this.buildQueuedTurnParams(turn, {
+      model,
+      modelProvider,
+      reasoningEffort: shouldUseQueuedSelection
+        ? normalizeReasoningEffort(turn.message.reasoningEffort)
+        : recoveredModelState.reasoningEffort || normalizeReasoningEffort(turn.message.reasoningEffort),
+    }, queueAppServer)
     await this.resolveAppServerForRpc('turn/start', turnStartParams).rpc('turn/start', turnStartParams)
   }
 }

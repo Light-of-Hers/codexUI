@@ -7654,3 +7654,33 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - Use `Cancel` to discard any manual-test draft. Remove any test annotation inserted during the verification if it should not remain in the file.
+
+### Feature: Queued messages recover the current thread provider
+
+#### Prerequisites
+- App server is running from this repository.
+- A historical thread exists whose latest rollout settings use a non-default provider/model, and browser localStorage or an older queued item contains a different stale provider/model snapshot.
+- The thread can run a long enough turn to add a follow-up to the queue.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. In light theme, open the historical thread and start a long-running turn on its restored provider.
+2. While it is running, submit a follow-up with the composer configured for Queue without deliberately changing the provider or model.
+3. Let the active turn finish and wait for the queued message to start automatically.
+4. Confirm the queued turn remains on the provider/model recovered from the thread's latest persisted settings, rather than changing to the stale queued snapshot.
+5. Start another long-running turn, deliberately choose a different provider/model in the composer, queue a follow-up, and let it drain.
+6. Confirm this deliberate selection is honored for the queued follow-up.
+7. Switch to dark theme and repeat steps 1-6; confirm the queue rows, composer controls, and resulting conversation remain readable.
+
+#### Expected Results
+- Legacy queued messages without an explicit selection marker recover the current thread provider, model, and reasoning effort before `thread/resume` and `turn/start`.
+- A queued message changes provider only when the user deliberately changed the composer configuration before queueing it.
+- Queue order, automatic draining, and queued-message persistence continue to work in both light and dark themes.
+
+#### Performance Audit
+- The queue processor reuses its existing single `thread/read` eligibility check and enriches that response through the bounded session-model cache; it adds no RPC, polling loop, unbounded fanout, or browser payload.
+- The cache reads a session JSONL file only when its size or mtime changes. Once warm, provider recovery is an in-memory lookup plus constant-size field selection.
+- Browser profile on July 31, 2026 (`browser-runtime-profile-home-2026-07-31T04-53-04-640Z.json`) recorded 8.43 s total and 167.5 KB API payload. It reports seven existing `thread/read` calls during home-page startup, below the eight-call historical-thread baseline recorded above; the queued-drain path was not invoked by that startup profile and adds no independent read.
+
+#### Rollback/Cleanup
+- Delete any disposable queued messages or archive the manual-test thread. No browser-cache cleanup is required.

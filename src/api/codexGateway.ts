@@ -304,6 +304,7 @@ export type StoredQueuedMessage = {
   model?: string
   modelProvider?: string
   reasoningEffort?: ReasoningEffort | ''
+  modelSelectionOverride?: boolean
 }
 
 export type ThreadQueueState = Record<string, StoredQueuedMessage[]>
@@ -3127,6 +3128,7 @@ function normalizeStoredQueuedMessage(value: unknown): StoredQueuedMessage | nul
         ? record.model_provider.trim()
         : '',
     reasoningEffort: normalizeReasoningEffort(record.reasoningEffort ?? record.reasoning_effort),
+    modelSelectionOverride: record.modelSelectionOverride === true || record.model_selection_override === true,
   }
 }
 

@@ -385,6 +385,7 @@ describe('thread queue state', () => {
             model: 'ark-code-latest',
             model_provider: 'moon',
             reasoning_effort: 'xhigh',
+            model_selection_override: true,
           }],
         },
       }), {
@@ -402,6 +403,7 @@ describe('thread queue state', () => {
       model: 'ark-code-latest',
       modelProvider: 'moon',
       reasoningEffort: 'xhigh',
+      modelSelectionOverride: true,
     })
     expect(requests[1]).toEqual({
       method: 'PUT',
@@ -416,6 +418,7 @@ describe('thread queue state', () => {
           model: 'ark-code-latest',
           modelProvider: 'moon',
           reasoningEffort: 'xhigh',
+          modelSelectionOverride: true,
         }],
       },
     })
