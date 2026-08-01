@@ -114,6 +114,50 @@ describe('thread active turn normalization', () => {
 })
 
 describe('normalizeThreadMessagesV2', () => {
+  it('renders reasoning items from their content when present', () => {
+    const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
+      type: 'reasoning',
+      id: 'reasoning-1',
+      summary: ['short summary'],
+      content: ['full thinking line 1', 'full thinking line 2'],
+    }]))
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({
+      id: 'reasoning-1',
+      role: 'assistant',
+      messageType: 'reasoning',
+      text: 'full thinking line 1\nfull thinking line 2',
+    })
+  })
+
+  it('falls back to reasoning summary when content is empty', () => {
+    const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
+      type: 'reasoning',
+      id: 'reasoning-2',
+      summary: ['summary only'],
+      content: [],
+    }]))
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({
+      id: 'reasoning-2',
+      messageType: 'reasoning',
+      text: 'summary only',
+    })
+  })
+
+  it('drops empty reasoning items', () => {
+    const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
+      type: 'reasoning',
+      id: 'reasoning-3',
+      summary: [],
+      content: [],
+    }]))
+
+    expect(messages).toHaveLength(0)
+  })
+
   it('preserves selected skill inputs on the rendered user message', () => {
     const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
       type: 'userMessage',

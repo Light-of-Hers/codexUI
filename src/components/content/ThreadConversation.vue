@@ -611,6 +611,15 @@
                   </div>
                 </div>
                 <div
+                  v-else-if="message.messageType === 'reasoning'"
+                  class="reasoning-card"
+                >
+                  <div class="reasoning-card-header">
+                    <p class="reasoning-card-title">Thinking</p>
+                  </div>
+                  <p class="reasoning-card-text">{{ message.text }}</p>
+                </div>
+                <div
                   v-else
                   class="message-text-flow message-markdown-body"
                   v-memo="[message.id, message.text, props.cwd, highlightCacheVersion, markdownRendererVersion]"
@@ -6129,6 +6138,45 @@ onBeforeUnmount(() => {
 
 .live-overlay-reasoning::-webkit-scrollbar {
   display: none;
+}
+
+.reasoning-card {
+  @apply rounded-lg border border-zinc-200 bg-zinc-50 p-3;
+  max-width: 100%;
+}
+
+.reasoning-card-header {
+  @apply mb-1.5 flex items-center gap-2;
+}
+
+.reasoning-card-title {
+  @apply m-0 text-xs font-semibold uppercase tracking-wide text-zinc-500;
+}
+
+.reasoning-card-text {
+  @apply m-0 text-sm leading-5 whitespace-pre-wrap break-words;
+  max-height: calc(1.25rem * 8);
+  overflow: auto;
+  overflow-wrap: anywhere;
+  scrollbar-width: none;
+  mask-image: linear-gradient(to top, black 85%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to top, black 85%, transparent 100%);
+}
+
+.reasoning-card-text::-webkit-scrollbar {
+  display: none;
+}
+
+:root.dark .reasoning-card {
+  @apply border-zinc-700 bg-zinc-900;
+}
+
+:root.dark .reasoning-card-title {
+  @apply text-zinc-400;
+}
+
+:root.dark .reasoning-card-text {
+  @apply text-zinc-500;
 }
 
 .live-overlay-error {

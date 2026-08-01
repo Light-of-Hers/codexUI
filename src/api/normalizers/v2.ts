@@ -585,6 +585,16 @@ export function toUiToolCallMessage(item: unknown): UiMessage | null {
   return null
 }
 
+function extractReasoningText(item: ThreadItem & { type: 'reasoning' }): string {
+  const content = Array.isArray(item.content) ? item.content : []
+  const summary = Array.isArray(item.summary) ? item.summary : []
+  const parts = content.length > 0 ? content : summary
+  return parts
+    .map((part) => (typeof part === 'string' ? part : ''))
+    .join('\n')
+    .trim()
+}
+
 function toUiMessages(item: ThreadItem): UiMessage[] {
   if (item.type === 'agentMessage') {
     const cursorToolMessage = parseCursorToolMessage(item.id, item.text)
@@ -664,7 +674,16 @@ function toUiMessages(item: ThreadItem): UiMessage[] {
   }
 
   if (item.type === 'reasoning') {
-    return []
+    const text = extractReasoningText(item)
+    if (!text) return []
+    return [
+      {
+        id: item.id,
+        role: 'assistant',
+        text,
+        messageType: 'reasoning',
+      },
+    ]
   }
 
 
