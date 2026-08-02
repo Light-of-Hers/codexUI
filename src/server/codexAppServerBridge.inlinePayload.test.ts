@@ -414,6 +414,22 @@ describe('session model state recovery', () => {
     })
   })
 
+  it('recovers max reasoning effort from persisted turn context', () => {
+    const state = buildSessionModelState(JSON.stringify({
+      type: 'turn_context',
+      payload: {
+        model: 'gpt-5.6-terra-max',
+        effort: 'max',
+      },
+    }))
+
+    expect(state).toEqual({
+      model: 'gpt-5.6-terra-max',
+      modelProvider: '',
+      reasoningEffort: 'max',
+    })
+  })
+
   it('uses the latest thread settings provider when turn context omits it', () => {
     const state = buildSessionModelState([
       JSON.stringify({

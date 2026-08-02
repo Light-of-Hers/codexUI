@@ -7684,3 +7684,26 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - Delete any disposable queued messages or archive the manual-test thread. No browser-cache cleanup is required.
+
+### Feature: Max reasoning effort
+
+#### Prerequisites
+- App server is running from this repository with a Codex model that supports `max`, such as `gpt-5.6-terra-max`.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. In light theme, select the `gpt-5.6-terra-max` model in the composer and choose `Max` from the thinking dropdown.
+2. Send a short prompt, then confirm the composer still displays `Max` while the turn is running and after it finishes.
+3. Reload the page and reopen the thread; confirm the recovered model and thinking level remain `gpt-5.6-terra-max` and `Max`.
+4. Switch to dark theme and repeat steps 1-3.
+
+#### Expected Results
+- The thinking dropdown includes `Max` after `Extra high`.
+- New turns send `effort: "max"`, and persisted thread state restores `max` without falling back to another level.
+- Light and dark themes render the dropdown and selected value legibly.
+
+#### Performance Audit
+- This change only extends existing constant-size effort allowlists and dropdown options. It adds no requests, timers, filesystem reads, cache invalidations, or payload fields.
+
+#### Rollback/Cleanup
+- Delete the disposable test thread if it is no longer needed. No additional browser storage cleanup is required.

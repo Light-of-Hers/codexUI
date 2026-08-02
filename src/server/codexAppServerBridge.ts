@@ -372,6 +372,7 @@ function normalizeSessionReasoningEffort(value: unknown): ReasoningEffort | '' {
     || normalized === 'medium'
     || normalized === 'high'
     || normalized === 'xhigh'
+    || normalized === 'max'
   ) {
     return normalized
   }
@@ -5708,7 +5709,7 @@ async function appendThreadQueuedMessage(threadId: string, message: StoredQueued
 }
 
 function normalizeReasoningEffort(value: unknown): ReasoningEffort | '' {
-  const allowed: ReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
+  const allowed: ReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
   return typeof value === 'string' && allowed.includes(value as ReasoningEffort)
     ? (value as ReasoningEffort)
     : ''

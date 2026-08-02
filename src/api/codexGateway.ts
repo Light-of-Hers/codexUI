@@ -814,7 +814,7 @@ async function enrichThreadMessagesWithFallback(threadId: string, messages: UiMe
 }
 
 function normalizeReasoningEffort(value: unknown): ReasoningEffort | '' {
-  const allowed: ReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
+  const allowed: ReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
   return typeof value === 'string' && allowed.includes(value as ReasoningEffort)
     ? (value as ReasoningEffort)
     : ''
@@ -824,6 +824,9 @@ function inferReasoningEffortFromModel(model: unknown): ReasoningEffort | '' {
   if (typeof model !== 'string') return ''
   const normalizedModel = model.trim().toLowerCase()
   if (!normalizedModel) return ''
+  if (normalizedModel.endsWith('-max')) {
+    return 'max'
+  }
   if (normalizedModel.includes('extra-high') || normalizedModel.includes('xhigh')) {
     return 'xhigh'
   }

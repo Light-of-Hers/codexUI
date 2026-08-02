@@ -359,6 +359,42 @@ describe('thread history persistence payloads', () => {
     expect(resumedThread.reasoningEffort).toBe('xhigh')
     expect(currentConfig.reasoningEffort).toBe('xhigh')
   })
+
+  it('treats max model variants as max reasoning', async () => {
+    mockRpcFetchWithResponder((request) => {
+      if (request.method === 'thread/resume') {
+        return {
+          model: 'gpt-5.6-terra-max',
+          reasoningEffort: 'high',
+          thread: {
+            id: 'thread-1',
+            cwd: '/tmp/project',
+            preview: '',
+            turns: [],
+            createdAt: 0,
+            updatedAt: 0,
+          },
+        }
+      }
+      if (request.method === 'config/read') {
+        return {
+          config: {
+            model: 'gpt-5.6-terra-max',
+            model_provider: 'rustcat',
+            model_reasoning_effort: 'high',
+            service_tier: null,
+          },
+        }
+      }
+      return {}
+    })
+
+    const resumedThread = await resumeThread('thread-1')
+    const currentConfig = await getCurrentModelConfig()
+
+    expect(resumedThread.reasoningEffort).toBe('max')
+    expect(currentConfig.reasoningEffort).toBe('max')
+  })
 })
 
 describe('thread queue state', () => {

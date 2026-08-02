@@ -15,4 +15,7 @@ export type { GetAccountRateLimitsResponse } from '../../documentation/app-serve
 export type { RateLimitSnapshot } from '../../documentation/app-server-schemas/typescript/v2/RateLimitSnapshot'
 export type { RateLimitWindow } from '../../documentation/app-server-schemas/typescript/v2/RateLimitWindow'
 export type { CreditsSnapshot } from '../../documentation/app-server-schemas/typescript/v2/CreditsSnapshot'
-export type { ReasoningEffort } from '../../documentation/app-server-schemas/typescript/ReasoningEffort'
+import type { ReasoningEffort as GeneratedReasoningEffort } from '../../documentation/app-server-schemas/typescript/ReasoningEffort'
+
+// The bundled schema snapshot predates Codex models that expose the `max` effort.
+export type ReasoningEffort = GeneratedReasoningEffort | 'max'

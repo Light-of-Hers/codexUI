@@ -1530,6 +1530,16 @@ describe('session composer model state', () => {
     expect(state.selectedReasoningEffort.value).toBe('high')
   })
 
+  it('persists max reasoning effort for the composer thread context', () => {
+    installTestWindow()
+
+    const state = useDesktopState()
+    state.setSelectedReasoningEffortForThread('__new-thread__', 'max')
+
+    expect(state.readReasoningEffortForThread('__new-thread__')).toBe('max')
+    expect(state.selectedReasoningEffort.value).toBe('max')
+  })
+
   it('preserves direct thread selection and reasoning effort when the thread is not listed', async () => {
     installTestWindow({
       'codex-web-local.selected-thread-id.v1': 'thread-a',

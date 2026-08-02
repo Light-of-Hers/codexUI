@@ -118,7 +118,7 @@ const RECENT_THREAD_MESSAGE_LOAD_REUSE_MS = 2000
 // Keep in-memory caches for at least this many recently-visited threads
 // even if they scroll out of the sidebar's paged thread list.
 const RECENT_THREAD_LRU_LIMIT = 30
-const REASONING_EFFORT_OPTIONS: ReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
+const REASONING_EFFORT_OPTIONS: ReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 const GLOBAL_SERVER_REQUEST_SCOPE = '__global__'
 const MODEL_FALLBACK_ID = 'gpt-5.4-mini'
 const CODEX_CLI_MISSING_MESSAGE = 'Codex CLI not found. Install @openai/codex or set CODEXUI_CODEX_COMMAND.'

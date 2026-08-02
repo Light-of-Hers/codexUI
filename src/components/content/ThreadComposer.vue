@@ -728,6 +728,7 @@ const reasoningOptions: Array<{ value: ReasoningEffort; label: string }> = [
   { value: 'medium', label: 'Medium' },
   { value: 'high', label: 'High' },
   { value: 'xhigh', label: 'Extra high' },
+  { value: 'max', label: 'Max' },
 ]
 function formatModelLabel(modelId: string): string {
   return modelId.trim().replace(/^gpt/i, 'GPT')
