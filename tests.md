@@ -14,10 +14,12 @@ This file tracks manual regression and feature verification steps.
 2. Confirm Latin text resolves to `Fira Sans` and falls back to `Calibri` when Fira Sans is unavailable; confirm Chinese text resolves to `舟方日明`.
 3. Open a code block and the integrated terminal, then confirm their computed font family starts with `Fira Code`, falls back to `Consolas`, and uses `舟方日明` for Chinese glyphs.
 4. Open a local file through the local browser/editor route and confirm its toolbar uses the sans-serif stack and its editor uses the monospace stack.
-5. Repeat steps 1-4 in dark theme, including the authentication page when password protection is enabled.
+5. Inspect a standard UI label or button that uses the `font-medium` utility and confirm its computed font weight is `400`; confirm explicitly semibold/bold headings remain visually emphasized.
+6. Repeat steps 1-5 in dark theme, including the authentication page when password protection is enabled.
 
 #### Expected Results
 - All ordinary browser-page text uses `Fira Sans`, then `Calibri`, with Chinese glyphs preferring `舟方日明`.
+- UI elements using Tailwind's `font-medium` utility render at regular weight `400`; deliberate semibold and bold emphasis remains available.
 - Code blocks, composer previews, terminals, and the local editor use `Fira Code`, then `Consolas`, with Chinese glyphs preferring `舟方日明`.
 - The same font stacks are applied in light and dark themes without visual regressions.
 

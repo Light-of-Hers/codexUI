@@ -4,6 +4,7 @@
 @theme {
   --font-sans: "Fira Sans", Calibri, "舟方日明", sans-serif;
   --font-mono: "Fira Code", Consolas, "舟方日明", monospace;
+  --font-weight-medium: 400;
 }
 
 @font-face {
