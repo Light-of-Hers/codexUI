@@ -2640,7 +2640,7 @@
 /* Arknights-inspired visual language: CSS-only, no remote artwork or fonts. */
 :root {
   color-scheme: light;
-  --ark-canvas: #ffffff;
+  --ark-canvas: #f8f9fa;
   --ark-panel: rgba(255, 255, 255, 0.9);
   --ark-panel-solid: #ffffff;
   --ark-recessed: #e5e9e9;

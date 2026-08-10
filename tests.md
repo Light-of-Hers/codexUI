@@ -7784,12 +7784,13 @@ Markdown files opened through the local editor expose a preview button that rend
 - Settings is available in the sidebar so Appearance can be switched between Light and Dark.
 
 #### Steps
-1. In Light appearance, open the home screen and a populated thread. Confirm the PRTS-table-white `#ffffff` canvas uses the subtle grid texture, square panel edges, bright-cyan primary rules, and fixed blue-gray structural accents while the existing sidebar, composer, and conversation layout stay in place.
-2. Inspect the sidebar, settings panel, thread header, dropdowns, and new-thread cards. Confirm that controls have small-radius borders and that selected/primary actions use cyan without obscuring text.
-3. In the thread, inspect assistant and user messages, code fences, plan cards, command groups, tool-call cards, and file-change summaries. Expand and collapse commands/tool details and verify every control remains usable and the latest command in the group summary remains monospace.
-4. Open the composer, its attachment menu, and a model or skills dropdown. Confirm the command-desk styling, focus outline, chips, and send/queue actions remain readable and clickable.
-5. Switch Appearance to Dark and repeat steps 1-4. Confirm all panels become the charcoal variant, bright-cyan and blue-gray accents retain contrast, and no light surface remains on the dark app shell.
-6. Visit the password page and a local directory-browser route in both operating-system light and dark color schemes. Confirm they use the same Fira font stacks, compact border radius, bright-cyan actions, blue-gray leading accents, and readable form controls.
+1. In Light appearance, open the home screen and a populated thread. Confirm the PRTS information-cell `#f8f9fa` canvas uses the subtle grid texture, square panel edges, bright-cyan primary rules, and fixed blue-gray structural accents while the existing sidebar, composer, and conversation layout stay in place.
+2. Confirm the desktop sidebar and its resize handle retain their normal border treatment. In the conversation view, confirm the message list has no full-height gray guide line to the right of the avatar column.
+3. Inspect the sidebar, settings panel, thread header, dropdowns, and new-thread cards. Confirm that controls have small-radius borders and that selected/primary actions use cyan without obscuring text.
+4. In the thread, inspect assistant and user messages, code fences, plan cards, command groups, tool-call cards, and file-change summaries. Expand and collapse commands/tool details and verify every control remains usable and the latest command in the group summary remains monospace.
+5. Open the composer, its attachment menu, and a model or skills dropdown. Confirm the command-desk styling, focus outline, chips, and send/queue actions remain readable and clickable.
+6. Switch Appearance to Dark and repeat steps 1-5. Confirm all panels become the charcoal variant, bright-cyan and blue-gray accents retain contrast, and no light surface remains on the dark app shell.
+7. Visit the password page and a local directory-browser route in both operating-system light and dark color schemes. Confirm they use the same Fira font stacks, compact border radius, bright-cyan actions, blue-gray leading accents, and readable form controls.
 
 #### Expected Results
 - The existing System / Light / Dark appearance cycle still controls the application without changing layout, routing, thread behavior, or saved preferences.
@@ -7799,7 +7800,8 @@ Markdown files opened through the local editor expose a preview button that rend
 - Conversation, command, tool, composer, settings, login, and local-browse surfaces stay legible and interactive in both themes.
 
 #### Performance Audit
-- `PROFILE_BASE_URL=http://127.0.0.1:4173 PROFILE_WAIT_MS=7000 pnpm run profile:browser` recorded an 8.48 s home-route baseline with 189.8 KB API payload. The profiler reports `threadRead=9` and `rateLimitsRead=2` warnings; these are existing startup requests outside this CSS-only theme path. The slowest row is `thread/read` at 3243.2 ms (about 1.0 KB response), with no added theme request or payload.
+- `PROFILE_BASE_URL=http://127.0.0.1:4173 PROFILE_WAIT_MS=7000 pnpm run profile:browser` recorded a 7.60 s home-route baseline with 189.8 KB API payload. The profiler reports `threadRead=9` and `rateLimitsRead=2` warnings; these are existing startup requests outside this CSS-only theme path. The slowest row is `thread/read` at 1888.0 ms (about 1.0 KB response), with no added theme request or payload.
+- `PROFILE_BASE_URL=http://127.0.0.1:4173 PROFILE_ROUTE="#/thread/019da7c0-4e12-7a91-837c-f7c11cc8ab6c" PROFILE_WAIT_MS=7000 pnpm run profile:thread` recorded a 7.44 s direct-thread baseline with 181.4 KB API payload. It reports `threadRead=10`, `rateLimitsRead=2`, and `providerModels=1275.2ms`; the slowest row is the pre-existing `thread/read` at 2271.1 ms. The styling change adds no request or payload.
 - The theme is CSS-only: it adds no JavaScript state, polling, API request, asset request, filesystem read, or cache invalidation path.
 
 #### Rollback/Cleanup

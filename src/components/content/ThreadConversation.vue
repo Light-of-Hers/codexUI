@@ -7515,11 +7515,6 @@ onBeforeUnmount(() => {
   }
 }
 
-/* Compact tactical treatment shared by light and dark through Ark theme tokens. */
-.conversation-list {
-  background-image: linear-gradient(90deg, transparent 0 2.2rem, color-mix(in srgb, var(--ark-line) 52%, transparent) 2.2rem 2.25rem, transparent 2.25rem);
-}
-
 .message-avatar {
   border-radius: 2px;
   border-color: var(--ark-line);
