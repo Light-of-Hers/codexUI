@@ -2676,11 +2676,6 @@
   --ark-dot: rgba(230, 234, 236, 0.055);
 }
 
-::selection {
-  background: var(--ark-cyan);
-  color: #fff;
-}
-
 html,
 body,
 #app {

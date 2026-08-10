@@ -7727,6 +7727,12 @@ onBeforeUnmount(() => {
   background: #17191b;
 }
 
+.cmd-output-wrap,
+.cmd-code-box,
+.tool-call-detail-wrap {
+  border-radius: 0;
+}
+
 .cmd-output-wrap.cmd-output-visible,
 .tool-call-detail-wrap.tool-call-detail-visible {
   border-color: var(--ark-line-strong);

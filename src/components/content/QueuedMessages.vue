@@ -130,11 +130,11 @@ function getMessagePreview(message: QueuedMessageRow): string {
 }
 
 .queued-messages-inner {
-  @apply flex max-h-[30dvh] flex-col gap-px overflow-y-auto rounded-t-2xl border-x border-t border-zinc-300 bg-zinc-50/80 px-3 py-1.5;
+  @apply flex max-h-[30dvh] flex-col gap-px overflow-y-auto rounded-none border-x border-t border-zinc-300 bg-zinc-50/80 px-3 py-1.5;
 }
 
 .queued-row {
-  @apply flex min-w-0 items-center gap-2 rounded-lg py-1 text-sm transition;
+  @apply flex min-w-0 items-center gap-2 rounded-none py-1 text-sm transition;
 }
 
 .queued-row.is-dragging {
@@ -146,7 +146,7 @@ function getMessagePreview(message: QueuedMessageRow): string {
 }
 
 .queued-row-drag {
-  @apply inline-flex h-6 w-6 shrink-0 cursor-grab items-center justify-center rounded-md border-0 bg-transparent text-zinc-400 transition hover:bg-zinc-200 hover:text-zinc-700 active:cursor-grabbing;
+  @apply inline-flex h-6 w-6 shrink-0 cursor-grab items-center justify-center rounded-none border-0 bg-transparent text-zinc-400 transition hover:bg-zinc-200 hover:text-zinc-700 active:cursor-grabbing;
 }
 
 .queued-row-icon {
@@ -162,14 +162,14 @@ function getMessagePreview(message: QueuedMessageRow): string {
 }
 
 .queued-row-steer {
-  @apply rounded-md border border-zinc-300 bg-white px-2 py-0.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-100;
+  @apply rounded-none border border-zinc-300 bg-white px-2 py-0.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-100;
 }
 
 .queued-row-edit {
-  @apply rounded-md border border-zinc-300 bg-white px-2 py-0.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-100;
+  @apply rounded-none border border-zinc-300 bg-white px-2 py-0.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-100;
 }
 
 .queued-row-delete {
-  @apply inline-flex h-6 w-6 items-center justify-center rounded-md border-0 bg-transparent text-zinc-400 transition hover:bg-zinc-200 hover:text-zinc-700;
+  @apply inline-flex h-6 w-6 items-center justify-center rounded-none border-0 bg-transparent text-zinc-400 transition hover:bg-zinc-200 hover:text-zinc-700;
 }
 </style>
