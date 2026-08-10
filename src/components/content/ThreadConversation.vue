@@ -7524,7 +7524,7 @@ onBeforeUnmount(() => {
   border-radius: 2px;
   border-color: var(--ark-line);
   background: var(--ark-panel-solid);
-  box-shadow: inset 0 -3px 0 var(--ark-teal);
+  box-shadow: inset 0 -3px 0 var(--ark-smoke);
 }
 
 .message-card[data-role='assistant'],
@@ -7539,7 +7539,7 @@ onBeforeUnmount(() => {
   border: 1px solid var(--ark-line);
   border-radius: 3px;
   background: var(--ark-panel-solid);
-  box-shadow: inset 3px 0 0 var(--ark-teal), var(--ark-shadow);
+  box-shadow: inset 3px 0 0 var(--ark-smoke), var(--ark-shadow);
 }
 
 .message-text,
@@ -7571,7 +7571,7 @@ onBeforeUnmount(() => {
 
 .message-blockquote {
   border-radius: 0;
-  border-left-color: var(--ark-teal);
+  border-left-color: var(--ark-smoke);
   background: color-mix(in srgb, var(--ark-recessed) 78%, transparent);
   color: var(--ark-muted);
 }
@@ -7642,8 +7642,8 @@ onBeforeUnmount(() => {
 .plan-card-badge,
 .plan-step-status[data-status='inProgress'] {
   border-radius: 1px;
-  background: var(--ark-teal);
-  color: #102421;
+  background: var(--ark-smoke);
+  color: var(--ark-smoke-ink);
 }
 
 .plan-step-item {
@@ -7703,8 +7703,8 @@ onBeforeUnmount(() => {
 
 .cmd-row.cmd-row-group,
 .file-change-summary-row {
-  border-left: 3px solid var(--ark-teal);
-  background: color-mix(in srgb, var(--ark-teal) 9%, var(--ark-panel-solid));
+  border-left: 3px solid var(--ark-smoke);
+  background: color-mix(in srgb, var(--ark-smoke) 18%, var(--ark-panel-solid));
 }
 
 .cmd-label,
@@ -7743,7 +7743,7 @@ onBeforeUnmount(() => {
 }
 
 .file-change-list {
-  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--ark-teal) 66%, transparent);
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--ark-smoke) 66%, transparent);
 }
 
 :global(:root.dark) .message-text,

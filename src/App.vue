@@ -6241,8 +6241,8 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 
 .automations-route-header-icon,
 .sidebar-automations-link-icon {
-  background: var(--ark-teal);
-  color: #102421;
+  background: var(--ark-smoke);
+  color: var(--ark-smoke-ink);
   box-shadow: none;
 }
 
@@ -6282,7 +6282,7 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 
 .new-thread-open-folder,
 .new-thread-project-modal {
-  box-shadow: inset 4px 0 0 var(--ark-teal), var(--ark-shadow);
+  box-shadow: inset 4px 0 0 var(--ark-smoke), var(--ark-shadow);
 }
 
 :global(:root.dark) .new-thread-launch-card,
