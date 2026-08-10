@@ -6227,7 +6227,7 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
   border-color: var(--ark-line);
   border-radius: 3px;
   background: linear-gradient(135deg, color-mix(in srgb, var(--ark-panel-solid) 94%, var(--ark-cyan)), var(--ark-panel-solid) 58%);
-  box-shadow: inset 4px 0 0 var(--ark-yellow), var(--ark-shadow);
+  box-shadow: inset 4px 0 0 var(--ark-cyan), var(--ark-shadow);
 }
 
 .new-thread-launch-card-badge,
@@ -6241,8 +6241,8 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 
 .automations-route-header-icon,
 .sidebar-automations-link-icon {
-  background: var(--ark-yellow);
-  color: #27230c;
+  background: var(--ark-blue);
+  color: #f6f9ff;
   box-shadow: none;
 }
 
@@ -6282,7 +6282,7 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 
 .new-thread-open-folder,
 .new-thread-project-modal {
-  box-shadow: inset 4px 0 0 var(--ark-yellow), var(--ark-shadow);
+  box-shadow: inset 4px 0 0 var(--ark-blue), var(--ark-shadow);
 }
 
 :global(:root.dark) .new-thread-launch-card,

@@ -844,7 +844,7 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
     .expand-chevron { display: inline-block; width: 0; height: 0; border-left: 5px solid currentColor; border-top: 4px solid transparent; border-bottom: 4px solid transparent; transition: transform 0.12s ease; }
     .expand-btn[data-expanded="1"] .expand-chevron { transform: rotate(90deg); }
     .expand-spacer { display: inline-block; width: 22px; }
-    .file-link { display: block; padding: 10px 12px; border: 1px solid var(--row-border); border-radius: 0; background: var(--row-bg); box-shadow: inset 3px 0 0 #ffee22, 0 1px 2px var(--row-shadow); overflow-wrap: anywhere; color: var(--page-fg); }
+    .file-link { display: block; padding: 10px 12px; border: 1px solid var(--row-border); border-radius: 0; background: var(--row-bg); box-shadow: inset 3px 0 0 #22bbff, 0 1px 2px var(--row-shadow); overflow-wrap: anywhere; color: var(--page-fg); }
     .file-link:hover { background: var(--row-hover-bg); text-decoration: none; }
     .header-actions { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
     .header-create-form {

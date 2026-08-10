@@ -3015,7 +3015,7 @@ watch(
 }
 
 .thread-composer-shell {
-  box-shadow: inset 3px 0 0 var(--ark-yellow), var(--ark-shadow);
+  box-shadow: inset 3px 0 0 var(--ark-cyan), var(--ark-shadow);
 }
 
 .thread-composer-shell--drag-active {
@@ -3091,7 +3091,7 @@ watch(
 }
 
 .thread-composer-folder-chip {
-  border-left: 3px solid var(--ark-yellow);
+  border-left: 3px solid var(--ark-blue);
 }
 
 .thread-composer-skill-chip {
@@ -3149,9 +3149,9 @@ watch(
 }
 
 .thread-composer-submit--queue {
-  border-color: var(--ark-yellow);
-  background: var(--ark-yellow);
-  color: #222;
+  border-color: var(--ark-blue);
+  background: var(--ark-blue);
+  color: #f6f9ff;
 }
 
 .thread-composer-preview :deep(.message-text),

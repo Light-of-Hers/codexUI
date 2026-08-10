@@ -178,10 +178,10 @@ const LOGIN_PAGE_HTML = `<!DOCTYPE html>
 <title>Codex Web</title>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-:root{color-scheme:light;--bg:#eef1f3;--panel:#fff;--ink:#1b2024;--muted:#667078;--line:#c8d0d4;--cyan:#22bbff;--yellow:#ffee22;--danger:#c0392b;--dot:rgba(27,32,36,.075)}
-@media(prefers-color-scheme:dark){:root{color-scheme:dark;--bg:#141516;--panel:#1d1f21;--ink:#e6eaec;--muted:#a1aaaf;--line:#383e42;--cyan:#22bbff;--yellow:#ffee22;--danger:#ef6256;--dot:rgba(230,234,236,.055)}}
+:root{color-scheme:light;--bg:#eef1f3;--panel:#fff;--ink:#1b2024;--muted:#667078;--line:#c8d0d4;--cyan:#22bbff;--danger:#c0392b;--dot:rgba(27,32,36,.075)}
+@media(prefers-color-scheme:dark){:root{color-scheme:dark;--bg:#141516;--panel:#1d1f21;--ink:#e6eaec;--muted:#a1aaaf;--line:#383e42;--cyan:#22bbff;--danger:#ef6256;--dot:rgba(230,234,236,.055)}}
 body{font-family:"Fira Sans",Calibri,"舟方日明",sans-serif;font-weight:400;background-color:var(--bg);background-image:radial-gradient(circle at 1px 1px,var(--dot) 1px,transparent 0);background-size:18px 18px;color:var(--ink);display:flex;align-items:center;justify-content:center;min-height:100vh;padding:1rem}
-.card{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:0;padding:2rem;width:100%;max-width:380px;box-shadow:inset 4px 0 0 var(--yellow),0 14px 34px rgba(34,46,54,.16)}
+.card{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:0;padding:2rem;width:100%;max-width:380px;box-shadow:inset 4px 0 0 var(--cyan),0 14px 34px rgba(34,46,54,.16)}
 h1{font-size:1.25rem;font-weight:400;letter-spacing:.08em;margin-bottom:1.5rem;text-align:center;color:var(--ink)}
 h1::after{content:"";display:block;width:2.5rem;height:2px;background:var(--cyan);margin:.65rem auto 0}
 label{display:block;font-size:.875rem;color:var(--muted);margin-bottom:.5rem}
