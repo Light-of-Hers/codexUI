@@ -2761,7 +2761,7 @@ watch(
 
 .thread-composer-preview :deep(.message-inline-code) {
   @apply rounded-md border border-slate-200 bg-slate-100/70 px-1.5 py-0.5 text-[0.875em] leading-[1.4] text-slate-900;
-  font-family: var(--thread-composer-code-font-family), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--thread-composer-code-font-family), "Fira Code", Consolas, monospace;
   font-weight: var(--thread-composer-code-font-weight);
   font-synthesis: none;
   -webkit-font-smoothing: antialiased;
@@ -2770,7 +2770,7 @@ watch(
 
 .thread-composer-preview :deep(.message-code-block) {
   @apply overflow-hidden rounded-xl border border-slate-200 bg-slate-950 text-slate-100;
-  font-family: var(--thread-composer-code-font-family), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--thread-composer-code-font-family), "Fira Code", Consolas, monospace;
   font-weight: var(--thread-composer-code-font-weight);
   font-synthesis: none;
   -webkit-font-smoothing: antialiased;

@@ -2,6 +2,28 @@
 
 This file tracks manual regression and feature verification steps.
 
+### Feature: Browser font families
+
+#### Prerequisites
+- App server is running from this repository.
+- Fira Sans and Fira Code are installed in the browser environment; Calibri and Consolas are available as fallbacks.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Open the main application in light theme and inspect ordinary UI text in the browser's computed styles.
+2. Confirm it resolves to `Fira Sans` and falls back to `Calibri` when Fira Sans is unavailable.
+3. Open a code block and the integrated terminal, then confirm their computed font family starts with `Fira Code` and falls back to `Consolas`.
+4. Open a local file through the local browser/editor route and confirm its toolbar uses the sans-serif stack and its editor uses the monospace stack.
+5. Repeat steps 1-4 in dark theme, including the authentication page when password protection is enabled.
+
+#### Expected Results
+- All ordinary browser-page text uses `Fira Sans`, then `Calibri`.
+- Code blocks, composer previews, terminals, and the local editor use `Fira Code`, then `Consolas`.
+- The same font stacks are applied in light and dark themes without visual regressions.
+
+#### Rollback/Cleanup
+- No cleanup is required.
+
 ### Feature: Session fork runtime recovery
 
 #### Prerequisites

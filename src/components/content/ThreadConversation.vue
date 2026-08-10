@@ -6293,7 +6293,7 @@ onBeforeUnmount(() => {
 
 .message-source-text {
   @apply mt-2 max-h-80 w-full max-w-[min(var(--chat-card-max,76ch),100%)] select-text overflow-auto rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-[12px] leading-5 text-slate-700 whitespace-pre-wrap;
-  font-family: var(--conversation-code-font-family), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--conversation-code-font-family), "Fira Code", Consolas, monospace;
   font-weight: var(--conversation-code-font-weight);
   overflow-wrap: anywhere;
   tab-size: 2;
@@ -7136,7 +7136,7 @@ onBeforeUnmount(() => {
 .tool-call-code-box {
   @apply m-0 max-h-64 overflow-auto rounded-lg border border-white/10 bg-white/5 px-3 py-2 font-mono text-xs leading-5 text-zinc-100 whitespace-pre-wrap;
   overflow-wrap: anywhere;
-  font-family: var(--conversation-code-font-family), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--conversation-code-font-family), "Fira Code", Consolas, monospace;
   font-weight: var(--conversation-code-font-weight);
   font-synthesis: none;
   -webkit-font-smoothing: antialiased;

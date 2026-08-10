@@ -1,40 +1,9 @@
 @import "tailwindcss";
 @import "highlight.js/styles/github-dark.css";
 
-@font-face {
-  font-family: "CodexLocalCodeLatin";
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: local("SFMono-Regular"), local("SF Mono"), local("Menlo"), local("Monaco"), local("Consolas"), local("Liberation Mono"), local("Roboto Mono"), local("Droid Sans Mono"), local("Courier New");
-  unicode-range: U+0000-00AB, U+00AD-024F, U+1E00-1EFF, U+2000-206F, U+2070-209F, U+20A0-20CF;
-}
-
-@font-face {
-  font-family: "CodexLocalCodeLatin";
-  font-style: normal;
-  font-weight: 500;
-  font-display: swap;
-  src: local("SFMono-Regular"), local("SF Mono"), local("Menlo"), local("Monaco"), local("Consolas"), local("Liberation Mono"), local("Roboto Mono"), local("Droid Sans Mono"), local("Courier New");
-  unicode-range: U+0000-00AB, U+00AD-024F, U+1E00-1EFF, U+2000-206F, U+2070-209F, U+20A0-20CF;
-}
-
-@font-face {
-  font-family: "CodexLocalCodeLatin";
-  font-style: normal;
-  font-weight: 600;
-  font-display: swap;
-  src: local("SFMono-Regular"), local("SF Mono"), local("Menlo"), local("Monaco"), local("Consolas"), local("Liberation Mono"), local("Roboto Mono"), local("Droid Sans Mono"), local("Courier New");
-  unicode-range: U+0000-00AB, U+00AD-024F, U+1E00-1EFF, U+2000-206F, U+2070-209F, U+20A0-20CF;
-}
-
-@font-face {
-  font-family: "CodexLocalCodeLatin";
-  font-style: normal;
-  font-weight: 700;
-  font-display: swap;
-  src: local("SFMono-Regular"), local("SF Mono"), local("Menlo"), local("Monaco"), local("Consolas"), local("Liberation Mono"), local("Roboto Mono"), local("Droid Sans Mono"), local("Courier New");
-  unicode-range: U+0000-00AB, U+00AD-024F, U+1E00-1EFF, U+2000-206F, U+2070-209F, U+20A0-20CF;
+@theme {
+  --font-sans: "Fira Sans", Calibri, sans-serif;
+  --font-mono: "Fira Code", Consolas, monospace;
 }
 
 @font-face {
@@ -110,8 +79,8 @@
 }
 
 :root {
-  --codex-code-font-family: "CodexLocalCodeLatin", "CodexLocalMathSymbols", "CodexLocalMathGreek", "SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Roboto Mono", "Droid Sans Mono", "Courier New", "Noto Sans Symbols 2", "Noto Sans Math", "STIX Two Math", "Segoe UI Symbol", "Apple Symbols", "Symbola", "DejaVu Sans", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
-  --codex-ui-symbol-font-family: "CodexLocalMathSymbols", "CodexLocalMathGreek", "Noto Sans Symbols 2", "Noto Sans Math", "STIX Two Math", "Segoe UI Symbol", "Apple Symbols", "Symbola", "DejaVu Sans", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  --codex-code-font-family: "Fira Code", Consolas, "CodexLocalMathSymbols", "CodexLocalMathGreek", "Noto Sans Symbols 2", "Noto Sans Math", "STIX Two Math", "Segoe UI Symbol", "Apple Symbols", "Symbola", "DejaVu Sans", monospace;
+  --codex-ui-symbol-font-family: "Fira Sans", Calibri, "CodexLocalMathSymbols", "CodexLocalMathGreek", "Noto Sans Symbols 2", "Noto Sans Math", "STIX Two Math", "Segoe UI Symbol", "Apple Symbols", "Symbola", "DejaVu Sans", sans-serif;
   --codex-code-font-weight: 400;
 }
 
