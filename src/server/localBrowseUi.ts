@@ -832,7 +832,7 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
       }
     }
     html, body { width: 100%; min-height: 100%; margin: 0; }
-    body { box-sizing: border-box; font-family: "Fira Sans", Calibri, sans-serif; padding: 16px; background: var(--page-bg); color: var(--page-fg); }
+    body { box-sizing: border-box; font-family: "Fira Sans", Calibri, "舟方日明", sans-serif; padding: 16px; background: var(--page-bg); color: var(--page-fg); }
     a { color: var(--link-fg); text-decoration: none; }
     a:hover { color: var(--link-hover-fg); text-decoration: underline; }
     h1 { font-size: 18px; margin: 0; word-break: break-all; color: var(--page-fg); }
@@ -1243,7 +1243,7 @@ function markdownPreviewStyles(): string {
     body {
       background: var(--preview-bg);
       color: var(--preview-fg);
-      font-family: "Fira Sans", Calibri, sans-serif;
+      font-family: "Fira Sans", Calibri, "舟方日明", sans-serif;
       font-size: 14px;
       line-height: 1.58;
       letter-spacing: 0;
@@ -1254,7 +1254,7 @@ function markdownPreviewStyles(): string {
     .preview-meta {
       margin: 0 0 14px;
       color: var(--muted-fg);
-      font-family: "Fira Code", Consolas, monospace;
+      font-family: "Fira Code", Consolas, "舟方日明", monospace;
       font-size: 12px;
       line-height: 1.4;
       overflow-wrap: anywhere;
@@ -1380,7 +1380,7 @@ function markdownPreviewStyles(): string {
       border-radius: 5px;
       background: var(--code-bg);
       color: var(--code-fg);
-      font-family: "Fira Code", Consolas, monospace;
+      font-family: "Fira Code", Consolas, "舟方日明", monospace;
       font-size: 0.9em;
       padding: 0.1rem 0.32rem;
     }
@@ -1395,7 +1395,7 @@ function markdownPreviewStyles(): string {
     .message-code-language {
       border-bottom: 1px solid var(--border);
       color: var(--muted-fg);
-      font-family: "Fira Code", Consolas, monospace;
+      font-family: "Fira Code", Consolas, "舟方日明", monospace;
       font-size: 11px;
       padding: 0.45rem 2.8rem 0.45rem 0.75rem;
       text-transform: uppercase;
@@ -1405,7 +1405,7 @@ function markdownPreviewStyles(): string {
       margin: 0;
       overflow-x: auto;
       padding: 0.8rem 2.8rem 0.8rem 0.8rem;
-      font-family: "Fira Code", Consolas, monospace;
+      font-family: "Fira Code", Consolas, "舟方日明", monospace;
       font-size: 13px;
       line-height: 1.55;
       white-space: pre;
@@ -2067,8 +2067,8 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
       --syntax-deletion-bg: #ffebe9;
       --syntax-invalid-fg: #f6f8fa;
       --syntax-invalid-bg: #82071e;
-      --page-font-family: "Fira Sans", Calibri, sans-serif;
-      --editor-font-family: "Fira Code", Consolas, monospace;
+      --page-font-family: "Fira Sans", Calibri, "舟方日明", sans-serif;
+      --editor-font-family: "Fira Code", Consolas, "舟方日明", monospace;
       --editor-font-weight: 400;
     }
     @media (prefers-color-scheme: dark) {
@@ -2435,7 +2435,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     let gitDiffCompareVersionId = '';
     let gitDiffVersions = [];
     const editor = ace.edit('editor');
-    const editorFontFamily = '"Fira Code", Consolas, monospace';
+    const editorFontFamily = '"Fira Code", Consolas, "舟方日明", monospace';
     editor.container.classList.add('ace_nobold');
     const colorSchemeQuery = window.matchMedia('(prefers-color-scheme: dark)');
     const applyEditorTheme = () => {

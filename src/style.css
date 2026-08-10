@@ -2,8 +2,8 @@
 @import "highlight.js/styles/github-dark.css";
 
 @theme {
-  --font-sans: "Fira Sans", Calibri, sans-serif;
-  --font-mono: "Fira Code", Consolas, monospace;
+  --font-sans: "Fira Sans", Calibri, "舟方日明", sans-serif;
+  --font-mono: "Fira Code", Consolas, "舟方日明", monospace;
 }
 
 @font-face {
@@ -79,8 +79,8 @@
 }
 
 :root {
-  --codex-code-font-family: "Fira Code", Consolas, "CodexLocalMathSymbols", "CodexLocalMathGreek", "Noto Sans Symbols 2", "Noto Sans Math", "STIX Two Math", "Segoe UI Symbol", "Apple Symbols", "Symbola", "DejaVu Sans", monospace;
-  --codex-ui-symbol-font-family: "Fira Sans", Calibri, "CodexLocalMathSymbols", "CodexLocalMathGreek", "Noto Sans Symbols 2", "Noto Sans Math", "STIX Two Math", "Segoe UI Symbol", "Apple Symbols", "Symbola", "DejaVu Sans", sans-serif;
+  --codex-code-font-family: "Fira Code", Consolas, "舟方日明", "CodexLocalMathSymbols", "CodexLocalMathGreek", "Noto Sans Symbols 2", "Noto Sans Math", "STIX Two Math", "Segoe UI Symbol", "Apple Symbols", "Symbola", "DejaVu Sans", monospace;
+  --codex-ui-symbol-font-family: "Fira Sans", Calibri, "舟方日明", "CodexLocalMathSymbols", "CodexLocalMathGreek", "Noto Sans Symbols 2", "Noto Sans Math", "STIX Two Math", "Segoe UI Symbol", "Apple Symbols", "Symbola", "DejaVu Sans", sans-serif;
   --codex-code-font-weight: 400;
 }
 

@@ -159,7 +159,7 @@ function createTerminal(): void {
   if (!terminalHostRef.value) return
   terminal = new Terminal({
     cursorBlink: true,
-    fontFamily: '"Fira Code", Consolas, monospace',
+    fontFamily: '"Fira Code", Consolas, "舟方日明", monospace',
     fontSize: 12,
     lineHeight: 1.25,
     scrollback: 10000,

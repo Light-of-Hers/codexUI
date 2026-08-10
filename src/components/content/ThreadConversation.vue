@@ -40,7 +40,10 @@
               @click="toggleCommandGroup(message)"
             >
               <span class="cmd-chevron" :class="{ 'cmd-chevron-open': isCommandGroupExpanded(message) }">▶</span>
-              <span class="cmd-group-label">{{ commandGroupSummaryLabel(message) }}</span>
+              <span class="cmd-group-label">
+                {{ commandGroupSummaryPrefix(message) }}
+                <code class="cmd-group-latest-command" :title="commandGroupLatestCommand(message)">{{ commandGroupLatestCommand(message) }}</code>
+              </span>
               <span class="cmd-status">{{ commandGroupSummaryStatus(message) }}</span>
             </button>
             <div
@@ -1525,16 +1528,19 @@ function isCommandGroupExpanded(message: UiMessage): boolean {
   return expandedCommandGroupIds.value.has(message.id)
 }
 
-function commandGroupSummaryLabel(message: UiMessage): string {
+function commandGroupSummaryPrefix(message: UiMessage): string {
   const items = getCommandBlockForLatest(message)
   const count = items.length
-  const latestCommand = message.commandExecution?.command?.trim() || '(command)'
   const toolCallCount = items.filter(isToolCallMessage).length
   const commandCount = items.length - toolCallCount
   const countLabel = toolCallCount > 0
     ? `${commandCount} command${commandCount === 1 ? '' : 's'} · ${toolCallCount} tool call${toolCallCount === 1 ? '' : 's'}`
     : count === 1 ? '1 command' : `${count} commands`
-  return `${countLabel} · latest: ${latestCommand}`
+  return `${countLabel} · latest:`
+}
+
+function commandGroupLatestCommand(message: UiMessage): string {
+  return message.commandExecution?.command?.trim() || '(command)'
 }
 
 function commandGroupSummaryStatus(message: UiMessage): string {
@@ -6293,7 +6299,7 @@ onBeforeUnmount(() => {
 
 .message-source-text {
   @apply mt-2 max-h-80 w-full max-w-[min(var(--chat-card-max,76ch),100%)] select-text overflow-auto rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-[12px] leading-5 text-slate-700 whitespace-pre-wrap;
-  font-family: var(--conversation-code-font-family), "Fira Code", Consolas, monospace;
+  font-family: var(--conversation-code-font-family), "Fira Code", Consolas, "舟方日明", monospace;
   font-weight: var(--conversation-code-font-weight);
   overflow-wrap: anywhere;
   tab-size: 2;
@@ -6963,6 +6969,11 @@ onBeforeUnmount(() => {
   @apply flex-1 min-w-0 truncate text-xs font-medium text-zinc-600;
 }
 
+.cmd-group-latest-command {
+  font-family: var(--conversation-code-font-family);
+  font-weight: var(--conversation-code-font-weight);
+}
+
 .cmd-status {
   @apply max-w-24 truncate text-right text-[11px] font-medium flex-shrink-0;
 }
@@ -7136,7 +7147,7 @@ onBeforeUnmount(() => {
 .tool-call-code-box {
   @apply m-0 max-h-64 overflow-auto rounded-lg border border-white/10 bg-white/5 px-3 py-2 font-mono text-xs leading-5 text-zinc-100 whitespace-pre-wrap;
   overflow-wrap: anywhere;
-  font-family: var(--conversation-code-font-family), "Fira Code", Consolas, monospace;
+  font-family: var(--conversation-code-font-family), "Fira Code", Consolas, "舟方日明", monospace;
   font-weight: var(--conversation-code-font-weight);
   font-synthesis: none;
   -webkit-font-smoothing: antialiased;

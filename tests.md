@@ -6,20 +6,42 @@ This file tracks manual regression and feature verification steps.
 
 #### Prerequisites
 - App server is running from this repository.
-- Fira Sans and Fira Code are installed in the browser environment; Calibri and Consolas are available as fallbacks.
+- Fira Sans, Fira Code, and 舟方日明 are installed in the browser environment; Calibri and Consolas are available as fallbacks.
 - Light and dark themes are both available from Settings.
 
 #### Steps
 1. Open the main application in light theme and inspect ordinary UI text in the browser's computed styles.
-2. Confirm it resolves to `Fira Sans` and falls back to `Calibri` when Fira Sans is unavailable.
-3. Open a code block and the integrated terminal, then confirm their computed font family starts with `Fira Code` and falls back to `Consolas`.
+2. Confirm Latin text resolves to `Fira Sans` and falls back to `Calibri` when Fira Sans is unavailable; confirm Chinese text resolves to `舟方日明`.
+3. Open a code block and the integrated terminal, then confirm their computed font family starts with `Fira Code`, falls back to `Consolas`, and uses `舟方日明` for Chinese glyphs.
 4. Open a local file through the local browser/editor route and confirm its toolbar uses the sans-serif stack and its editor uses the monospace stack.
 5. Repeat steps 1-4 in dark theme, including the authentication page when password protection is enabled.
 
 #### Expected Results
-- All ordinary browser-page text uses `Fira Sans`, then `Calibri`.
-- Code blocks, composer previews, terminals, and the local editor use `Fira Code`, then `Consolas`.
+- All ordinary browser-page text uses `Fira Sans`, then `Calibri`, with Chinese glyphs preferring `舟方日明`.
+- Code blocks, composer previews, terminals, and the local editor use `Fira Code`, then `Consolas`, with Chinese glyphs preferring `舟方日明`.
 - The same font stacks are applied in light and dark themes without visual regressions.
+
+#### Rollback/Cleanup
+- No cleanup is required.
+
+### Feature: Grouped command summary font
+
+#### Prerequisites
+- App server is running from this repository.
+- A thread contains two or more consecutive command executions, so they render as a collapsed command group.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Open the thread in light theme and find the collapsed group labeled like `2 commands · latest: <command>`.
+2. Inspect the summary and confirm only the latest-command portion is rendered by `code.cmd-group-latest-command`.
+3. Confirm the count and `latest:` label retain the ordinary UI font while the command portion uses the shared monospace stack.
+4. Expand and collapse the group, confirming its count, status, truncation, and click behavior are unchanged.
+5. Repeat steps 1-4 in dark theme.
+
+#### Expected Results
+- The latest command uses `Fira Code`, then `Consolas`, with `舟方日明` as the Chinese-glyph fallback.
+- The count and label remain in the standard UI typeface.
+- The summary remains a single-line, clickable, truncated control in both themes.
 
 #### Rollback/Cleanup
 - No cleanup is required.
