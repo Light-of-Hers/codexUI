@@ -2997,4 +2997,196 @@ watch(
 .thread-composer-hidden-input {
   @apply hidden;
 }
+
+/* Ark-inspired command desk: utilitarian surfaces with cyan action focus. */
+.thread-composer:has(.thread-composer-input-wrap--expanded) {
+  background: color-mix(in srgb, var(--ark-canvas) 93%, transparent);
+}
+
+.thread-composer-shell,
+.thread-composer-preview,
+.thread-composer-file-mentions,
+.thread-composer-attach-menu {
+  border-color: var(--ark-line);
+  border-radius: 3px;
+  background: var(--ark-panel-solid);
+  color: var(--ark-ink);
+  box-shadow: var(--ark-shadow);
+}
+
+.thread-composer-shell {
+  box-shadow: inset 3px 0 0 var(--ark-yellow), var(--ark-shadow);
+}
+
+.thread-composer-shell--drag-active {
+  border-color: var(--ark-cyan);
+  box-shadow: inset 3px 0 0 var(--ark-cyan), var(--ark-shadow);
+}
+
+.thread-composer-input-wrap--drag-active {
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--ark-cyan) 7%, transparent);
+}
+
+.thread-composer-drop-overlay {
+  border-color: var(--ark-cyan);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--ark-panel-solid) 92%, transparent);
+}
+
+.thread-composer-drop-overlay-copy {
+  border-radius: 1px;
+  background: var(--ark-cyan);
+  color: #10232d;
+}
+
+.thread-composer-input,
+.thread-composer-file-mention-name,
+.thread-composer-skill-mention-name,
+.thread-composer-attach-item,
+.thread-composer-attach-mode-label,
+.thread-composer-attach-setting-label {
+  color: var(--ark-ink);
+}
+
+.thread-composer-input::placeholder,
+.thread-composer-file-mention-dir,
+.thread-composer-skill-mention-desc,
+.thread-composer-rate-limit,
+.thread-composer-attach-setting-description,
+.thread-composer-dictation-timer {
+  color: var(--ark-muted);
+}
+
+.thread-composer-input:disabled {
+  background: var(--ark-recessed);
+  color: var(--ark-muted);
+}
+
+.thread-composer-file-mentions,
+.thread-composer-attach-menu {
+  box-shadow: var(--ark-shadow);
+}
+
+.thread-composer-file-mention-row,
+.thread-composer-attach-item,
+.thread-composer-attach-setting {
+  border-radius: 2px;
+}
+
+.thread-composer-file-mention-row:hover,
+.thread-composer-file-mention-row.is-active,
+.thread-composer-attach-item:hover,
+.thread-composer-attach-setting:hover {
+  background: color-mix(in srgb, var(--ark-cyan) 9%, var(--ark-panel-solid));
+}
+
+.thread-composer-file-chip,
+.thread-composer-folder-chip,
+.thread-composer-skill-chip {
+  border-color: var(--ark-line);
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--ark-panel-solid) 78%, var(--ark-recessed));
+  color: var(--ark-ink);
+}
+
+.thread-composer-folder-chip {
+  border-left: 3px solid var(--ark-yellow);
+}
+
+.thread-composer-skill-chip {
+  border-left: 3px solid var(--ark-cyan);
+}
+
+.thread-composer-attach-mode-buttons {
+  border-color: var(--ark-line);
+  border-radius: 2px;
+  background: var(--ark-recessed);
+}
+
+.thread-composer-attach-mode-button {
+  border-radius: 1px;
+  color: var(--ark-muted);
+}
+
+.thread-composer-attach-mode-button.is-active {
+  background: var(--ark-cyan);
+  color: #10232d;
+}
+
+.thread-composer-attach-switch,
+.thread-composer-preview-toggle,
+.thread-composer-mic,
+.thread-composer-expand {
+  border: 1px solid var(--ark-line);
+  border-radius: 2px;
+  background: var(--ark-recessed);
+  color: var(--ark-muted);
+}
+
+.thread-composer-attach-switch.is-on {
+  border-color: var(--ark-cyan);
+  background: var(--ark-cyan);
+}
+
+.thread-composer-preview-toggle[aria-pressed='true'] {
+  border-color: var(--ark-cyan);
+  background: color-mix(in srgb, var(--ark-cyan) 16%, var(--ark-panel-solid));
+  color: var(--ark-cyan-ink);
+}
+
+.thread-composer-submit,
+.thread-composer-stop {
+  border: 1px solid var(--ark-cyan);
+  border-radius: 2px;
+  background: var(--ark-cyan);
+  color: #10232d;
+}
+
+.thread-composer-submit:hover,
+.thread-composer-stop:hover {
+  background: color-mix(in srgb, var(--ark-cyan) 82%, white);
+}
+
+.thread-composer-submit--queue {
+  border-color: var(--ark-yellow);
+  background: var(--ark-yellow);
+  color: #222;
+}
+
+.thread-composer-preview :deep(.message-text),
+.thread-composer-preview :deep(.message-heading),
+.thread-composer-preview :deep(.message-list) {
+  color: var(--ark-ink);
+}
+
+.thread-composer-preview :deep(.message-heading) {
+  font-weight: 400;
+  letter-spacing: 0.06em;
+}
+
+.thread-composer-preview :deep(.message-code-block),
+.thread-composer-preview :deep(.message-table) {
+  border-color: var(--ark-line);
+  border-radius: 2px;
+}
+
+.thread-composer-preview :deep(.message-code-block) {
+  background: var(--ark-recessed);
+  color: var(--ark-ink);
+  box-shadow: inset 3px 0 0 var(--ark-cyan);
+}
+
+.thread-composer-preview :deep(.message-file-link) {
+  color: var(--ark-cyan-ink);
+}
+
+:global(:root.dark) .thread-composer-input,
+:global(:root.dark) .thread-composer-file-mention-name,
+:global(:root.dark) .thread-composer-skill-mention-name,
+:global(:root.dark) .thread-composer-attach-item,
+:global(:root.dark) .thread-composer-attach-mode-label,
+:global(:root.dark) .thread-composer-attach-setting-label {
+  color: var(--ark-ink);
+}
 </style>

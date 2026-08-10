@@ -6109,4 +6109,202 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
   @apply border-t border-zinc-100 px-3 py-2 text-[11px] text-zinc-500;
 }
 
+/* App-shell accents follow the shared Ark palette without changing layout or state. */
+.content-error,
+.composer-runtime-error {
+  border-color: color-mix(in srgb, var(--ark-danger) 58%, var(--ark-line));
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--ark-danger) 10%, var(--ark-panel-solid));
+  color: var(--ark-danger);
+}
+
+.thread-search[data-open='true'],
+.sidebar-search-bar,
+.sidebar-settings-panel,
+.sidebar-settings-account-section,
+.sidebar-settings-account-item,
+.sidebar-settings-telegram-panel {
+  border-color: var(--ark-line);
+  border-radius: 3px;
+  background: var(--ark-panel-solid);
+  color: var(--ark-ink);
+}
+
+.thread-search-count,
+.sidebar-settings-value,
+.sidebar-settings-account-count,
+.sidebar-settings-account-id {
+  border-radius: 1px;
+  background: var(--ark-recessed);
+  color: var(--ark-muted);
+}
+
+.thread-search-input,
+.sidebar-search-input,
+.sidebar-settings-input,
+.sidebar-settings-textarea,
+.sidebar-settings-key-input,
+.sidebar-settings-provider-select,
+.new-thread-open-folder-path,
+.new-thread-open-folder-filter,
+.new-thread-open-folder-create-input {
+  border-color: var(--ark-line);
+  border-radius: 2px;
+  background: var(--ark-panel-solid);
+  color: var(--ark-ink);
+}
+
+.sidebar-settings-button,
+.sidebar-settings-row,
+.sidebar-settings-field-label,
+.sidebar-settings-account-title,
+.sidebar-settings-account-email,
+.sidebar-settings-account-quota,
+.sidebar-settings-context-value,
+.sidebar-settings-session-value,
+.new-thread-open-folder-title,
+.new-thread-open-folder-item-main {
+  color: var(--ark-ink);
+  font-weight: 400;
+}
+
+.sidebar-settings-row + .sidebar-settings-row,
+.sidebar-settings-field + .sidebar-settings-field,
+.sidebar-settings-rate-limits,
+.sidebar-settings-build-label {
+  border-color: var(--ark-line);
+}
+
+.sidebar-settings-button:hover,
+.sidebar-settings-row:hover,
+.sidebar-settings-account-collapse:hover,
+.sidebar-settings-account-refresh:hover,
+.sidebar-settings-account-switch:hover,
+.sidebar-settings-key-save:hover,
+.sidebar-settings-session-copy:hover {
+  background: color-mix(in srgb, var(--ark-cyan) 9%, var(--ark-panel-solid));
+}
+
+.sidebar-settings-toggle,
+.sidebar-settings-toggle.is-on {
+  border-radius: 2px;
+}
+
+.sidebar-settings-toggle.is-on {
+  background: var(--ark-cyan);
+}
+
+.sidebar-settings-toggle::after {
+  border-radius: 1px;
+}
+
+.sidebar-settings-account-item.is-active {
+  border-color: color-mix(in srgb, var(--ark-cyan) 62%, var(--ark-line));
+  background: color-mix(in srgb, var(--ark-cyan) 9%, var(--ark-panel-solid));
+  box-shadow: inset 3px 0 0 var(--ark-cyan);
+}
+
+.sidebar-settings-account-item.is-unavailable {
+  border-color: color-mix(in srgb, var(--ark-danger) 55%, var(--ark-line));
+}
+
+.new-thread-hero {
+  color: var(--ark-ink);
+  font-weight: 400;
+  letter-spacing: 0.06em;
+}
+
+.new-thread-hero::after {
+  content: '';
+  display: block;
+  width: 3.25rem;
+  height: 3px;
+  margin: 0.75rem auto 0;
+  background: var(--ark-cyan);
+}
+
+.new-thread-launch-card {
+  border-color: var(--ark-line);
+  border-radius: 3px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--ark-panel-solid) 94%, var(--ark-cyan)), var(--ark-panel-solid) 58%);
+  box-shadow: inset 4px 0 0 var(--ark-yellow), var(--ark-shadow);
+}
+
+.new-thread-launch-card-badge,
+.skills-route-header-icon,
+.sidebar-skills-link-icon {
+  border-radius: 2px;
+  background: var(--ark-cyan);
+  color: #10232d;
+  box-shadow: none;
+}
+
+.automations-route-header-icon,
+.sidebar-automations-link-icon {
+  background: var(--ark-yellow);
+  color: #27230c;
+  box-shadow: none;
+}
+
+.new-thread-launch-card-eyebrow,
+.new-thread-launch-card-pill,
+.new-thread-folder-selected,
+.new-thread-runtime-help,
+.new-thread-branch-select-help {
+  color: var(--ark-muted);
+}
+
+.new-thread-launch-card-title,
+.new-thread-launch-card-text {
+  color: var(--ark-ink);
+  font-weight: 400;
+}
+
+.new-thread-launch-card-pill,
+.new-thread-launch-card-button,
+.new-thread-folder-action,
+.new-thread-open-folder-item-main,
+.new-thread-open-folder-item-open,
+.new-thread-open-folder-toggle-input {
+  border-color: var(--ark-line);
+  border-radius: 2px;
+  background: var(--ark-panel-solid);
+  color: var(--ark-ink);
+}
+
+.new-thread-launch-card-button-primary,
+.new-thread-folder-action-primary {
+  border-color: var(--ark-cyan);
+  border-radius: 2px;
+  background: var(--ark-cyan);
+  color: #10232d;
+}
+
+.new-thread-open-folder,
+.new-thread-project-modal {
+  box-shadow: inset 4px 0 0 var(--ark-yellow), var(--ark-shadow);
+}
+
+:global(:root.dark) .new-thread-launch-card,
+:global(:root.dark) .sidebar-settings-panel,
+:global(:root.dark) .sidebar-settings-account-section,
+:global(:root.dark) .sidebar-settings-account-item,
+:global(:root.dark) .sidebar-settings-telegram-panel {
+  background: var(--ark-panel-solid);
+}
+
+:global(:root.dark) .new-thread-hero,
+:global(:root.dark) .new-thread-launch-card-title,
+:global(:root.dark) .new-thread-launch-card-text,
+:global(:root.dark) .sidebar-settings-button,
+:global(:root.dark) .sidebar-settings-row,
+:global(:root.dark) .sidebar-settings-field-label,
+:global(:root.dark) .sidebar-settings-account-title,
+:global(:root.dark) .sidebar-settings-account-email,
+:global(:root.dark) .sidebar-settings-account-quota,
+:global(:root.dark) .sidebar-settings-context-value,
+:global(:root.dark) .sidebar-settings-session-value {
+  color: var(--ark-ink);
+}
+
 </style>

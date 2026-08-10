@@ -765,74 +765,74 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
   <style>
     :root {
       color-scheme: light dark;
-      --page-bg: #f8fafc;
-      --page-fg: #0f172a;
-      --link-fg: #2563eb;
-      --link-hover-fg: #1d4ed8;
+      --page-bg: #eef1f3;
+      --page-fg: #1b2024;
+      --link-fg: #087aa9;
+      --link-hover-fg: #04658d;
       --row-bg: #ffffff;
-      --row-border: #cbd5e1;
-      --row-hover-bg: #eff6ff;
-      --row-shadow: rgba(148, 163, 184, 0.14);
-      --header-link-bg: #e2e8f0;
-      --header-link-border: #cbd5e1;
-      --header-link-fg: #0f172a;
-      --button-bg-start: #2e6ee6;
-      --button-bg-end: #3d8cff;
-      --button-border: #4f8de0;
-      --button-fg: #eef6ff;
-      --button-shadow: 0 6px 18px rgba(33, 90, 199, 0.28);
-      --icon-bg: #f8fafc;
-      --icon-border: #cbd5e1;
-      --icon-fg: #0f172a;
-      --summary-fg: #475569;
-      --status-fg: #2563eb;
+      --row-border: #c8d0d4;
+      --row-hover-bg: #e6f7ff;
+      --row-shadow: rgba(34, 46, 54, 0.09);
+      --header-link-bg: #e2e7ea;
+      --header-link-border: #c8d0d4;
+      --header-link-fg: #1b2024;
+      --button-bg-start: #22bbff;
+      --button-bg-end: #22bbff;
+      --button-border: #22bbff;
+      --button-fg: #10232d;
+      --button-shadow: 0 6px 18px rgba(34, 187, 255, 0.2);
+      --icon-bg: #ffffff;
+      --icon-border: #c8d0d4;
+      --icon-fg: #1b2024;
+      --summary-fg: #667078;
+      --status-fg: #087aa9;
       --field-bg: #ffffff;
-      --field-border: #cbd5e1;
-      --field-fg: #0f172a;
-      --field-placeholder: #64748b;
-      --danger-bg: #fff1f2;
-      --danger-border: #fda4af;
-      --danger-fg: #be123c;
-      --danger-hover-bg: #ffe4e6;
-      --focus-ring: rgba(61, 140, 255, 0.28);
+      --field-border: #c8d0d4;
+      --field-fg: #1b2024;
+      --field-placeholder: #667078;
+      --danger-bg: #fff2f0;
+      --danger-border: #e9aaa3;
+      --danger-fg: #c0392b;
+      --danger-hover-bg: #ffe3df;
+      --focus-ring: rgba(34, 187, 255, 0.28);
     }
     @media (prefers-color-scheme: dark) {
       :root {
         color-scheme: dark;
-        --page-bg: #0b1020;
-        --page-fg: #dbe6ff;
-        --link-fg: #8cc2ff;
-        --link-hover-fg: #b8d5ff;
-        --row-bg: #0f1b33;
-        --row-border: #28405f;
-        --row-hover-bg: #13213c;
-        --row-shadow: rgba(6, 13, 30, 0.45);
-        --header-link-bg: #101f3a;
-        --header-link-border: #2a4569;
-        --header-link-fg: #9ec8ff;
-        --button-bg-start: #2e6ee6;
-        --button-bg-end: #3d8cff;
-        --button-border: #4f8de0;
-        --button-fg: #eef6ff;
-        --button-shadow: 0 6px 18px rgba(18, 63, 145, 0.45);
-        --icon-bg: #162643;
-        --icon-border: #36557a;
-        --icon-fg: #dbe6ff;
-        --summary-fg: #b8d5ff;
-        --status-fg: #8cc2ff;
-        --field-bg: #0f1b33;
-        --field-border: #2a4569;
-        --field-fg: #dbe6ff;
-        --field-placeholder: #9ca3af;
-        --danger-bg: rgba(127, 29, 29, 0.18);
-        --danger-border: rgba(248, 113, 113, 0.35);
-        --danger-fg: #fecaca;
-        --danger-hover-bg: rgba(127, 29, 29, 0.3);
-        --focus-ring: rgba(140, 194, 255, 0.32);
+        --page-bg: #141516;
+        --page-fg: #e6eaec;
+        --link-fg: #79d7ff;
+        --link-hover-fg: #b8edff;
+        --row-bg: #1d1f21;
+        --row-border: #383e42;
+        --row-hover-bg: #1d2a30;
+        --row-shadow: rgba(0, 0, 0, 0.28);
+        --header-link-bg: #1b1d1f;
+        --header-link-border: #383e42;
+        --header-link-fg: #e6eaec;
+        --button-bg-start: #22bbff;
+        --button-bg-end: #22bbff;
+        --button-border: #22bbff;
+        --button-fg: #10232d;
+        --button-shadow: 0 6px 18px rgba(34, 187, 255, 0.14);
+        --icon-bg: #1d1f21;
+        --icon-border: #383e42;
+        --icon-fg: #e6eaec;
+        --summary-fg: #a1aaaf;
+        --status-fg: #79d7ff;
+        --field-bg: #1b1d1f;
+        --field-border: #383e42;
+        --field-fg: #e6eaec;
+        --field-placeholder: #a1aaaf;
+        --danger-bg: rgba(192, 57, 43, 0.18);
+        --danger-border: rgba(239, 98, 86, 0.42);
+        --danger-fg: #ffaea7;
+        --danger-hover-bg: rgba(192, 57, 43, 0.3);
+        --focus-ring: rgba(34, 187, 255, 0.32);
       }
     }
     html, body { width: 100%; min-height: 100%; margin: 0; }
-    body { box-sizing: border-box; font-family: "Fira Sans", Calibri, "舟方日明", sans-serif; padding: 16px; background: var(--page-bg); color: var(--page-fg); }
+    body { box-sizing: border-box; font-family: "Fira Sans", Calibri, "舟方日明", sans-serif; font-weight: 400; padding: 16px; background-color: var(--page-bg); background-image: radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--page-fg) 7%, transparent) 1px, transparent 0); background-size: 18px 18px; color: var(--page-fg); }
     a { color: var(--link-fg); text-decoration: none; }
     a:hover { color: var(--link-hover-fg); text-decoration: underline; }
     h1 { font-size: 18px; margin: 0; word-break: break-all; color: var(--page-fg); }
@@ -844,7 +844,7 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
     .expand-chevron { display: inline-block; width: 0; height: 0; border-left: 5px solid currentColor; border-top: 4px solid transparent; border-bottom: 4px solid transparent; transition: transform 0.12s ease; }
     .expand-btn[data-expanded="1"] .expand-chevron { transform: rotate(90deg); }
     .expand-spacer { display: inline-block; width: 22px; }
-    .file-link { display: block; padding: 10px 12px; border: 1px solid var(--row-border); border-radius: 10px; background: var(--row-bg); box-shadow: 0 1px 2px var(--row-shadow); overflow-wrap: anywhere; color: var(--page-fg); }
+    .file-link { display: block; padding: 10px 12px; border: 1px solid var(--row-border); border-radius: 3px; background: var(--row-bg); box-shadow: inset 3px 0 0 #ffee22, 0 1px 2px var(--row-shadow); overflow-wrap: anywhere; color: var(--page-fg); }
     .file-link:hover { background: var(--row-hover-bg); text-decoration: none; }
     .header-actions { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
     .header-create-form {
@@ -860,7 +860,7 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
       height: 42px;
       padding: 0 12px;
       border: 1px solid var(--field-border);
-      border-radius: 10px;
+      border-radius: 2px;
       background: var(--field-bg);
       color: var(--field-fg);
       font: inherit;
@@ -871,17 +871,17 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
       outline: 2px solid var(--focus-ring);
       outline-offset: 2px;
     }
-    .header-parent-link { color: var(--header-link-fg); font-size: 14px; padding: 8px 10px; border: 1px solid var(--header-link-border); border-radius: 10px; background: var(--header-link-bg); }
+    .header-parent-link { color: var(--header-link-fg); font-size: 14px; padding: 8px 10px; border: 1px solid var(--header-link-border); border-radius: 2px; background: var(--header-link-bg); }
     .header-parent-link:hover { text-decoration: none; filter: brightness(1.08); }
     .header-open-btn {
       height: 42px;
       padding: 0 14px;
       border: 1px solid var(--button-border);
-      border-radius: 10px;
-      background: linear-gradient(135deg, var(--button-bg-start) 0%, var(--button-bg-end) 100%);
+      border-radius: 2px;
+      background: var(--button-bg-start);
       color: var(--button-fg);
-      font-weight: 700;
-      letter-spacing: 0.01em;
+      font-weight: 400;
+      letter-spacing: 0.05em;
       cursor: pointer;
       box-shadow: var(--button-shadow);
     }

@@ -2636,3 +2636,230 @@
     font-size: 16px !important;
   }
 }
+
+/* Arknights-inspired visual language: CSS-only, no remote artwork or fonts. */
+:root {
+  color-scheme: light;
+  --ark-canvas: #eef1f3;
+  --ark-panel: rgba(255, 255, 255, 0.88);
+  --ark-panel-solid: #ffffff;
+  --ark-recessed: #e2e7ea;
+  --ark-ink: #1b2024;
+  --ark-muted: #667078;
+  --ark-line: #c8d0d4;
+  --ark-line-strong: #859098;
+  --ark-cyan: #22bbff;
+  --ark-cyan-ink: #087aa9;
+  --ark-yellow: #ffee22;
+  --ark-danger: #c0392b;
+  --ark-shadow: 0 14px 34px rgba(34, 46, 54, 0.09);
+  --ark-dot: rgba(27, 32, 36, 0.075);
+}
+
+:root.dark {
+  color-scheme: dark;
+  --ark-canvas: #141516;
+  --ark-panel: rgba(29, 31, 33, 0.9);
+  --ark-panel-solid: #1d1f21;
+  --ark-recessed: #1b1d1f;
+  --ark-ink: #e6eaec;
+  --ark-muted: #a1aaaf;
+  --ark-line: #383e42;
+  --ark-line-strong: #707b81;
+  --ark-cyan: #22bbff;
+  --ark-cyan-ink: #79d7ff;
+  --ark-yellow: #ffee22;
+  --ark-danger: #ef6256;
+  --ark-shadow: 0 18px 44px rgba(0, 0, 0, 0.28);
+  --ark-dot: rgba(230, 234, 236, 0.055);
+}
+
+::selection {
+  background: var(--ark-yellow);
+  color: #161719;
+}
+
+html,
+body,
+#app {
+  background: var(--ark-canvas);
+  color: var(--ark-ink);
+}
+
+body {
+  font-weight: 400;
+  background-image:
+    radial-gradient(circle at 1px 1px, var(--ark-dot) 1px, transparent 0),
+    linear-gradient(135deg, transparent 0 49.7%, color-mix(in srgb, var(--ark-line) 23%, transparent) 49.8% 50%, transparent 50.1%);
+  background-size: 18px 18px, 72px 72px;
+}
+
+button,
+input,
+textarea,
+select {
+  font-family: inherit;
+}
+
+* {
+  scrollbar-color: var(--ark-line-strong) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+*::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 2px;
+  background: var(--ark-line-strong);
+  background-clip: padding-box;
+}
+
+:root .desktop-layout,
+:root .desktop-main,
+:root .content-root {
+  background: transparent !important;
+  color: var(--ark-ink);
+}
+
+:root .desktop-sidebar,
+:root .mobile-drawer,
+:root .sidebar-root,
+:root .sidebar-scrollable,
+:root .sidebar-settings-area {
+  background: var(--ark-panel) !important;
+  color: var(--ark-ink);
+}
+
+:root .desktop-sidebar,
+:root .mobile-drawer {
+  border-right: 1px solid var(--ark-line);
+  box-shadow: inset -3px 0 0 color-mix(in srgb, var(--ark-yellow) 78%, transparent);
+}
+
+:root .desktop-resize-handle {
+  background: var(--ark-line) !important;
+}
+
+:root .desktop-resize-handle:hover {
+  background: var(--ark-cyan) !important;
+}
+
+:root .content-header {
+  border-bottom: 1px solid var(--ark-line);
+  background: color-mix(in srgb, var(--ark-panel-solid) 84%, transparent) !important;
+  box-shadow: inset 0 -3px 0 color-mix(in srgb, var(--ark-yellow) 82%, transparent);
+}
+
+:root .content-title,
+:root .content-title.is-accent {
+  color: var(--ark-ink) !important;
+  font-weight: 400 !important;
+  letter-spacing: 0.045em;
+}
+
+:root .content-title.is-accent::after,
+:root .project-main-button::after {
+  content: '';
+  display: block;
+  width: 2.1rem;
+  height: 2px;
+  margin-top: 0.15rem;
+  background: var(--ark-cyan);
+}
+
+:root .sidebar-thread-controls-button,
+:root .sidebar-search-toggle,
+:root .sidebar-search-bar,
+:root .sidebar-skills-link,
+:root .project-menu-panel,
+:root .thread-menu-panel,
+:root .sidebar-settings-panel {
+  border-radius: 3px !important;
+  border-color: var(--ark-line) !important;
+}
+
+:root .sidebar-thread-controls-button,
+:root .sidebar-search-toggle,
+:root .sidebar-settings-button,
+:root .sidebar-settings-row,
+:root .project-main-button,
+:root .thread-row {
+  color: var(--ark-ink) !important;
+}
+
+:root .thread-row,
+:root .project-header-row,
+:root .sidebar-skills-link {
+  border-left: 2px solid transparent;
+  border-radius: 2px !important;
+}
+
+:root .thread-row:hover,
+:root .project-header-row:hover,
+:root .sidebar-skills-link:hover,
+:root .sidebar-settings-button:hover,
+:root .sidebar-settings-row:hover {
+  background: color-mix(in srgb, var(--ark-cyan) 8%, var(--ark-panel-solid)) !important;
+  color: var(--ark-ink) !important;
+}
+
+:root .thread-row[aria-current='page'],
+:root .thread-row.is-selected,
+:root .sidebar-skills-link.is-active {
+  border-left-color: var(--ark-cyan);
+  background: color-mix(in srgb, var(--ark-cyan) 12%, var(--ark-panel-solid)) !important;
+}
+
+:root .sidebar-settings-area {
+  border-top-color: var(--ark-line) !important;
+  box-shadow: inset 0 3px 0 color-mix(in srgb, var(--ark-yellow) 72%, transparent);
+}
+
+:root .composer-dropdown-menu,
+:root .search-dropdown-menu-wrap-up,
+:root .search-dropdown-menu-wrap-down,
+:root .new-thread-open-folder,
+:root .new-thread-project-modal,
+:root .codex-login-modal {
+  border-radius: 3px !important;
+  border-color: var(--ark-line) !important;
+  background: var(--ark-panel-solid) !important;
+  color: var(--ark-ink) !important;
+  box-shadow: var(--ark-shadow);
+}
+
+:root .composer-dropdown-trigger,
+:root .search-dropdown-trigger,
+:root .thread-search-toggle,
+:root .thread-search-nav,
+:root .thread-search-close,
+:root .content-header-message-nav {
+  border-radius: 2px !important;
+  border-color: var(--ark-line) !important;
+  background: var(--ark-panel-solid) !important;
+  color: var(--ark-muted) !important;
+}
+
+:root .composer-dropdown-option.is-selected,
+:root .composer-dropdown-option:hover,
+:root .search-dropdown-option.is-highlighted,
+:root .search-dropdown-option-main:hover {
+  background: color-mix(in srgb, var(--ark-cyan) 11%, var(--ark-panel-solid)) !important;
+}
+
+:root .content-header-message-nav.is-active,
+:root .new-thread-folder-action-primary,
+:root .new-thread-folder-action[aria-pressed='true'] {
+  border-color: var(--ark-cyan) !important;
+  background: var(--ark-cyan) !important;
+  color: #11212a !important;
+}
+
+:root .message-mermaid {
+  border-radius: 2px;
+  border-color: var(--ark-line);
+  background: var(--ark-panel-solid);
+}

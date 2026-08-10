@@ -7514,4 +7514,246 @@ onBeforeUnmount(() => {
     @apply px-2 py-1 text-[11px] leading-5;
   }
 }
+
+/* Compact tactical treatment shared by light and dark through Ark theme tokens. */
+.conversation-list {
+  background-image: linear-gradient(90deg, transparent 0 2.2rem, color-mix(in srgb, var(--ark-line) 52%, transparent) 2.2rem 2.25rem, transparent 2.25rem);
+}
+
+.message-avatar {
+  border-radius: 2px;
+  border-color: var(--ark-line);
+  background: var(--ark-panel-solid);
+  box-shadow: inset 0 -3px 0 var(--ark-yellow);
+}
+
+.message-card[data-role='assistant'],
+.message-card[data-role='system'] {
+  border-left: 2px solid color-mix(in srgb, var(--ark-cyan) 80%, transparent);
+  padding-left: 0.875rem;
+}
+
+.message-card[data-role='user'] {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--ark-line);
+  border-radius: 3px;
+  background: var(--ark-panel-solid);
+  box-shadow: inset 3px 0 0 var(--ark-yellow), var(--ark-shadow);
+}
+
+.message-text,
+.message-list,
+.message-heading,
+.message-table,
+.plan-card-explanation,
+.plan-card-markdown :deep(.message-text),
+.plan-card-markdown :deep(.message-heading),
+.plan-card-markdown :deep(.message-list) {
+  color: var(--ark-ink);
+}
+
+.message-heading,
+.plan-card-title {
+  font-weight: 400;
+  letter-spacing: 0.06em;
+}
+
+.message-heading::before {
+  content: '';
+  display: inline-block;
+  width: 0.42rem;
+  height: 0.42rem;
+  margin-right: 0.55rem;
+  background: var(--ark-cyan);
+  vertical-align: 0.08em;
+}
+
+.message-blockquote {
+  border-radius: 0;
+  border-left-color: var(--ark-yellow);
+  background: color-mix(in srgb, var(--ark-recessed) 78%, transparent);
+  color: var(--ark-muted);
+}
+
+.message-inline-code,
+.message-source-text {
+  border-color: var(--ark-line);
+  border-radius: 2px;
+  background: var(--ark-recessed);
+  color: var(--ark-ink);
+}
+
+.message-code-block,
+.message-table,
+.message-image-button,
+.file-link-context-menu,
+.file-link-picker {
+  border-color: var(--ark-line);
+  border-radius: 3px;
+  background: var(--ark-panel-solid);
+}
+
+.message-code-block {
+  --message-code-bg: var(--ark-recessed);
+  --message-code-fg: var(--ark-ink);
+  --message-code-border: var(--ark-line);
+  --message-code-header-border: var(--ark-line);
+  --message-code-header-fg: var(--ark-muted);
+  box-shadow: inset 3px 0 0 var(--ark-cyan);
+}
+
+.message-code-language {
+  background: color-mix(in srgb, var(--ark-panel-solid) 75%, var(--ark-recessed));
+}
+
+.message-table-head-cell {
+  background: var(--ark-recessed);
+  color: var(--ark-ink);
+  font-weight: 400;
+}
+
+.message-table-head-cell,
+.message-table-cell {
+  border-color: var(--ark-line);
+}
+
+.message-file-link,
+.plan-card-markdown :deep(.message-file-link),
+.file-change-path-button {
+  color: var(--ark-cyan-ink);
+}
+
+.plan-card,
+.request-card {
+  border: 1px solid var(--ark-line);
+  border-radius: 3px;
+  background: var(--ark-panel-solid);
+  color: var(--ark-ink);
+  box-shadow: inset 3px 0 0 var(--ark-cyan), var(--ark-shadow);
+}
+
+.plan-card-title,
+.request-title,
+.request-question-title {
+  color: var(--ark-ink);
+}
+
+.plan-card-badge,
+.plan-step-status[data-status='inProgress'] {
+  border-radius: 1px;
+  background: var(--ark-yellow);
+  color: #1b2024;
+}
+
+.plan-step-item {
+  border-color: var(--ark-line);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--ark-panel-solid) 84%, var(--ark-recessed));
+  color: var(--ark-ink);
+}
+
+.plan-step-status {
+  border-radius: 1px;
+  background: var(--ark-recessed);
+  color: var(--ark-muted);
+}
+
+.plan-card-implement-button,
+.request-button,
+.request-link,
+.load-more-button,
+.jump-to-latest-button {
+  border-color: var(--ark-line-strong);
+  border-radius: 2px;
+  background: var(--ark-panel-solid);
+  color: var(--ark-ink);
+}
+
+.plan-card-implement-button:hover,
+.request-button:hover,
+.request-link:hover,
+.load-more-button:hover,
+.jump-to-latest-button:hover {
+  border-color: var(--ark-cyan);
+  background: color-mix(in srgb, var(--ark-cyan) 10%, var(--ark-panel-solid));
+}
+
+.request-button-primary {
+  border-color: var(--ark-cyan);
+  border-radius: 2px;
+  background: var(--ark-cyan);
+  color: #10232d;
+}
+
+.cmd-row,
+.tool-call-row,
+.file-change-list {
+  border-color: var(--ark-line);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--ark-panel-solid) 88%, var(--ark-recessed));
+  color: var(--ark-ink);
+}
+
+.cmd-row:hover,
+.tool-call-row:hover {
+  border-color: var(--ark-cyan);
+  background: color-mix(in srgb, var(--ark-cyan) 9%, var(--ark-panel-solid));
+}
+
+.cmd-row.cmd-row-group,
+.file-change-summary-row {
+  border-left: 3px solid var(--ark-yellow);
+  background: color-mix(in srgb, var(--ark-yellow) 10%, var(--ark-panel-solid));
+}
+
+.cmd-label,
+.cmd-group-label,
+.file-change-summary-label,
+.tool-call-title,
+.file-change-item {
+  color: var(--ark-ink);
+  font-weight: 400;
+}
+
+.cmd-status,
+.tool-call-status,
+.file-change-summary-status {
+  font-weight: 400;
+}
+
+.cmd-group-latest-command {
+  color: var(--ark-cyan-ink);
+}
+
+.cmd-output-wrap,
+.tool-call-detail-wrap {
+  border-color: var(--ark-line-strong);
+  background: #17191b;
+}
+
+.cmd-output-wrap.cmd-output-visible,
+.tool-call-detail-wrap.tool-call-detail-visible {
+  border-color: var(--ark-line-strong);
+}
+
+.file-change-badge,
+.file-change-delta {
+  border-radius: 1px;
+}
+
+.file-change-list {
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--ark-yellow) 78%, transparent);
+}
+
+:global(:root.dark) .message-text,
+:global(:root.dark) .message-list,
+:global(:root.dark) .message-heading,
+:global(:root.dark) .cmd-label,
+:global(:root.dark) .cmd-group-label,
+:global(:root.dark) .tool-call-title,
+:global(:root.dark) .file-change-summary-label,
+:global(:root.dark) .file-change-item {
+  color: var(--ark-ink);
+}
 </style>

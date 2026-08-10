@@ -7775,3 +7775,31 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - Delete the disposable test thread if it is no longer needed. No additional browser storage cleanup is required.
+
+### Feature: Arknights-inspired light and dark visual theme
+
+#### Prerequisites
+- App server is running from this repository.
+- A thread exists that contains ordinary messages, a command group, and at least one tool call or file-change summary.
+- Settings is available in the sidebar so Appearance can be switched between Light and Dark.
+
+#### Steps
+1. In Light appearance, open the home screen and a populated thread. Confirm the canvas uses the subtle grid texture, sharp panel edges, cyan rules, and yellow accent bars while the existing sidebar, composer, and conversation layout stay in place.
+2. Inspect the sidebar, settings panel, thread header, dropdowns, and new-thread cards. Confirm that controls have small-radius borders and that selected/primary actions use cyan without obscuring text.
+3. In the thread, inspect assistant and user messages, code fences, plan cards, command groups, tool-call cards, and file-change summaries. Expand and collapse commands/tool details and verify every control remains usable and the latest command in the group summary remains monospace.
+4. Open the composer, its attachment menu, and a model or skills dropdown. Confirm the command-desk styling, focus outline, chips, and send/queue actions remain readable and clickable.
+5. Switch Appearance to Dark and repeat steps 1-4. Confirm all panels become the charcoal variant, cyan/yellow accents retain contrast, and no light surface remains on the dark app shell.
+6. Visit the password page and a local directory-browser route in both operating-system light and dark color schemes. Confirm they use the same Fira font stacks, compact border radius, cyan actions, yellow leading accents, and readable form controls.
+
+#### Expected Results
+- The existing System / Light / Dark appearance cycle still controls the application without changing layout, routing, thread behavior, or saved preferences.
+- The application uses CSS-only texture and palette rules; no character art, logos, remote images, or remote fonts are requested.
+- Both themes use the shared Ark palette: charcoal or pale-gray canvas, cyan primary accents, yellow structural accents, readable low-contrast secondary text, and restrained borders/shadows.
+- Conversation, command, tool, composer, settings, login, and local-browse surfaces stay legible and interactive in both themes.
+
+#### Performance Audit
+- `PROFILE_BASE_URL=http://127.0.0.1:4173 PROFILE_WAIT_MS=7000 pnpm run profile:browser` recorded a 7.40 s home-route baseline with 189.8 KB API payload. The profiler reports `threadRead=9` and `rateLimitsRead=2` warnings; these are existing startup requests outside this CSS-only theme path. The slowest row is `thread/read` at 3256.9 ms (about 1.0 KB response), with no added theme request or payload.
+- The theme is CSS-only: it adds no JavaScript state, polling, API request, asset request, filesystem read, or cache invalidation path.
+
+#### Rollback/Cleanup
+- Cycle Appearance back to the preferred mode. No data or browser storage cleanup is required.
