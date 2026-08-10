@@ -143,6 +143,9 @@ process.stdin.on('data', (chunk) => {
         } else {
           error(message.id, 'thread not found: thread-1')
         }
+      } else if (message.method === 'thread/fork') {
+        if (${JSON.stringify(ownsThread)}) result(message.id, { thread: { id: 'forked-thread' } })
+        else error(message.id, 'thread not found: thread-1')
       } else if (message.method === 'turn/interrupt') {
         if (${JSON.stringify(ownsThread)} && interruptError) error(message.id, interruptError)
         else if (${JSON.stringify(ownsThread)}) result(message.id, {})
@@ -3228,6 +3231,52 @@ process.stdin.on('data', (chunk) => {
       expect(log).toContain('cursor:thread/read\n')
       expect(log).toContain('cursor:turn/interrupt\n')
       expect(log).not.toContain('moon:turn/interrupt\n')
+    } finally {
+      middleware.dispose()
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('retries an unqualified session fork on the runtime that owns its source thread', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-provider-fork-fallback-'))
+    const commandLogPath = join(tempDir, 'commands.log')
+    const cursorCommand = join(tempDir, 'codex-cursor')
+    const moonCommand = join(tempDir, 'codex-moon')
+    await writeThreadRoutingCommand(cursorCommand, 'cursor', commandLogPath, true)
+    await writeThreadRoutingCommand(moonCommand, 'moon', commandLogPath, false)
+    await writeFile(join(tempDir, 'webui-free-mode.json'), JSON.stringify({
+      enabled: true,
+      apiKey: null,
+      model: 'gpt-5.5-extra-high',
+      provider: 'cursor',
+    }), 'utf8')
+    vi.stubEnv('CODEX_HOME', tempDir)
+    vi.stubEnv('CODEXUI_CODEX_COMMAND', cursorCommand)
+    vi.stubEnv('CODEXUI_CODEX_CURSOR_COMMAND', cursorCommand)
+    vi.stubEnv('CODEXUI_CODEX_MOON_COMMAND', moonCommand)
+
+    const middleware = createCodexBridgeMiddleware()
+
+    try {
+      await invokeBridgeJson(middleware, '/codex-api/free-mode/custom-provider', { provider: 'cursor' })
+      const readResponse = await invokeBridgeJson(middleware, '/codex-api/rpc', {
+        method: 'thread/read',
+        params: { threadId: 'thread-1', includeTurns: true },
+      })
+      expect(readResponse.statusCode, JSON.stringify(readResponse.payload)).toBe(200)
+
+      await invokeBridgeJson(middleware, '/codex-api/free-mode/custom-provider', { provider: 'moon' })
+      const forkResponse = await invokeBridgeJson(middleware, '/codex-api/rpc', {
+        method: 'thread/fork',
+        params: { threadId: 'thread-1', persistExtendedHistory: true },
+      })
+
+      expect(forkResponse.statusCode).toBe(200)
+      expect(forkResponse.payload).toEqual({ result: { thread: { id: 'forked-thread' } } })
+      await waitForLogToContain(commandLogPath, 'cursor:thread/fork\n')
+      const log = await readFile(commandLogPath, 'utf8')
+      expect(log).toContain('moon:thread/fork\n')
+      expect(log).toContain('cursor:thread/fork\n')
     } finally {
       middleware.dispose()
       await rm(tempDir, { recursive: true, force: true })

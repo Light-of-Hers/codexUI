@@ -2,6 +2,28 @@
 
 This file tracks manual regression and feature verification steps.
 
+### Feature: Session fork runtime recovery
+
+#### Prerequisites
+- App server is running from this repository.
+- Have a completed session created under a non-default provider, such as Cursor, Moon, or Ark.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Open the source session and ensure its completed response is visible.
+2. Switch the new-session provider selection to a different provider without reopening the source session.
+3. Use the session menu's `Fork` action and confirm that the new thread opens.
+4. Return to the source session and use `Fork` from a completed assistant response; confirm that its branch opens.
+5. Repeat steps 1-4 in light theme and dark theme.
+
+#### Expected Results
+- Both fork entry points create and open a new session even after the active provider changes.
+- The fork inherits the source session's working directory and runtime configuration rather than failing because of stale browser-cached overrides.
+- Theme changes do not affect the Fork controls or the resulting navigation.
+
+#### Rollback/Cleanup
+- Archive disposable forked sessions after verification.
+
 ## Template
 
 ### Feature: <name>

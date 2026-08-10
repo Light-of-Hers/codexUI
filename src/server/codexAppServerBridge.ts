@@ -1699,8 +1699,8 @@ function isNoActiveTurnToInterruptError(error: unknown): boolean {
   return getErrorMessage(error, '').toLowerCase().includes('no active turn to interrupt')
 }
 
-function isTurnRuntimeRetryMethod(method: string): boolean {
-  return method === 'turn/steer' || method === 'turn/interrupt'
+function isOwningRuntimeRetryMethod(method: string): boolean {
+  return method === 'thread/fork' || method === 'turn/steer' || method === 'turn/interrupt'
 }
 
 const warnedCodexAuthReadFailures = new Set<string>()
@@ -9249,7 +9249,12 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         } catch (error) {
           const paramsRecord = asRecord(rpcParams)
           const threadId = readNonEmptyString(paramsRecord?.threadId)
-          const fallbackRuntime = isTurnRuntimeRetryMethod(body.method) && isThreadNotFoundError(error)
+          // A fork is intentionally sent without model/provider overrides so
+          // it inherits the source session. If the active runtime changed
+          // since that session was loaded, retry once on the runtime that
+          // already owns the source thread instead of making the UI look like
+          // the Fork action did nothing.
+          const fallbackRuntime = isOwningRuntimeRetryMethod(body.method) && isThreadNotFoundError(error)
             ? findRuntimeWithThreadState(runtimePool, threadId, effectiveRpcRuntime)
             : null
           if (fallbackRuntime) {

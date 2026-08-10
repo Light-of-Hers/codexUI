@@ -6690,21 +6690,19 @@ export function useDesktopState() {
     const sourceThread = flattenThreads(sourceGroups.value).find((row) => row.id === sourceThreadId)
     const sourceCwd = sourceThread?.cwd?.trim() ?? ''
     const sourceTitle = sourceThread?.title?.trim() ?? 'Forked chat'
-    const selectedModel = readModelIdForThread(sourceThreadId)
     const sourceProvider = readSelectedProvider(selectedProviderByContext.value, sourceThreadId)
     error.value = ''
 
     try {
-      const forkedThread = await forkThread(
-        sourceThreadId,
-        sourceCwd || undefined,
-        selectedModel || undefined,
-        readThreadRpcProviderId(sourceThreadId) || undefined,
-      )
+      // Forking by id already inherits the source thread's cwd and runtime
+      // settings. Sending browser-cached model/provider values as overrides
+      // can reject the whole request after a provider or model switch.
+      const forkedThread = await forkThread(sourceThreadId)
       const nextThreadId = forkedThread.threadId.trim()
       if (!nextThreadId) return ''
 
-      insertOptimisticThread(nextThreadId, sourceCwd, sourceTitle)
+      const forkedCwd = forkedThread.cwd.trim() || sourceCwd
+      insertOptimisticThread(nextThreadId, forkedCwd, sourceTitle)
       applyThreadModelStateWithProviderPriority(
         nextThreadId,
         forkedThread.model,

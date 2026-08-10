@@ -678,6 +678,39 @@ describe('thread selection persistence', () => {
   })
 })
 
+describe('session fork', () => {
+  it('inherits source-session settings instead of sending cached runtime overrides', async () => {
+    installTestWindow()
+    gatewayMocks.getThreadGroupsPage
+      .mockResolvedValueOnce({
+        groups: [{ projectName: 'project', threads: [thread('thread-a', '/tmp/project')] }],
+        nextCursor: null,
+      })
+      .mockResolvedValueOnce({
+        groups: [{
+          projectName: 'project',
+          threads: [thread('thread-a', '/tmp/project'), thread('thread-forked', '/tmp/project')],
+        }],
+        nextCursor: null,
+      })
+    gatewayMocks.forkThread.mockResolvedValue({
+      threadId: 'thread-forked',
+      cwd: '/tmp/project',
+      model: 'gpt-5.5-extra-high',
+      modelProvider: 'cursor',
+      reasoningEffort: 'high',
+      messages: [],
+    })
+
+    const state = useDesktopState()
+    await state.refreshAll({ includeSelectedThreadMessages: false, refreshAncillary: false })
+
+    await expect(state.forkThreadById('thread-a')).resolves.toBe('thread-forked')
+    expect(gatewayMocks.forkThread).toHaveBeenCalledWith('thread-a')
+    expect(state.selectedThreadId.value).toBe('thread-forked')
+  })
+})
+
 describe('thread cache keep-warm', () => {
   const RECENT_LRU_KEY = 'codex-web-local.recently-visited-thread-ids.v1'
 
