@@ -3091,7 +3091,7 @@ watch(
 }
 
 .thread-composer-folder-chip {
-  border-left: 3px solid var(--ark-smoke);
+  border-left: 3px solid var(--ark-structural);
 }
 
 .thread-composer-skill-chip {
@@ -3149,9 +3149,9 @@ watch(
 }
 
 .thread-composer-submit--queue {
-  border-color: var(--ark-smoke);
-  background: var(--ark-smoke);
-  color: var(--ark-smoke-ink);
+  border-color: var(--ark-structural);
+  background: var(--ark-structural);
+  color: var(--ark-structural-ink);
 }
 
 .thread-composer-preview :deep(.message-text),

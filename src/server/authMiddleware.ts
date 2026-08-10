@@ -178,8 +178,8 @@ const LOGIN_PAGE_HTML = `<!DOCTYPE html>
 <title>Codex Web</title>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-:root{color-scheme:light;--bg:#eef1f3;--panel:#fff;--ink:#1b2024;--muted:#667078;--line:#c8d0d4;--cyan:#22bbff;--danger:#c0392b;--dot:rgba(27,32,36,.075)}
-@media(prefers-color-scheme:dark){:root{color-scheme:dark;--bg:#141516;--panel:#1d1f21;--ink:#e6eaec;--muted:#a1aaaf;--line:#383e42;--cyan:#22bbff;--danger:#ef6256;--dot:rgba(230,234,236,.055)}}
+:root{color-scheme:light;--bg:#f0f2f2;--panel:#fff;--ink:#202628;--muted:#687477;--line:#c7cfd0;--cyan:#22bbff;--danger:#c0392b;--dot:rgba(32,38,40,.075)}
+@media(prefers-color-scheme:dark){:root{color-scheme:dark;--bg:#161a1c;--panel:#202528;--ink:#e0e7e8;--muted:#a2afb2;--line:#3c4649;--cyan:#22bbff;--danger:#ef6256;--dot:rgba(224,231,232,.055)}}
 body{font-family:"Fira Sans",Calibri,"舟方日明",sans-serif;font-weight:400;background-color:var(--bg);background-image:radial-gradient(circle at 1px 1px,var(--dot) 1px,transparent 0);background-size:18px 18px;color:var(--ink);display:flex;align-items:center;justify-content:center;min-height:100vh;padding:1rem}
 .card{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:0;padding:2rem;width:100%;max-width:380px;box-shadow:inset 4px 0 0 var(--cyan),0 14px 34px rgba(34,46,54,.16)}
 h1{font-size:1.25rem;font-weight:400;letter-spacing:.08em;margin-bottom:1.5rem;text-align:center;color:var(--ink)}

@@ -765,31 +765,31 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
   <style>
     :root {
       color-scheme: light dark;
-      --page-bg: #eef1f3;
-      --page-fg: #1b2024;
+      --page-bg: #f0f2f2;
+      --page-fg: #202628;
       --link-fg: #087aa9;
       --link-hover-fg: #04658d;
       --row-bg: #ffffff;
-      --row-border: #c8d0d4;
+      --row-border: #c7cfd0;
       --row-hover-bg: #e6f7ff;
       --row-shadow: rgba(34, 46, 54, 0.09);
-      --header-link-bg: #e2e7ea;
-      --header-link-border: #c8d0d4;
-      --header-link-fg: #1b2024;
+      --header-link-bg: #e5e9e9;
+      --header-link-border: #c7cfd0;
+      --header-link-fg: #202628;
       --button-bg-start: #22bbff;
       --button-bg-end: #22bbff;
       --button-border: #22bbff;
       --button-fg: #10232d;
       --button-shadow: 0 6px 18px rgba(34, 187, 255, 0.2);
       --icon-bg: #ffffff;
-      --icon-border: #c8d0d4;
-      --icon-fg: #1b2024;
-      --summary-fg: #667078;
+      --icon-border: #c7cfd0;
+      --icon-fg: #202628;
+      --summary-fg: #687477;
       --status-fg: #087aa9;
       --field-bg: #ffffff;
-      --field-border: #c8d0d4;
-      --field-fg: #1b2024;
-      --field-placeholder: #667078;
+      --field-border: #c7cfd0;
+      --field-fg: #202628;
+      --field-placeholder: #687477;
       --danger-bg: #fff2f0;
       --danger-border: #e9aaa3;
       --danger-fg: #c0392b;
@@ -799,31 +799,31 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
     @media (prefers-color-scheme: dark) {
       :root {
         color-scheme: dark;
-        --page-bg: #141516;
-        --page-fg: #e6eaec;
+        --page-bg: #161a1c;
+        --page-fg: #e0e7e8;
         --link-fg: #79d7ff;
         --link-hover-fg: #b8edff;
-        --row-bg: #1d1f21;
-        --row-border: #383e42;
+        --row-bg: #202528;
+        --row-border: #3c4649;
         --row-hover-bg: #1d2a30;
         --row-shadow: rgba(0, 0, 0, 0.28);
-        --header-link-bg: #1b1d1f;
-        --header-link-border: #383e42;
-        --header-link-fg: #e6eaec;
+        --header-link-bg: #1a1f21;
+        --header-link-border: #3c4649;
+        --header-link-fg: #e0e7e8;
         --button-bg-start: #22bbff;
         --button-bg-end: #22bbff;
         --button-border: #22bbff;
         --button-fg: #10232d;
         --button-shadow: 0 6px 18px rgba(34, 187, 255, 0.14);
-        --icon-bg: #1d1f21;
-        --icon-border: #383e42;
-        --icon-fg: #e6eaec;
-        --summary-fg: #a1aaaf;
+        --icon-bg: #202528;
+        --icon-border: #3c4649;
+        --icon-fg: #e0e7e8;
+        --summary-fg: #a2afb2;
         --status-fg: #79d7ff;
-        --field-bg: #1b1d1f;
-        --field-border: #383e42;
-        --field-fg: #e6eaec;
-        --field-placeholder: #a1aaaf;
+        --field-bg: #1a1f21;
+        --field-border: #3c4649;
+        --field-fg: #e0e7e8;
+        --field-placeholder: #a2afb2;
         --danger-bg: rgba(192, 57, 43, 0.18);
         --danger-border: rgba(239, 98, 86, 0.42);
         --danger-fg: #ffaea7;
@@ -844,7 +844,7 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
     .expand-chevron { display: inline-block; width: 0; height: 0; border-left: 5px solid currentColor; border-top: 4px solid transparent; border-bottom: 4px solid transparent; transition: transform 0.12s ease; }
     .expand-btn[data-expanded="1"] .expand-chevron { transform: rotate(90deg); }
     .expand-spacer { display: inline-block; width: 22px; }
-    .file-link { display: block; padding: 10px 12px; border: 1px solid var(--row-border); border-radius: 0; background: var(--row-bg); box-shadow: inset 3px 0 0 #22bbff, 0 1px 2px var(--row-shadow); overflow-wrap: anywhere; color: var(--page-fg); }
+    .file-link { display: block; padding: 10px 12px; border: 1px solid var(--row-border); border-radius: 0; background: var(--row-bg); box-shadow: inset 3px 0 0 var(--button-bg-start), 0 1px 2px var(--row-shadow); overflow-wrap: anywhere; color: var(--page-fg); }
     .file-link:hover { background: var(--row-hover-bg); text-decoration: none; }
     .header-actions { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
     .header-create-form {

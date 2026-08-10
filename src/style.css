@@ -2640,18 +2640,18 @@
 /* Arknights-inspired visual language: CSS-only, no remote artwork or fonts. */
 :root {
   color-scheme: light;
-  --ark-canvas: #eef1f3;
-  --ark-panel: rgba(255, 255, 255, 0.88);
+  --ark-canvas: #f0f2f2;
+  --ark-panel: rgba(255, 255, 255, 0.9);
   --ark-panel-solid: #ffffff;
-  --ark-recessed: #e2e7ea;
-  --ark-ink: #1b2024;
-  --ark-muted: #667078;
-  --ark-line: #c8d0d4;
-  --ark-line-strong: #859098;
+  --ark-recessed: #e5e9e9;
+  --ark-ink: #202628;
+  --ark-muted: #687477;
+  --ark-line: #c7cfd0;
+  --ark-line-strong: #7c8789;
   --ark-cyan: #22bbff;
   --ark-cyan-ink: #087aa9;
-  --ark-smoke: rgba(28, 42, 45, 0.72);
-  --ark-smoke-ink: #f6f9ff;
+  --ark-structural: #5f6c70;
+  --ark-structural-ink: #f6f9ff;
   --ark-danger: #c0392b;
   --ark-shadow: 0 14px 34px rgba(34, 46, 54, 0.09);
   --ark-dot: rgba(27, 32, 36, 0.075);
@@ -2659,18 +2659,18 @@
 
 :root.dark {
   color-scheme: dark;
-  --ark-canvas: #141516;
-  --ark-panel: rgba(29, 31, 33, 0.9);
-  --ark-panel-solid: #1d1f21;
-  --ark-recessed: #1b1d1f;
-  --ark-ink: #e6eaec;
-  --ark-muted: #a1aaaf;
-  --ark-line: #383e42;
-  --ark-line-strong: #707b81;
+  --ark-canvas: #161a1c;
+  --ark-panel: rgba(32, 37, 40, 0.9);
+  --ark-panel-solid: #202528;
+  --ark-recessed: #1a1f21;
+  --ark-ink: #e0e7e8;
+  --ark-muted: #a2afb2;
+  --ark-line: #3c4649;
+  --ark-line-strong: #6c787c;
   --ark-cyan: #22bbff;
   --ark-cyan-ink: #79d7ff;
-  --ark-smoke: rgba(214, 224, 226, 0.22);
-  --ark-smoke-ink: #f6f9ff;
+  --ark-structural: #647277;
+  --ark-structural-ink: #f6f9ff;
   --ark-danger: #ef6256;
   --ark-shadow: 0 18px 44px rgba(0, 0, 0, 0.28);
   --ark-dot: rgba(230, 234, 236, 0.055);
@@ -2738,7 +2738,7 @@ select {
 :root .desktop-sidebar,
 :root .mobile-drawer {
   border-right: 1px solid var(--ark-line);
-  box-shadow: inset -3px 0 0 color-mix(in srgb, var(--ark-smoke) 66%, transparent);
+  box-shadow: inset -3px 0 0 color-mix(in srgb, var(--ark-structural) 64%, transparent);
 }
 
 :root .desktop-resize-handle {
@@ -2817,7 +2817,7 @@ select {
 
 :root .sidebar-settings-area {
   border-top-color: var(--ark-line) !important;
-  box-shadow: inset 0 3px 0 color-mix(in srgb, var(--ark-smoke) 58%, transparent);
+  box-shadow: inset 0 3px 0 color-mix(in srgb, var(--ark-structural) 56%, transparent);
 }
 
 :root .composer-dropdown-menu,
