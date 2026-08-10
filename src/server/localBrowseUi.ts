@@ -838,13 +838,13 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
     h1 { font-size: 18px; margin: 0; word-break: break-all; color: var(--page-fg); }
     ul { list-style: none; padding: 0; margin: 12px 0 0; display: flex; flex-direction: column; gap: 8px; }
     .file-row { display: grid; grid-template-columns: 22px minmax(0,1fr) auto; align-items: center; gap: 10px; padding-left: calc(var(--depth, 0) * 1.1rem + 6px); box-sizing: border-box; }
-    .expand-btn { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border: 0; background: transparent; color: var(--summary-fg); cursor: pointer; border-radius: 6px; padding: 0; }
+    .expand-btn { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border: 0; background: transparent; color: var(--summary-fg); cursor: pointer; border-radius: 0; padding: 0; }
     .expand-btn:hover { background: var(--row-hover-bg); }
     .expand-btn:disabled { cursor: default; opacity: 0.5; }
     .expand-chevron { display: inline-block; width: 0; height: 0; border-left: 5px solid currentColor; border-top: 4px solid transparent; border-bottom: 4px solid transparent; transition: transform 0.12s ease; }
     .expand-btn[data-expanded="1"] .expand-chevron { transform: rotate(90deg); }
     .expand-spacer { display: inline-block; width: 22px; }
-    .file-link { display: block; padding: 10px 12px; border: 1px solid var(--row-border); border-radius: 3px; background: var(--row-bg); box-shadow: inset 3px 0 0 #ffee22, 0 1px 2px var(--row-shadow); overflow-wrap: anywhere; color: var(--page-fg); }
+    .file-link { display: block; padding: 10px 12px; border: 1px solid var(--row-border); border-radius: 0; background: var(--row-bg); box-shadow: inset 3px 0 0 #ffee22, 0 1px 2px var(--row-shadow); overflow-wrap: anywhere; color: var(--page-fg); }
     .file-link:hover { background: var(--row-hover-bg); text-decoration: none; }
     .header-actions { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
     .header-create-form {
@@ -860,7 +860,7 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
       height: 42px;
       padding: 0 12px;
       border: 1px solid var(--field-border);
-      border-radius: 2px;
+      border-radius: 0;
       background: var(--field-bg);
       color: var(--field-fg);
       font: inherit;
@@ -871,13 +871,13 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
       outline: 2px solid var(--focus-ring);
       outline-offset: 2px;
     }
-    .header-parent-link { color: var(--header-link-fg); font-size: 14px; padding: 8px 10px; border: 1px solid var(--header-link-border); border-radius: 2px; background: var(--header-link-bg); }
+    .header-parent-link { color: var(--header-link-fg); font-size: 14px; padding: 8px 10px; border: 1px solid var(--header-link-border); border-radius: 0; background: var(--header-link-bg); }
     .header-parent-link:hover { text-decoration: none; filter: brightness(1.08); }
     .header-open-btn {
       height: 42px;
       padding: 0 14px;
       border: 1px solid var(--button-border);
-      border-radius: 2px;
+      border-radius: 0;
       background: var(--button-bg-start);
       color: var(--button-fg);
       font-weight: 400;
@@ -890,7 +890,7 @@ export async function createDirectoryListingHtml(localPath: string, options?: { 
     .header-actions .create-file-btn { flex: 0 0 auto; min-width: 7.8rem; }
     .picker-summary { margin: 10px 0 0; color: var(--summary-fg); max-width: 60rem; line-height: 1.45; }
     .row-actions { display: inline-flex; align-items: center; gap: 8px; min-width: 42px; justify-content: flex-end; }
-    .icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 42px; height: 42px; border: 1px solid var(--icon-border); border-radius: 10px; background: var(--icon-bg); color: var(--icon-fg); text-decoration: none; cursor: pointer; }
+    .icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 42px; height: 42px; border: 1px solid var(--icon-border); border-radius: 0; background: var(--icon-bg); color: var(--icon-fg); text-decoration: none; cursor: pointer; }
     .icon-btn:hover { filter: brightness(1.08); text-decoration: none; }
     .icon-btn svg { width: 16px; height: 16px; }
     .icon-btn.danger {

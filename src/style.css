@@ -2863,3 +2863,26 @@ select {
   border-color: var(--ark-line);
   background: var(--ark-panel-solid);
 }
+
+/* Boxed UI stays deliberately square; circular affordances remain limited to avatars and toggles. */
+:root body :is(
+  button,
+  input,
+  textarea,
+  select,
+  [class*='card'],
+  [class*='panel'],
+  [class*='menu'],
+  [class*='modal'],
+  [class*='dialog'],
+  [class*='dropdown'],
+  [class*='chip'],
+  [class*='badge'],
+  [class*='button'],
+  [class*='shell'],
+  [class*='box'],
+  [class*='list'],
+  [class*='item']
+) {
+  border-radius: 0 !important;
+}
