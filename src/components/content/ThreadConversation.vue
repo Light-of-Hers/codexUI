@@ -28,7 +28,6 @@
         :data-role="message.role"
         :data-message-id="message.id"
         :data-message-type="message.messageType || ''"
-        :data-continues-with-runnable="isAgentMessageFollowedByRunnable(message) ? 'true' : 'false'"
         :data-search-highlighted="activeSearchHighlightMessageId === message.id ? 'true' : 'false'"
       >
         <div v-if="isCommandMessage(message)" class="message-row" data-role="system">
@@ -563,23 +562,10 @@
                 </a>
               </div>
 
-              <article
-                v-if="message.text.length > 0"
-                class="message-card"
-                :class="{ 'message-card-progress': isAgentMessageFollowedByRunnable(message) }"
-                :data-role="message.role"
-              >
+              <article v-if="message.text.length > 0" class="message-card" :data-role="message.role">
                 <div v-if="message.isAutomationRun" class="automation-message-label">
                   <span>Sent via automation</span>
                   <code v-if="message.automationDisplayName">{{ message.automationDisplayName }}</code>
-                </div>
-                <div
-                  v-if="isAgentMessageFollowedByRunnable(message)"
-                  class="agent-progress-continuation"
-                  :title="t('More activity follows')"
-                  :aria-label="t('More activity follows')"
-                >
-                  <IconTablerDots class="agent-progress-continuation-icon" aria-hidden="true" />
                 </div>
                 <div v-if="message.messageType === 'worked'" class="worked-separator-wrap" aria-live="polite">
                   <div class="worked-separator" role="status">
@@ -1078,10 +1064,7 @@ import { useFeedbackDiagnostics } from '../../composables/useFeedbackDiagnostics
 import { useMobile } from '../../composables/useMobile'
 import { useUiLanguage } from '../../composables/useUiLanguage'
 import { getHighlightLanguageForPath, normalizeHighlightLanguage } from '../../utils/codeLanguage.js'
-import {
-  findAgentMessagesFollowedByRunnableIds,
-  groupConsecutiveRunnableItemsByLatestId,
-} from './threadConversationGrouping'
+import { groupConsecutiveRunnableItemsByLatestId } from './threadConversationGrouping'
 import { resolveAutoFollowAfterScroll, resolveLatestRenderWindow } from './threadConversationScroll'
 import { buildUserMessageNavigationItems, type UserMessageNavigationItem } from './threadMessageNavigation'
 import { observeMermaidTheme, renderMermaidDiagrams } from './mermaidRenderer'
@@ -1089,7 +1072,6 @@ import { observeMermaidTheme, renderMermaidDiagrams } from './mermaidRenderer'
 import IconTablerArrowUp from '../icons/IconTablerArrowUp.vue'
 import IconTablerChevronDown from '../icons/IconTablerChevronDown.vue'
 import IconTablerCopy from '../icons/IconTablerCopy.vue'
-import IconTablerDots from '../icons/IconTablerDots.vue'
 import IconTablerFilePencil from '../icons/IconTablerFilePencil.vue'
 import IconTablerFolderOpen from '../icons/IconTablerFolderOpen.vue'
 import IconTablerGitFork from '../icons/IconTablerGitFork.vue'
@@ -1454,14 +1436,6 @@ const isLiveTurnRuntime = computed(() =>
 const groupedRunnableItemsByLatestId = computed<Record<string, UiMessage[]>>(() =>
   groupConsecutiveRunnableItemsByLatestId(visibleMessages.value),
 )
-
-const agentMessagesFollowedByRunnableIds = computed(() =>
-  findAgentMessagesFollowedByRunnableIds(visibleMessages.value),
-)
-
-function isAgentMessageFollowedByRunnable(message: UiMessage): boolean {
-  return agentMessagesFollowedByRunnableIds.value.has(message.id)
-}
 
 const hiddenGroupedRunnableItemIds = computed(() => {
   const next = new Set<string>()
@@ -6292,19 +6266,6 @@ onBeforeUnmount(() => {
 
 .message-card {
   @apply max-w-[min(var(--chat-card-max,76ch),100%)] px-0 py-0 bg-transparent border-none rounded-none;
-}
-
-.agent-progress-continuation {
-  @apply mb-2 inline-flex items-center gap-1.5 text-[11px] leading-4 text-cyan-700 dark:text-cyan-300;
-}
-
-.agent-progress-continuation-icon {
-  @apply h-3.5 w-3.5 shrink-0;
-}
-
-.message-card-progress {
-  @apply pb-2;
-  border-bottom: 1px dashed color-mix(in srgb, var(--ark-cyan) 45%, transparent);
 }
 
 .message-text-flow {

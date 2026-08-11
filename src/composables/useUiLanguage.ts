@@ -73,7 +73,6 @@ const zhCN: Record<string, string> = {
   'Open terminal': '打开终端',
   'Terminal command': '终端命令',
   'No commands': '没有命令',
-  'More activity follows': '后续仍有活动',
   'Search branches...': '搜索分支...',
   "Let's build": '开始构建',
   'Choose folder': '选择文件夹',
