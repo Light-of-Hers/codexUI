@@ -3807,6 +3807,20 @@ function readCommandTextFromRecoveredItem(item: Record<string, unknown>): string
   return nestedCommand.trim()
 }
 
+function normalizeCommandForSessionMatching(command: string): string {
+  const trimmed = command.trim()
+  const shellWrapped = trimmed.match(/^(?:\/bin\/)?(?:bash|sh)\s+-lc\s+([\s\S]+)$/u)
+  if (!shellWrapped) return trimmed
+
+  const argument = shellWrapped[1]!.trim()
+  if (argument.length < 2) return trimmed
+  const quote = argument[0]!
+  if ((quote !== '"' && quote !== "'") || argument.at(-1) !== quote) return trimmed
+
+  const inner = argument.slice(1, -1)
+  return quote === '"' ? inner.replace(/\\(["\\$`])/g, '$1') : inner
+}
+
 function readCommandCwdFromRecoveredItem(item: Record<string, unknown>): string {
   const cwd = typeof item.cwd === 'string' ? item.cwd : ''
   if (cwd.trim()) return cwd.trim()
@@ -3863,6 +3877,11 @@ function createSessionCommandLookup(commandMessages: Record<string, unknown>[]):
 
     const cwd = readCommandCwdFromRecoveredItem(item)
     if (cwd) appendCommandMatchIndex(lookup.byCommandAndCwd, commandAndCwdKey(command, cwd), index)
+
+    const normalizedCommand = normalizeCommandForSessionMatching(command)
+    if (normalizedCommand === command) continue
+    appendCommandMatchIndex(lookup.byCommand, normalizedCommand, index)
+    if (cwd) appendCommandMatchIndex(lookup.byCommandAndCwd, commandAndCwdKey(normalizedCommand, cwd), index)
   }
 
   return lookup
@@ -3892,7 +3911,7 @@ function takeExistingCommandForSessionSlot(
   let matchIndex = takeCommandMatchIndex(commandLookup.byId.get(slotId), commandLookup.usedIndexes)
 
   if (matchIndex === null) {
-    const slotCommandText = slotCommand.command.trim()
+    const slotCommandText = normalizeCommandForSessionMatching(slotCommand.command)
     const slotCwd = slotCommand.cwd?.trim() ?? ''
     if (slotCommandText.length > 0 && slotCwd.length > 0) {
       matchIndex = takeCommandMatchIndex(

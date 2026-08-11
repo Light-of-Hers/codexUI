@@ -1066,6 +1066,74 @@ describe('thread session skill recovery', () => {
     ])
   })
 
+  it('matches shell-wrapped native commands before appending unmatched history', () => {
+    const result = {
+      thread: {
+        id: 'thread-shell-wrapped-command',
+        path: '/tmp/session.jsonl',
+        turns: [{
+          id: 'turn-1',
+          items: [
+            { id: 'user-1', type: 'userMessage', content: [{ type: 'text', text: 'verify', text_elements: [] }] },
+            { id: 'agent-before', type: 'agentMessage', text: 'I will verify it.' },
+            { id: 'agent-after', type: 'agentMessage', text: 'Verification complete.' },
+            {
+              id: 'native-command',
+              type: 'commandExecution',
+              command: '/bin/bash -lc "git diff --check"',
+              cwd: '/tmp/project',
+              status: 'completed',
+              aggregatedOutput: '',
+              exitCode: 0,
+            },
+          ],
+        }],
+      },
+    }
+    const sessionLog = [
+      JSON.stringify({ type: 'turn_context', payload: { turn_id: 'turn-1' } }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'I will verify it.' }],
+        },
+      }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'custom_tool_call',
+          name: 'exec',
+          status: 'completed',
+          call_id: 'call-shell-wrapped',
+          input: 'const result = await tools.exec_command({"cmd":"git diff --check","workdir":"/tmp/project"}); text(result.output);',
+        },
+      }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'Verification complete.' }],
+        },
+      }),
+    ].join('\n')
+
+    const merged = mergeRecoveredTurnItemsIntoThreadResult(
+      result,
+      (_threadId, turns) => turns,
+      sessionLog,
+    ) as typeof result
+
+    expect(merged.thread.turns[0].items.map((item) => item.id)).toEqual([
+      'user-1',
+      'agent-before',
+      'native-command',
+      'agent-after',
+    ])
+  })
+
   it('recovers later custom exec commands after a malformed nested argument', () => {
     const result = {
       thread: {
