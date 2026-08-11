@@ -31,3 +31,22 @@ export function groupConsecutiveRunnableItemsByLatestId(messages: readonly UiMes
 
   return next
 }
+
+export function findAgentMessagesFollowedByRunnableIds(messages: readonly UiMessage[]): Set<string> {
+  const ids = new Set<string>()
+
+  for (let index = 0; index + 1 < messages.length; index += 1) {
+    const message = messages[index]!
+    const next = messages[index + 1]!
+    if (
+      message.role === 'assistant'
+      && message.messageType === 'agentMessage'
+      && isRunnableMessage(next)
+      && (!message.turnId || !next.turnId || message.turnId === next.turnId)
+    ) {
+      ids.add(message.id)
+    }
+  }
+
+  return ids
+}

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { UiMessage, UiToolCallKind } from '../../types/codex'
-import { groupConsecutiveRunnableItemsByLatestId } from './threadConversationGrouping'
+import {
+  findAgentMessagesFollowedByRunnableIds,
+  groupConsecutiveRunnableItemsByLatestId,
+} from './threadConversationGrouping'
 
 function commandMessage(id: string): UiMessage {
   return {
@@ -93,5 +96,31 @@ describe('groupConsecutiveRunnableItemsByLatestId', () => {
       toolCallMessage('mcp-1', 'mcp'),
       assistantMessage('assistant-1'),
     ])).toEqual({})
+  })
+})
+
+describe('findAgentMessagesFollowedByRunnableIds', () => {
+  it('marks agent progress messages that continue with commands or tool calls', () => {
+    const firstAgent = assistantMessage('assistant-1')
+    const secondAgent = assistantMessage('assistant-2')
+
+    expect(findAgentMessagesFollowedByRunnableIds([
+      firstAgent,
+      commandMessage('command-1'),
+      secondAgent,
+      toolCallMessage('tool-1', 'mcp'),
+      assistantMessage('assistant-final'),
+    ])).toEqual(new Set(['assistant-1', 'assistant-2']))
+  })
+
+  it('does not mark a final agent message or a command from another turn', () => {
+    const agent = { ...assistantMessage('assistant-1'), turnId: 'turn-1' }
+    const nextTurnCommand = { ...commandMessage('command-2'), turnId: 'turn-2' }
+
+    expect(findAgentMessagesFollowedByRunnableIds([
+      agent,
+      nextTurnCommand,
+      assistantMessage('assistant-final'),
+    ])).toEqual(new Set())
   })
 })
