@@ -1780,13 +1780,30 @@ export async function resumeThread(
   if (resolvedModelProvider) {
     params.modelProvider = resolvedModelProvider
   }
-  const payload = await callRpc<ThreadResumeResponse>('thread/resume', params)
+  const resumePayload = await callRpc<ThreadResumeResponse>('thread/resume', params)
+
+  // The snapshot returned by thread/resume can retain native command items
+  // from the runtime even after the session recovery layer has placed their
+  // recovered counterparts in history. Read the canonical snapshot once the
+  // thread is attached so the resumed view cannot append those commands at
+  // the end of the conversation.
+  let payload: ThreadReadResponse = resumePayload
+  try {
+    payload = await callRpc<ThreadReadResponse>('thread/read', {
+      threadId,
+      includeTurns: true,
+    })
+  } catch {
+    // Resume already succeeded. Keep its snapshot available when the
+    // follow-up read is transiently unavailable.
+  }
+
   const startTurnIndex = readThreadTurnStartIndex(payload)
   const messages = normalizeThreadMessagesV2(payload, startTurnIndex)
   return {
-    model: normalizeThreadModelFromPayload(payload),
-    modelProvider: normalizeThreadModelProviderFromPayload(payload),
-    reasoningEffort: normalizeThreadReasoningEffortFromPayload(payload),
+    model: normalizeThreadModelFromPayload(resumePayload) || normalizeThreadModelFromPayload(payload),
+    modelProvider: normalizeThreadModelProviderFromPayload(resumePayload) || normalizeThreadModelProviderFromPayload(payload),
+    reasoningEffort: normalizeThreadReasoningEffortFromPayload(resumePayload) || normalizeThreadReasoningEffortFromPayload(payload),
     messages,
     inProgress: readThreadInProgressFromResponse(payload),
     activeTurnId: readActiveTurnIdFromResponse(payload),

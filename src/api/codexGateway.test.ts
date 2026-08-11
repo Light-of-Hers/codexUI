@@ -228,6 +228,7 @@ describe('thread history persistence payloads', () => {
     const { requests } = mockRpcFetchWithResponder((request) => {
       if (request.method === 'thread/start') return emptyThreadResult('thread-started')
       if (request.method === 'thread/resume') return emptyThreadResult('thread-1')
+      if (request.method === 'thread/read') return emptyThreadResult('thread-1')
       if (request.method === 'thread/fork') return emptyThreadResult('thread-forked')
       return {}
     })
@@ -239,9 +240,16 @@ describe('thread history persistence payloads', () => {
     expect(requests.map((request) => request.method)).toEqual([
       'thread/start',
       'thread/resume',
+      'thread/read',
       'thread/fork',
     ])
-    expect(requests.every((request) => request.params.persistExtendedHistory === true)).toBe(true)
+    expect(requests.filter((request) => (
+      request.method === 'thread/start' || request.method === 'thread/resume' || request.method === 'thread/fork'
+    )).every((request) => request.params.persistExtendedHistory === true)).toBe(true)
+    expect(requests[2]).toEqual({
+      method: 'thread/read',
+      params: { threadId: 'thread-1', includeTurns: true },
+    })
   })
 
   it('recovers missing resume model settings from the persisted thread before resuming', async () => {
@@ -273,6 +281,57 @@ describe('thread history persistence payloads', () => {
           modelProvider: 'cursor',
         },
       },
+      {
+        method: 'thread/read',
+        params: { threadId: 'thread-1', includeTurns: true },
+      },
+    ])
+  })
+
+  it('uses the canonical read snapshot after resume to preserve recovered command placement', async () => {
+    const { requests } = mockRpcFetchWithResponder((request) => {
+      if (request.method === 'thread/resume') {
+        return {
+          ...emptyThreadResult('thread-1'),
+          thread: {
+            ...emptyThreadResult('thread-1').thread as Record<string, unknown>,
+            turns: [{
+              id: 'turn-1',
+              items: [
+                { id: 'agent-before', type: 'agentMessage', text: 'Before.' },
+                { id: 'exec-tail', type: 'commandExecution', command: '/bin/bash -lc pwd', status: 'completed' },
+                { id: 'agent-after', type: 'agentMessage', text: 'After.' },
+              ],
+            }],
+          },
+        }
+      }
+      if (request.method === 'thread/read') {
+        return {
+          ...emptyThreadResult('thread-1'),
+          thread: {
+            ...emptyThreadResult('thread-1').thread as Record<string, unknown>,
+            turns: [{
+              id: 'turn-1',
+              items: [
+                { id: 'agent-before', type: 'agentMessage', text: 'Before.' },
+                { id: 'session-cmd-1', type: 'commandExecution', command: 'pwd', status: 'completed' },
+                { id: 'agent-after', type: 'agentMessage', text: 'After.' },
+              ],
+            }],
+          },
+        }
+      }
+      return {}
+    })
+
+    const resumedThread = await resumeThread('thread-1', 'gpt-5.4')
+
+    expect(requests.map((request) => request.method)).toEqual(['thread/resume', 'thread/read'])
+    expect(resumedThread.messages.map((message) => message.id)).toEqual([
+      'agent-before',
+      'session-cmd-1',
+      'agent-after',
     ])
   })
 
@@ -280,6 +339,7 @@ describe('thread history persistence payloads', () => {
     const { requests } = mockRpcFetchWithResponder((request) => {
       if (request.method === 'thread/start') return { ...emptyThreadResult('thread-started'), modelProvider: 'moon', reasoningEffort: 'high' }
       if (request.method === 'thread/resume') return { ...emptyThreadResult('thread-1'), modelProvider: 'moon', reasoningEffort: 'low' }
+      if (request.method === 'thread/read') return emptyThreadResult('thread-1')
       if (request.method === 'thread/fork') return { ...emptyThreadResult('thread-forked'), modelProvider: 'moon', reasoningEffort: 'xhigh' }
       return {}
     })
@@ -288,8 +348,9 @@ describe('thread history persistence payloads', () => {
     const resumedThread = await resumeThread('thread-1', 'glm-5.1', 'moon')
     const forkedThread = await forkThread('thread-1', '/tmp/project', 'glm-5.1', 'moon')
 
-    expect(requests.map((request) => request.params.modelProvider)).toEqual(['moon', 'moon', 'moon'])
-    expect(requests.map((request) => request.params.model)).toEqual(['glm-5.1', 'glm-5.1', 'glm-5.1'])
+    const lifecycleRequests = requests.filter((request) => request.method !== 'thread/read')
+    expect(lifecycleRequests.map((request) => request.params.modelProvider)).toEqual(['moon', 'moon', 'moon'])
+    expect(lifecycleRequests.map((request) => request.params.model)).toEqual(['glm-5.1', 'glm-5.1', 'glm-5.1'])
     expect([startedThread.reasoningEffort, resumedThread.reasoningEffort, forkedThread.reasoningEffort]).toEqual([
       'high',
       'low',
@@ -299,6 +360,7 @@ describe('thread history persistence payloads', () => {
 
   it('reads lifecycle model metadata from nested thread snapshots', async () => {
     mockRpcFetchWithResponder((request) => {
+      if (request.method === 'thread/read') return emptyThreadResult('thread-1')
       if (request.method === 'thread/resume') {
         return {
           thread: {
@@ -326,6 +388,7 @@ describe('thread history persistence payloads', () => {
 
   it('treats extra-high model variants as xhigh reasoning', async () => {
     mockRpcFetchWithResponder((request) => {
+      if (request.method === 'thread/read') return emptyThreadResult('thread-1')
       if (request.method === 'thread/resume') {
         return {
           model: 'gpt-5.5-extra-high',
@@ -362,6 +425,7 @@ describe('thread history persistence payloads', () => {
 
   it('treats max model variants as max reasoning', async () => {
     mockRpcFetchWithResponder((request) => {
+      if (request.method === 'thread/read') return emptyThreadResult('thread-1')
       if (request.method === 'thread/resume') {
         return {
           model: 'gpt-5.6-terra-max',
