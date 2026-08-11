@@ -2,6 +2,26 @@
 
 This file tracks manual regression and feature verification steps.
 
+### Feature: Paginated session message submission
+
+#### Prerequisites
+- App server is running from this repository.
+- A historical thread is large enough for Codex to serve it through paginated turn history.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Open the paginated thread in light theme and wait for its latest messages to load.
+2. Enter a short follow-up and send it.
+3. Confirm the user message appears immediately and Codex starts a new turn.
+4. Repeat steps 1-3 in dark theme.
+
+#### Expected Results
+- Sending does not issue a full `thread/read(includeTurns=true)` request merely to confirm that the thread is idle.
+- The user message is visible and the new turn begins in both themes.
+
+#### Rollback/Cleanup
+- Stop or archive any disposable verification turn when finished.
+
 ### Feature: Browser font families
 
 #### Prerequisites

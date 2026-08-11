@@ -14,6 +14,7 @@ import {
   getMoonBridgeModelMetadata,
   getSkillsList,
   getThreadDetail,
+  getThreadSummary,
   getFullThreadMessages,
   getThreadUserMessageCount,
   getThreadUserMessageIndex,
@@ -7152,6 +7153,11 @@ export function useDesktopState() {
       ensureActiveTurnActivity(threadId)
       return cachedTurnId
     }
+
+    // Paginated threads reject thread/read(includeTurns=true). The summary still
+    // carries the running state, so skip the full history read for idle threads.
+    const summary = await getThreadSummary(threadId)
+    if (!summary.inProgress) return ''
 
     const detail = await getThreadDetail(threadId)
     return applyThreadDetailActiveTurnState(threadId, detail).activeTurnId

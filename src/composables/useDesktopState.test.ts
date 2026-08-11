@@ -35,6 +35,7 @@ const gatewayMocks = vi.hoisted(() => ({
   getPendingServerRequests: vi.fn(),
   getSkillsList: vi.fn(),
   getThreadDetail: vi.fn(),
+  getThreadSummary: vi.fn(),
   getThreadGroupsPage: vi.fn(),
   getThreadQueueState: vi.fn(),
   getThreadTitleCache: vi.fn(),
@@ -105,6 +106,7 @@ beforeEach(() => {
     hasMoreOlder: false,
     turnIndexByTurnId: {},
   })
+  gatewayMocks.getThreadSummary.mockResolvedValue(thread('thread-a', '/tmp/project'))
   gatewayMocks.getThreadQueueState.mockResolvedValue({})
   gatewayMocks.getThreadTitleCache.mockResolvedValue({ titles: {} })
   gatewayMocks.getWorkspaceRootsState.mockRejectedValue(new Error('no workspace roots state'))
@@ -2089,6 +2091,10 @@ describe('active turn state reconciliation', () => {
 
   it('restores running UI state when the send recheck finds an active turn', async () => {
     const state = await createThreadHarness()
+    gatewayMocks.getThreadSummary.mockResolvedValue({
+      ...thread('thread-a', '/tmp/project'),
+      inProgress: true,
+    })
     gatewayMocks.getThreadDetail.mockResolvedValue(activeTurnDetail('turn-active'))
     gatewayMocks.steerThreadTurn.mockResolvedValue('turn-active')
 
@@ -2108,6 +2114,10 @@ describe('active turn state reconciliation', () => {
 
   it('uses the provider recovered by resume when steering a thread with an empty UI cache', async () => {
     const state = await createThreadHarness()
+    gatewayMocks.getThreadSummary.mockResolvedValue({
+      ...thread('thread-a', '/tmp/project'),
+      inProgress: true,
+    })
     gatewayMocks.getThreadDetail.mockResolvedValue(activeTurnDetail('turn-active'))
     gatewayMocks.resumeThread.mockResolvedValue({
       model: 'gpt-5.6-sol-xhigh',
@@ -2137,6 +2147,10 @@ describe('active turn state reconciliation', () => {
 
   it('starts a new turn when stale running state steers into an idle backend', async () => {
     const state = await createThreadHarness()
+    gatewayMocks.getThreadSummary.mockResolvedValue({
+      ...thread('thread-a', '/tmp/project'),
+      inProgress: true,
+    })
     gatewayMocks.getThreadDetail.mockResolvedValue(activeTurnDetail('turn-stale'))
     gatewayMocks.steerThreadTurn.mockRejectedValueOnce(new Error('RPC turn/steer failed with HTTP 502: no active turn to steer'))
     gatewayMocks.startThreadTurn.mockResolvedValueOnce('turn-new')
@@ -2194,6 +2208,34 @@ describe('active turn state reconciliation', () => {
     expect(state.selectedThread.value?.inProgress).toBe(true)
     expect(state.projectGroups.value[0]?.threads[0]?.inProgress).toBe(true)
     expect(state.selectedLiveOverlay.value?.activityLabel).toBe('Thinking')
+  })
+
+  it('starts an idle paginated thread without reading its complete turn history', async () => {
+    const state = await createThreadHarness()
+    gatewayMocks.getThreadSummary.mockResolvedValue({
+      ...thread('thread-a', '/tmp/project'),
+      inProgress: false,
+    })
+    gatewayMocks.getThreadDetail.mockRejectedValue(
+      new Error('paginated threads do not support thread/read(includeTurns=true)'),
+    )
+    gatewayMocks.startThreadTurn.mockResolvedValue('turn-new')
+
+    await state.sendMessageToSelectedThread('continue the paginated thread')
+
+    expect(gatewayMocks.getThreadSummary).toHaveBeenCalledWith('thread-a')
+    expect(gatewayMocks.getThreadDetail).not.toHaveBeenCalled()
+    expect(gatewayMocks.startThreadTurn).toHaveBeenCalledWith(
+      'thread-a',
+      'continue the paginated thread',
+      [],
+      undefined,
+      undefined,
+      undefined,
+      [],
+      'default',
+      undefined,
+    )
   })
 
   it('keeps a just-started turn running when thread read only contains the user turn', async () => {
