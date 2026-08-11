@@ -7762,7 +7762,7 @@ onBeforeUnmount(() => {
 }
 
 .cmd-code-box {
-  border-color: var(--ark-command-border);
+  border-color: var(--ark-command-code-border);
   background: var(--ark-command-code);
   color: var(--ark-command-text);
 }
