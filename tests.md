@@ -1428,7 +1428,7 @@ Model, skill, thinking, and plan controls remain usable while a thread turn is i
 #### Steps
 1. Send a user message that triggers the hook.
 2. When the user message appears in the conversation, locate the collapsed **Hook additional context** block directly beneath it.
-3. Expand the block and verify its content matches the hook-injected context, including newlines.
+3. Expand the block and verify its content matches the hook-injected context, including newlines, and that the container has square corners.
 4. Switch between light and dark themes and repeat step 3.
 
 #### Expected Results
@@ -7802,8 +7802,8 @@ Markdown files opened through the local editor expose a preview button that rend
 - Conversation, command, tool, composer, settings, login, and local-browse surfaces stay legible and interactive in both themes.
 
 #### Performance Audit
-- `PROFILE_BASE_URL=http://127.0.0.1:4173 PROFILE_WAIT_MS=7000 pnpm run profile:browser` recorded an 8.34 s home-route baseline with 191.0 KB API payload. The profiler reported existing `threadRead=10` and `rateLimitsRead=2` warnings; the slowest row is `thread/read` at 3117.1 ms (about 1.0 KB response), with no added theme request or payload.
-- `PROFILE_BASE_URL=http://127.0.0.1:4173 PROFILE_ROUTE="#/thread/019da7c0-4e12-7a91-837c-f7c11cc8ab6c" PROFILE_WAIT_MS=7000 pnpm run profile:thread` recorded a 7.42 s direct-thread baseline with 181.8 KB API payload. It reported existing `threadRead=11` and `providerModels=2449.9ms` warnings; the slowest row was `/codex-api/provider-models` at 2449.9 ms. The styling change adds no request or payload.
+- `PROFILE_BASE_URL=http://127.0.0.1:4173 PROFILE_WAIT_MS=7000 pnpm run profile:browser` recorded an 8.46 s home-route baseline with 191.0 KB API payload. The profiler reported existing `threadRead=10` and `rateLimitsRead=2` warnings; the slowest row is `thread/read` at 3197.9 ms (about 1.0 KB response), with no added theme request or payload.
+- `PROFILE_BASE_URL=http://127.0.0.1:4173 PROFILE_ROUTE="#/thread/019da7c0-4e12-7a91-837c-f7c11cc8ab6c" PROFILE_WAIT_MS=7000 pnpm run profile:thread` recorded a 7.42 s direct-thread baseline with 186.2 KB API payload. It reported only the existing `threadRead=11` warning; the slowest row was `thread/read` at 2252.5 ms. The styling change adds no request or payload.
 - The theme is CSS-only: it adds no JavaScript state, polling, API request, asset request, filesystem read, or cache invalidation path.
 
 #### Rollback/Cleanup

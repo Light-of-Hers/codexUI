@@ -6273,7 +6273,7 @@ onBeforeUnmount(() => {
 }
 
 .message-additional-context {
-  @apply mt-2 max-w-[min(var(--chat-card-max,76ch),100%)] rounded-xl border border-violet-200 bg-violet-50/80 px-3 py-2 text-xs text-violet-950;
+  @apply mt-2 max-w-[min(var(--chat-card-max,76ch),100%)] rounded-none border border-violet-200 bg-violet-50/80 px-3 py-2 text-xs text-violet-950;
 }
 
 .message-additional-context summary {

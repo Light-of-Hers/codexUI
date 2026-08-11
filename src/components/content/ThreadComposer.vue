@@ -2461,11 +2461,11 @@ watch(
 }
 
 .thread-composer-context-usage-inline-bar {
-  @apply block h-1.5 w-14 shrink-0 overflow-hidden rounded-full bg-zinc-200/80;
+  @apply block h-1.5 w-14 shrink-0 overflow-hidden rounded-none bg-zinc-200/80;
 }
 
 .thread-composer-context-usage-inline-bar-fill {
-  @apply block h-full rounded-full transition-[width] duration-200 ease-out;
+  @apply block h-full rounded-none transition-[width] duration-200 ease-out;
   background: var(--context-usage-accent);
 }
 
