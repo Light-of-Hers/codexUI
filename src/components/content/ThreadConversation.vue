@@ -576,10 +576,10 @@
                 <div
                   v-if="isAgentMessageFollowedByRunnable(message)"
                   class="agent-progress-continuation"
-                  :title="t('Continues with commands')"
+                  :title="t('More activity follows')"
+                  :aria-label="t('More activity follows')"
                 >
                   <IconTablerDots class="agent-progress-continuation-icon" aria-hidden="true" />
-                  <span>{{ t('Continues with commands') }}</span>
                 </div>
                 <div v-if="message.messageType === 'worked'" class="worked-separator-wrap" aria-live="polite">
                   <div class="worked-separator" role="status">
