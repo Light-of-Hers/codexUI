@@ -2583,6 +2583,82 @@ describe('live turn rendering', () => {
     ])
   })
 
+  it('reorders an incremental persisted snapshot by item position without a page refresh', async () => {
+    installTestWindow()
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true })) as never)
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({
+      groups: [{ projectName: 'project', threads: [thread('thread-a', '/tmp/project')] }],
+      nextCursor: null,
+    })
+    gatewayMocks.resumeThread.mockResolvedValue(null)
+    const state = useDesktopState()
+    state.primeSelectedThread('thread-a')
+    await state.refreshAll({ includeSelectedThreadMessages: false, refreshAncillary: false })
+
+    gatewayMocks.getThreadDetail.mockResolvedValueOnce({
+      messages: [
+        {
+          id: 'agent-1',
+          role: 'assistant',
+          text: 'I found the project.',
+          messageType: 'agentMessage',
+          turnId: 'turn-1',
+          turnIndex: 0,
+          itemIndex: 2,
+        },
+      ],
+      inProgress: true,
+      activeTurnId: 'turn-1',
+      hasMoreOlder: false,
+      turnIndexByTurnId: { 'turn-1': 0 },
+    })
+    await state.loadMessages('thread-a')
+    expect(state.selectedThreadId.value).toBe('thread-a')
+    expect(gatewayMocks.getThreadDetail).toHaveBeenCalledTimes(1)
+    expect(state.messages.value.map((message) => message.id)).toEqual(['agent-1'])
+
+    gatewayMocks.getThreadDetail.mockResolvedValueOnce({
+      messages: [
+        {
+          id: 'user-1',
+          role: 'user',
+          text: 'Inspect the project.',
+          messageType: 'userMessage',
+          turnId: 'turn-1',
+          turnIndex: 0,
+          itemIndex: 0,
+        },
+        {
+          id: 'tool-1',
+          role: 'system',
+          text: 'filesystem.read_file',
+          messageType: 'toolCall',
+          turnId: 'turn-1',
+          turnIndex: 0,
+          itemIndex: 1,
+        },
+        {
+          id: 'agent-1',
+          role: 'assistant',
+          text: 'I found the project.',
+          messageType: 'agentMessage',
+          turnId: 'turn-1',
+          turnIndex: 0,
+          itemIndex: 2,
+        },
+      ],
+      inProgress: true,
+      activeTurnId: 'turn-1',
+      hasMoreOlder: false,
+      turnIndexByTurnId: { 'turn-1': 0 },
+    })
+    await state.loadMessages('thread-a', { force: true, silent: true })
+
+    expect(state.messages.value.map((message) => message.id)).toEqual([
+      'user-1', 'tool-1', 'agent-1',
+    ])
+  })
+
   it('keeps accumulated live reasoning when assistant text starts streaming', async () => {
     const { state, notify } = await createLiveStateHarness()
 

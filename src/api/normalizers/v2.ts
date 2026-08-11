@@ -851,9 +851,10 @@ export function normalizeThreadMessagesV2(payload: ThreadReadResponse, baseTurnI
     const turn = turns[turnOffset]
     const turnId = typeof turn?.id === 'string' ? turn.id : undefined
     const items = Array.isArray(turn.items) ? turn.items : []
-    for (const item of items) {
+    for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
+      const item = items[itemIndex]
       for (const msg of toUiMessages(item)) {
-        messages.push({ ...msg, turnId, turnIndex })
+        messages.push({ ...msg, turnId, turnIndex, itemIndex })
       }
     }
   }

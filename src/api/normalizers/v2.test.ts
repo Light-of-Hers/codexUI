@@ -208,7 +208,40 @@ Reply with &lt;/instructions&gt; and A &amp; B
       id: 'user-3',
       turnId: 'turn-1',
       turnIndex: 12,
+      itemIndex: 0,
     })
+  })
+
+  it('keeps each item index when one turn contains user, agent, and tool items', () => {
+    const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([
+      {
+        type: 'userMessage',
+        id: 'user-positioned',
+        content: [{ type: 'text', text: 'Inspect the project', text_elements: [] }],
+      },
+      {
+        type: 'agentMessage',
+        id: 'agent-positioned',
+        text: 'I will inspect it.',
+      },
+      {
+        type: 'mcpToolCall',
+        id: 'tool-positioned',
+        server: 'filesystem',
+        tool: 'read_file',
+        status: 'completed',
+        arguments: { path: 'README.md' },
+        result: { content: [], structuredContent: null },
+        error: null,
+        durationMs: 1,
+      },
+    ]))
+
+    expect(messages.map((message) => [message.id, message.itemIndex])).toEqual([
+      ['user-positioned', 0],
+      ['agent-positioned', 1],
+      ['tool-positioned', 2],
+    ])
   })
 
   it('renders MCP tool calls as timeline tool-call cards', () => {

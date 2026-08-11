@@ -989,6 +989,7 @@ function areMessageFieldsEqual(first: UiMessage, second: UiMessage): boolean {
     arePlanDataEqual(first.plan, second.plan) &&
     first.turnId === second.turnId &&
     first.turnIndex === second.turnIndex &&
+    first.itemIndex === second.itemIndex &&
     first.isAutomationRun === second.isAutomationRun &&
     first.automationDisplayName === second.automationDisplayName
   )
@@ -1059,6 +1060,13 @@ function sortMessagesByThreadPosition(messages: UiMessage[]): UiMessage[] {
       ? right.message.turnIndex
       : Number.POSITIVE_INFINITY
     if (leftTurn !== rightTurn) return leftTurn - rightTurn
+    const leftItem = typeof left.message.itemIndex === 'number' && Number.isFinite(left.message.itemIndex)
+      ? left.message.itemIndex
+      : Number.POSITIVE_INFINITY
+    const rightItem = typeof right.message.itemIndex === 'number' && Number.isFinite(right.message.itemIndex)
+      ? right.message.itemIndex
+      : Number.POSITIVE_INFINITY
+    if (leftItem !== rightItem) return leftItem - rightItem
     return left.index - right.index
   })
   const sorted = indexed.map((entry) => entry.message)
@@ -3821,12 +3829,13 @@ export function useDesktopState() {
 
   function setPersistedMessagesForThread(threadId: string, nextMessages: UiMessage[]): void {
     const previous = persistedMessagesByThreadId.value[threadId] ?? []
-    if (areMessageArraysEqual(previous, nextMessages)) return
+    const orderedMessages = sortMessagesByThreadPosition(nextMessages)
+    if (areMessageArraysEqual(previous, orderedMessages)) return
     persistedMessagesByThreadId.value = {
       ...persistedMessagesByThreadId.value,
-      [threadId]: nextMessages,
+      [threadId]: orderedMessages,
     }
-    mergePersistedMessagesIntoFullHistory(threadId, nextMessages)
+    mergePersistedMessagesIntoFullHistory(threadId, orderedMessages)
   }
 
   function setLiveAgentMessagesForThread(threadId: string, nextMessages: UiMessage[]): void {

@@ -194,6 +194,27 @@ This file tracks manual regression and feature verification steps.
 #### Rollback/Cleanup
 - Stop any disposable test turn if it is still running.
 
+### Feature: Incremental message-position reconciliation
+
+#### Prerequisites
+- App server is running from this repository.
+- A thread can produce a user prompt, agent text, and an agent tool call in the same active turn.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Open the thread and send a prompt that starts with a short explanation, invokes a tool, and then produces another agent message.
+2. Keep the thread open while its background message refresh runs; do not manually refresh the page.
+3. Confirm the user message, tool-call card, and agent messages remain in their source order while the turn is active and after it completes.
+4. Repeat steps 1-3 in dark theme.
+
+#### Expected Results
+- A background snapshot reconciliation does not move a user message, agent message, or tool-call card to the end of the turn.
+- Refreshing the browser leaves the already-correct order unchanged.
+- The order is stable and readable in both light and dark themes.
+
+#### Rollback/Cleanup
+- Stop or archive any disposable test turn after verification.
+
 ### Feature: GitHub-style local editor syntax highlighting
 
 #### Prerequisites
