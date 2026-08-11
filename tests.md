@@ -7903,3 +7903,35 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - Use Stop on any disposable verification turn. No configuration or browser-storage cleanup is required.
+
+### Fix: Paginated fork thread-list recovery
+
+#### Prerequisites
+- App server is running from this repository and can access the local `CODEX_HOME` session store.
+- A paginated parent thread exists and can be forked from the sidebar or from a response.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. In light theme, fork the paginated parent thread and do not send a new message in the fork.
+2. Wait for the sidebar refresh that follows the fork, then refresh the page once more.
+3. Confirm the new fork remains in the sidebar instead of appearing briefly and disappearing.
+4. Confirm its title uses the existing name when present, or a `Fork:` preview based on the parent when Codex returns an empty child preview.
+5. Expand the sidebar far enough to trigger background thread-list pagination and confirm the recovered fork appears only once.
+6. Archive the disposable fork, refresh the page, and confirm it no longer appears in the active sidebar.
+7. Switch to dark theme and repeat steps 1-6; confirm sidebar text, selection state, and archive controls remain readable.
+8. Run `pnpm exec vitest run src/server/threadListRecovery.test.ts` and `pnpm exec vue-tsc --noEmit --pretty false`.
+
+#### Expected Results
+- A persistent paginated fork with only `session_meta` and `history_base` is restored to the first active `thread/list` result before it receives its first local turn.
+- The upstream cursor and later pages are unchanged, and recovered rows are deduplicated against the upstream result.
+- Archiving and browser refresh do not leave a stale active fork row.
+- Light and dark themes preserve the existing sidebar presentation.
+
+#### Performance Audit
+- Recovery runs only for the first active `thread/list` page. Cursor-based follow-up pages, archived lists, and every non-list RPC skip it.
+- The bridge reads only rollout metadata's first JSONL row, limits scans to eight concurrent file handles, caches candidates for 30 seconds, and invalidates that cache after a successful fork or archive.
+- Each unlisted candidate performs at most one `thread/read` per recovery pass to obtain the canonical thread shape. Already-listed thread ids are skipped before that read.
+- No browser automation profile was run because this task did not request browser automation. The focused regression test and TypeScript check cover the bridge path; a subsequent interactive performance run should use `pnpm run profile:thread` against a session containing a fresh paginated fork.
+
+#### Rollback/Cleanup
+- Archive the disposable fork created for verification. No rollout rewriting or browser-storage cleanup is required.

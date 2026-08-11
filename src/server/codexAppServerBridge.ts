@@ -4615,6 +4615,199 @@ function getCodexHomeDir(): string {
   return codexHome && codexHome.length > 0 ? codexHome : join(homedir(), '.codex')
 }
 
+type PaginatedForkRecoveryCandidate = {
+  threadId: string
+  forkedFromId: string
+}
+
+const PAGINATED_FORK_RECOVERY_CACHE_TTL_MS = 30_000
+const PAGINATED_FORK_SCAN_CONCURRENCY = 8
+const SESSION_ROLLOUT_DIRECTORY_DEPTH = 3
+
+let paginatedForkRecoveryCache: {
+  scannedAtMs: number
+  candidates: PaginatedForkRecoveryCandidate[]
+} | null = null
+let paginatedForkRecoveryScanPromise: Promise<PaginatedForkRecoveryCandidate[]> | null = null
+
+export function invalidatePaginatedForkThreadListRecoveryCache(): void {
+  paginatedForkRecoveryCache = null
+}
+
+async function listSessionRolloutPaths(directory: string, depth = 0): Promise<string[]> {
+  const entries = await readdir(directory, { withFileTypes: true }).catch(() => [])
+  const paths: string[] = []
+  const nestedDirectories: string[] = []
+
+  for (const entry of entries) {
+    const entryPath = join(directory, entry.name)
+    if (entry.isFile() && entry.name.startsWith('rollout-') && entry.name.endsWith('.jsonl')) {
+      paths.push(entryPath)
+    } else if (entry.isDirectory() && depth < SESSION_ROLLOUT_DIRECTORY_DEPTH) {
+      nestedDirectories.push(entryPath)
+    }
+  }
+
+  for (const nestedDirectory of nestedDirectories) {
+    paths.push(...await listSessionRolloutPaths(nestedDirectory, depth + 1))
+  }
+  return paths
+}
+
+async function readPaginatedForkRecoveryCandidate(sessionPath: string): Promise<PaginatedForkRecoveryCandidate | null> {
+  const stream = createReadStream(sessionPath, { encoding: 'utf8' })
+  const lines = createInterface({ input: stream, crlfDelay: Infinity })
+
+  try {
+    for await (const line of lines) {
+      if (!line.trim()) continue
+      const entry = asRecord(JSON.parse(line) as unknown)
+      if (entry?.type !== 'session_meta') return null
+      const payload = asRecord(entry.payload)
+      const historyBase = asRecord(payload?.history_base)
+      const threadId = readNonEmptyString(payload?.session_id) || readNonEmptyString(payload?.id)
+      const forkedFromId = readNonEmptyString(payload?.forked_from_id)
+      const historyBaseThreadId = readNonEmptyString(historyBase?.thread_id)
+      if (
+        payload?.history_mode !== 'paginated'
+        || !threadId
+        || !forkedFromId
+        || !historyBaseThreadId
+      ) {
+        return null
+      }
+      return { threadId, forkedFromId }
+    }
+  } catch {
+    return null
+  } finally {
+    lines.close()
+    stream.destroy()
+  }
+
+  return null
+}
+
+async function scanPaginatedForkRecoveryCandidates(): Promise<PaginatedForkRecoveryCandidate[]> {
+  const rolloutPaths = await listSessionRolloutPaths(join(getCodexHomeDir(), 'sessions'))
+  const candidates: PaginatedForkRecoveryCandidate[] = []
+  let nextPathIndex = 0
+
+  await Promise.all(Array.from(
+    { length: Math.min(PAGINATED_FORK_SCAN_CONCURRENCY, rolloutPaths.length) },
+    async () => {
+      while (nextPathIndex < rolloutPaths.length) {
+        const sessionPath = rolloutPaths[nextPathIndex]
+        nextPathIndex += 1
+        if (!sessionPath) continue
+        const candidate = await readPaginatedForkRecoveryCandidate(sessionPath)
+        if (candidate) candidates.push(candidate)
+      }
+    },
+  ))
+
+  return Array.from(new Map(candidates.map((candidate) => [candidate.threadId, candidate])).values())
+}
+
+async function getPaginatedForkRecoveryCandidates(): Promise<PaginatedForkRecoveryCandidate[]> {
+  const now = Date.now()
+  if (
+    paginatedForkRecoveryCache
+    && now - paginatedForkRecoveryCache.scannedAtMs < PAGINATED_FORK_RECOVERY_CACHE_TTL_MS
+  ) {
+    return paginatedForkRecoveryCache.candidates
+  }
+  if (paginatedForkRecoveryScanPromise) return await paginatedForkRecoveryScanPromise
+
+  paginatedForkRecoveryScanPromise = scanPaginatedForkRecoveryCandidates()
+    .then((candidates) => {
+      paginatedForkRecoveryCache = { scannedAtMs: Date.now(), candidates }
+      return candidates
+    })
+    .finally(() => {
+      paginatedForkRecoveryScanPromise = null
+    })
+  return await paginatedForkRecoveryScanPromise
+}
+
+function shouldRecoverPaginatedForksFromThreadList(params: unknown): boolean {
+  const record = asRecord(params)
+  if (!record || record.archived === true) return false
+  return typeof record.cursor !== 'string' || record.cursor.trim().length === 0
+}
+
+function fallbackForkPreview(parentPreview: string): string {
+  return parentPreview ? `Fork: ${parentPreview}` : 'Forked thread'
+}
+
+function sortThreadListDataByUpdatedAt(data: unknown[]): unknown[] {
+  return [...data].sort((left, right) => {
+    const leftUpdatedAt = asRecord(left)?.updatedAt
+    const rightUpdatedAt = asRecord(right)?.updatedAt
+    const leftTimestamp = typeof leftUpdatedAt === 'number' && Number.isFinite(leftUpdatedAt) ? leftUpdatedAt : 0
+    const rightTimestamp = typeof rightUpdatedAt === 'number' && Number.isFinite(rightUpdatedAt) ? rightUpdatedAt : 0
+    return rightTimestamp - leftTimestamp
+  })
+}
+
+/**
+ * Codex currently omits a freshly forked paginated thread from `thread/list`
+ * because its local rollout has only metadata and a history reference. Recover
+ * those persistent forks from their rollout metadata until upstream lists them.
+ */
+export async function recoverUnlistedPaginatedForksInThreadList(
+  result: unknown,
+  params: unknown,
+  appServer: RpcExecutor,
+): Promise<unknown> {
+  if (!shouldRecoverPaginatedForksFromThreadList(params)) return result
+
+  const resultRecord = asRecord(result)
+  const data = Array.isArray(resultRecord?.data) ? resultRecord.data : null
+  if (!resultRecord || !data) return result
+
+  const listedThreadIds = new Set<string>()
+  const previewsByThreadId = new Map<string, string>()
+  for (const item of data) {
+    const thread = asRecord(item)
+    const threadId = readNonEmptyString(thread?.id)
+    if (!threadId) continue
+    listedThreadIds.add(threadId)
+    previewsByThreadId.set(threadId, readNonEmptyString(thread?.preview))
+  }
+
+  const candidates = await getPaginatedForkRecoveryCandidates()
+  const recoveredThreads: unknown[] = []
+  for (const candidate of candidates) {
+    if (listedThreadIds.has(candidate.threadId)) continue
+    try {
+      const threadReadResult = asRecord(await appServer.rpc('thread/read', {
+        threadId: candidate.threadId,
+        includeTurns: false,
+      }))
+      const thread = asRecord(threadReadResult?.thread)
+      if (readNonEmptyString(thread?.id) !== candidate.threadId) continue
+
+      const preview = readNonEmptyString(thread?.preview)
+      recoveredThreads.push(preview
+        ? thread
+        : {
+            ...thread,
+            preview: fallbackForkPreview(previewsByThreadId.get(candidate.forkedFromId) ?? ''),
+          })
+      listedThreadIds.add(candidate.threadId)
+    } catch {
+      // The rollout can disappear between the local scan and thread/read.
+    }
+  }
+
+  if (recoveredThreads.length === 0) return result
+  return {
+    ...resultRecord,
+    data: sortThreadListDataByUpdatedAt([...data, ...recoveredThreads]),
+  }
+}
+
 function getSkillsInstallDir(): string {
   return join(getCodexHomeDir(), 'skills')
 }
@@ -9815,6 +10008,13 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
             effectiveRpcAppServer.storeThreadReadSnapshot(rpcThreadId, result)
             recordRuntimeThreadState(runtimePool, rpcThreadId, effectiveRpcRuntime)
           }
+        }
+
+        if (body.method === 'thread/fork' || body.method === 'thread/archive') {
+          invalidatePaginatedForkThreadListRecoveryCache()
+        }
+        if (body.method === 'thread/list') {
+          result = await recoverUnlistedPaginatedForksInThreadList(result, rpcParams, effectiveRpcAppServer)
         }
 
         setJson(res, 200, { result })
