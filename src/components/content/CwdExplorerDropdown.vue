@@ -218,7 +218,7 @@ onBeforeUnmount(() => window.removeEventListener('pointerdown', onDocumentPointe
 }
 
 .cwd-explorer-trigger {
-  @apply inline-flex min-h-7 items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-2.5 py-1.5 text-xs text-zinc-700 outline-none transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-60;
+  @apply inline-flex h-7 items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-xs text-zinc-700 outline-none transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-60;
 }
 
 .cwd-explorer-trigger-icon,

@@ -5125,7 +5125,7 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 .thread-search-toggle,
 .thread-search-nav,
 .thread-search-close {
-  @apply inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-600 transition hover:bg-zinc-50 hover:text-zinc-950 disabled:cursor-default disabled:opacity-45 disabled:hover:bg-white disabled:hover:text-zinc-600;
+  @apply inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-600 transition hover:bg-zinc-50 hover:text-zinc-950 disabled:cursor-default disabled:opacity-45 disabled:hover:bg-white disabled:hover:text-zinc-600;
 }
 
 .thread-search-toggle-icon,
@@ -5196,7 +5196,7 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 }
 
 .content-header-terminal-command :deep(.composer-dropdown-trigger) {
-  @apply h-8 rounded-full border border-zinc-200 bg-white px-3 text-xs text-zinc-700 outline-none transition hover:bg-zinc-50 focus:border-zinc-300;
+  @apply h-7 rounded-full border border-zinc-200 bg-white px-3 text-xs text-zinc-700 outline-none transition hover:bg-zinc-50 focus:border-zinc-300;
 }
 
 .content-header-terminal-command :deep(.composer-dropdown-prefix-icon) {
@@ -5222,12 +5222,11 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 }
 
 .content-header-terminal-command :deep(.composer-dropdown-trigger) {
-  @apply rounded-full border border-zinc-200 bg-white px-2.5 py-1.5 text-xs text-zinc-700 transition hover:bg-zinc-50;
+  @apply rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-xs text-zinc-700 transition hover:bg-zinc-50;
 }
 
-.content-header-terminal-command :deep(.composer-dropdown-prefix-icon),
 .content-header-message-nav {
-  @apply inline-flex min-h-7 items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-2.5 py-1.5 text-xs text-zinc-700 outline-none transition hover:bg-zinc-50;
+  @apply inline-flex h-7 items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-xs text-zinc-700 outline-none transition hover:bg-zinc-50;
 }
 
 .content-header-message-nav.is-active {
