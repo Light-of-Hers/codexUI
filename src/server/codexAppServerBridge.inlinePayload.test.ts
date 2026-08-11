@@ -953,6 +953,74 @@ describe('thread session skill recovery', () => {
     })
   })
 
+  it('recovers legacy JavaScript object literal command arguments at their original position', () => {
+    const result = {
+      thread: {
+        id: 'thread-legacy-custom-exec',
+        path: '/tmp/session.jsonl',
+        turns: [{
+          id: 'turn-1',
+          items: [
+            {
+              id: 'user-1',
+              type: 'userMessage',
+              content: [{ type: 'text', text: 'inspect it', text_elements: [] }],
+            },
+            { id: 'agent-before', type: 'agentMessage', text: 'I will inspect it.' },
+            { id: 'agent-after', type: 'agentMessage', text: 'The inspection is complete.' },
+          ],
+        }],
+      },
+    }
+    const sessionLog = [
+      JSON.stringify({ type: 'turn_context', payload: { turn_id: 'turn-1' } }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'I will inspect it.' }],
+        },
+      }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'custom_tool_call',
+          name: 'exec',
+          status: 'completed',
+          call_id: 'call-legacy',
+          input: "const result = await tools.exec_command({cmd:\"printf '{ok}'\",workdir:\"/tmp/project\",yield_time_ms:10000});",
+        },
+      }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'The inspection is complete.' }],
+        },
+      }),
+    ].join('\n')
+
+    const merged = mergeRecoveredTurnItemsIntoThreadResult(
+      result,
+      (_threadId, turns) => turns,
+      sessionLog,
+    ) as typeof result
+    const items = merged.thread.turns[0].items
+
+    expect(items.map((item) => item.id)).toEqual([
+      'user-1',
+      'agent-before',
+      'session-cmd-call-legacy',
+      'agent-after',
+    ])
+    expect(items[2]).toMatchObject({
+      command: "printf '{ok}'",
+      cwd: '/tmp/project',
+    })
+  })
+
   it('reorders every nested custom exec command between its surrounding agent messages', () => {
     const result = {
       thread: {

@@ -3352,24 +3352,24 @@ function jsonObjectsAfterMarker(input: string, marker: string): string[] {
     }
 
     let depth = 0
-    let inString = false
+    let stringQuote = ''
     let escaped = false
     let objectEnd = -1
     for (let index = start; index < input.length; index += 1) {
       const char = input[index]!
-      if (inString) {
+      if (stringQuote) {
         if (escaped) {
           escaped = false
         } else if (char === '\\') {
           escaped = true
-        } else if (char === '"') {
-          inString = false
+        } else if (char === stringQuote) {
+          stringQuote = ''
         }
         continue
       }
 
-      if (char === '"') {
-        inString = true
+      if (char === '"' || char === "'" || char === '`') {
+        stringQuote = char
       } else if (char === '{') {
         depth += 1
       } else if (char === '}') {
@@ -3392,6 +3392,156 @@ function jsonObjectsAfterMarker(input: string, marker: string): string[] {
   return objects
 }
 
+function readJavaScriptStringLiteral(source: string, startIndex: number): { value: string, nextIndex: number } | null {
+  const quote = source[startIndex]
+  if (quote !== '"' && quote !== "'" && quote !== '`') return null
+
+  let value = ''
+  for (let index = startIndex + 1; index < source.length; index += 1) {
+    const char = source[index]!
+    if (char === quote) return { value, nextIndex: index + 1 }
+    if (char !== '\\') {
+      value += char
+      continue
+    }
+
+    index += 1
+    const escaped = source[index]
+    if (escaped === undefined) return null
+    if (escaped === '\n') continue
+    if (escaped === '\r') {
+      if (source[index + 1] === '\n') index += 1
+      continue
+    }
+
+    const mapped = ({
+      b: '\b',
+      f: '\f',
+      n: '\n',
+      r: '\r',
+      t: '\t',
+      v: '\v',
+      0: '\0',
+    } as Record<string, string>)[escaped]
+    if (mapped !== undefined) {
+      value += mapped
+      continue
+    }
+    if (escaped === 'x') {
+      const hex = source.slice(index + 1, index + 3)
+      if (!/^[0-9a-f]{2}$/iu.test(hex)) return null
+      value += String.fromCodePoint(Number.parseInt(hex, 16))
+      index += 2
+      continue
+    }
+    if (escaped === 'u') {
+      if (source[index + 1] === '{') {
+        const endIndex = source.indexOf('}', index + 2)
+        const hex = endIndex < 0 ? '' : source.slice(index + 2, endIndex)
+        if (!/^[0-9a-f]{1,6}$/iu.test(hex)) return null
+        const codePoint = Number.parseInt(hex, 16)
+        if (codePoint > 0x10ffff) return null
+        value += String.fromCodePoint(codePoint)
+        index = endIndex
+        continue
+      }
+      const hex = source.slice(index + 1, index + 5)
+      if (!/^[0-9a-f]{4}$/iu.test(hex)) return null
+      value += String.fromCodePoint(Number.parseInt(hex, 16))
+      index += 4
+      continue
+    }
+
+    value += escaped
+  }
+
+  return null
+}
+
+function skipJavaScriptWhitespace(source: string, startIndex: number): number {
+  let index = startIndex
+  while (/\s/u.test(source[index] ?? '')) index += 1
+  return index
+}
+
+function skipJavaScriptObjectValue(source: string, startIndex: number): number {
+  let index = startIndex
+  let curlyDepth = 0
+  let squareDepth = 0
+  let parenDepth = 0
+  while (index < source.length) {
+    const char = source[index]!
+    if (char === '"' || char === "'" || char === '`') {
+      const literal = readJavaScriptStringLiteral(source, index)
+      if (!literal) return source.length
+      index = literal.nextIndex
+      continue
+    }
+    if (char === '/' && source[index + 1] === '/') {
+      const newlineIndex = source.indexOf('\n', index + 2)
+      index = newlineIndex < 0 ? source.length : newlineIndex + 1
+      continue
+    }
+    if (char === '/' && source[index + 1] === '*') {
+      const commentEnd = source.indexOf('*/', index + 2)
+      index = commentEnd < 0 ? source.length : commentEnd + 2
+      continue
+    }
+    if (char === '{') curlyDepth += 1
+    else if (char === '}') {
+      if (curlyDepth === 0 && squareDepth === 0 && parenDepth === 0) return index
+      curlyDepth = Math.max(0, curlyDepth - 1)
+    } else if (char === '[') squareDepth += 1
+    else if (char === ']') squareDepth = Math.max(0, squareDepth - 1)
+    else if (char === '(') parenDepth += 1
+    else if (char === ')') parenDepth = Math.max(0, parenDepth - 1)
+    else if (char === ',' && curlyDepth === 0 && squareDepth === 0 && parenDepth === 0) return index
+    index += 1
+  }
+  return index
+}
+
+function readJavaScriptObjectStringProperty(objectSource: string, propertyName: string): string | null {
+  let index = skipJavaScriptWhitespace(objectSource, 0)
+  if (objectSource[index] !== '{') return null
+  index += 1
+
+  while (index < objectSource.length) {
+    index = skipJavaScriptWhitespace(objectSource, index)
+    if (objectSource[index] === '}') return null
+
+    let key = ''
+    const char = objectSource[index]
+    if (char === '"' || char === "'" || char === '`') {
+      const literal = readJavaScriptStringLiteral(objectSource, index)
+      if (!literal) return null
+      key = literal.value
+      index = literal.nextIndex
+    } else {
+      const keyMatch = objectSource.slice(index).match(/^[A-Za-z_$][\w$]*/u)
+      if (!keyMatch) return null
+      key = keyMatch[0]
+      index += key.length
+    }
+
+    index = skipJavaScriptWhitespace(objectSource, index)
+    if (objectSource[index] !== ':') return null
+    index = skipJavaScriptWhitespace(objectSource, index + 1)
+    if (key === propertyName) {
+      return readJavaScriptStringLiteral(objectSource, index)?.value ?? null
+    }
+
+    index = skipJavaScriptObjectValue(objectSource, index)
+    if (objectSource[index] === ',') {
+      index += 1
+      continue
+    }
+    if (objectSource[index] === '}') return null
+  }
+
+  return null
+}
+
 function buildCustomExecRecoveredCommands(payload: Record<string, unknown>): SessionRecoveredCommand[] {
   if (payload.name !== 'exec') return []
   const callId = readNonEmptyString(payload.call_id)
@@ -3401,17 +3551,25 @@ function buildCustomExecRecoveredCommands(payload: Record<string, unknown>): Ses
 
   const commands: Array<{ command: string; cwd: string | null }> = []
   for (const argumentJson of argumentJsons) {
+    let args: Record<string, unknown> | null = null
     try {
-      const args = asRecord(JSON.parse(argumentJson))
-      const command = readNonEmptyString(args?.cmd)
-      if (!command) continue
-      commands.push({
-        command,
-        cwd: readNonEmptyString(args?.workdir) || readNonEmptyString(args?.cwd) || null,
-      })
+      args = asRecord(JSON.parse(argumentJson))
     } catch {
-      // A malformed nested call must not hide later valid commands in the same script.
+      // Older Codex sessions serialized tool input as JavaScript object literals
+      // with unquoted property names. Read only literal strings; never execute it.
+      args = null
     }
+    const command = readNonEmptyString(args?.cmd)
+      || readJavaScriptObjectStringProperty(argumentJson, 'cmd')
+    if (!command) continue
+    commands.push({
+      command,
+      cwd: readNonEmptyString(args?.workdir)
+        || readNonEmptyString(args?.cwd)
+        || readJavaScriptObjectStringProperty(argumentJson, 'workdir')
+        || readJavaScriptObjectStringProperty(argumentJson, 'cwd')
+        || null,
+    })
   }
 
   return commands.map((command, index) => ({
