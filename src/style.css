@@ -2747,7 +2747,7 @@ select {
 :root .content-header {
   border-bottom: 1px solid var(--ark-line);
   background: color-mix(in srgb, var(--ark-panel-solid) 84%, transparent) !important;
-  box-shadow: inset 0 -3px 0 color-mix(in srgb, var(--ark-line-strong) 58%, transparent);
+  box-shadow: inset 0 -3px 0 color-mix(in srgb, var(--ark-cyan) 68%, transparent);
 }
 
 :root .content-title,
