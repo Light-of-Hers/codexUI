@@ -6633,15 +6633,16 @@ onBeforeUnmount(() => {
 
 .message-table {
   @apply min-w-full border-separate border-spacing-0 overflow-visible rounded-none border bg-white text-sm text-slate-800;
-  border-color: color-mix(in srgb, var(--ark-line-strong) 58%, var(--ark-line));
+  border-color: var(--ark-table-frame);
+  background: var(--ark-table-body);
   line-height: 1.45;
 }
 
 .message-table-head-cell,
 .message-table-cell {
   @apply border-b border-l px-2.5 py-2 text-center align-middle whitespace-pre-wrap break-words;
-  border-bottom-color: var(--ark-line);
-  border-left-color: color-mix(in srgb, var(--ark-line) 45%, var(--ark-panel-solid));
+  border-bottom-color: var(--ark-table-grid);
+  border-left-color: var(--ark-table-grid);
   overflow-wrap: anywhere;
 }
 
@@ -6652,7 +6653,7 @@ onBeforeUnmount(() => {
 
 .message-table-head-cell {
   @apply font-medium text-slate-900;
-  background: color-mix(in srgb, var(--ark-recessed) 80%, var(--ark-panel-solid));
+  background: var(--ark-table-head);
 }
 
 .message-table-body-row:last-child .message-table-cell {
@@ -7597,9 +7598,9 @@ onBeforeUnmount(() => {
 }
 
 .message-table {
-  border-color: color-mix(in srgb, var(--ark-line-strong) 58%, var(--ark-line));
+  border-color: var(--ark-table-frame);
   border-radius: 0;
-  background: var(--ark-panel-solid);
+  background: var(--ark-table-body);
   box-shadow: none;
 }
 
@@ -7617,15 +7618,15 @@ onBeforeUnmount(() => {
 }
 
 .message-table-head-cell {
-  background: color-mix(in srgb, var(--ark-recessed) 80%, var(--ark-panel-solid));
+  background: var(--ark-table-head);
   color: var(--ark-ink);
   font-weight: 400;
 }
 
 .message-table-head-cell,
 .message-table-cell {
-  border-bottom-color: var(--ark-line);
-  border-left-color: color-mix(in srgb, var(--ark-line) 45%, var(--ark-panel-solid));
+  border-bottom-color: var(--ark-table-grid);
+  border-left-color: var(--ark-table-grid);
 }
 
 .message-file-link,

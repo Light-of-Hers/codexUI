@@ -439,19 +439,19 @@
 }
 
 :root.dark .thread-composer-preview.thread-composer-preview .message-table {
-  border-color: color-mix(in srgb, var(--ark-line-strong) 58%, var(--ark-line));
-  background: var(--ark-panel-solid);
+  border-color: var(--ark-table-frame);
+  background: var(--ark-table-body);
   color: var(--ark-ink);
 }
 
 :root.dark .thread-composer-preview.thread-composer-preview .message-table-head-cell,
 :root.dark .thread-composer-preview.thread-composer-preview .message-table-cell {
-  border-bottom-color: var(--ark-line);
-  border-left-color: color-mix(in srgb, var(--ark-line) 45%, var(--ark-panel-solid));
+  border-bottom-color: var(--ark-table-grid);
+  border-left-color: var(--ark-table-grid);
 }
 
 :root.dark .thread-composer-preview.thread-composer-preview .message-table-head-cell {
-  background: color-mix(in srgb, var(--ark-recessed) 80%, var(--ark-panel-solid));
+  background: var(--ark-table-head);
   color: var(--ark-ink);
 }
 
@@ -1043,15 +1043,16 @@
 
 .message-table {
   @apply min-w-full border-separate border-spacing-0 overflow-visible rounded-none border bg-white text-sm text-slate-800;
-  border-color: color-mix(in srgb, var(--ark-line-strong) 58%, var(--ark-line));
+  border-color: var(--ark-table-frame);
+  background: var(--ark-table-body);
   line-height: 1.45;
 }
 
 .message-table-head-cell,
 .message-table-cell {
   @apply border-b border-l px-2.5 py-2 text-center align-middle whitespace-pre-wrap break-words;
-  border-bottom-color: var(--ark-line);
-  border-left-color: color-mix(in srgb, var(--ark-line) 45%, var(--ark-panel-solid));
+  border-bottom-color: var(--ark-table-grid);
+  border-left-color: var(--ark-table-grid);
   overflow-wrap: anywhere;
 }
 
@@ -1062,7 +1063,7 @@
 
 .message-table-head-cell {
   @apply font-medium text-slate-900;
-  background: color-mix(in srgb, var(--ark-recessed) 80%, var(--ark-panel-solid));
+  background: var(--ark-table-head);
 }
 
 .message-table-body-row:last-child .message-table-cell {
@@ -1472,18 +1473,19 @@
 }
 
 :root.dark .message-table {
-  background: var(--ark-panel-solid);
+  border-color: var(--ark-table-frame);
+  background: var(--ark-table-body);
   color: var(--ark-ink);
 }
 
 :root.dark .message-table-head-cell,
 :root.dark .message-table-cell {
-  border-bottom-color: var(--ark-line);
-  border-left-color: color-mix(in srgb, var(--ark-line) 45%, var(--ark-panel-solid));
+  border-bottom-color: var(--ark-table-grid);
+  border-left-color: var(--ark-table-grid);
 }
 
 :root.dark .message-table-head-cell {
-  background: color-mix(in srgb, var(--ark-recessed) 80%, var(--ark-panel-solid));
+  background: var(--ark-table-head);
   color: var(--ark-ink);
 }
 
@@ -2660,6 +2662,10 @@
   --ark-muted: #687477;
   --ark-line: #c7cfd0;
   --ark-line-strong: #7c8789;
+  --ark-table-frame: #a2a9b1;
+  --ark-table-grid: #a2a9b1;
+  --ark-table-body: #f8f9fa;
+  --ark-table-head: #ebedef;
   --ark-cyan: #22bbff;
   --ark-cyan-ink: #087aa9;
   --ark-structural: #5f6c70;
@@ -2679,6 +2685,10 @@
   --ark-muted: #a2afb2;
   --ark-line: #3c4649;
   --ark-line-strong: #6c787c;
+  --ark-table-frame: #68757a;
+  --ark-table-grid: #68757a;
+  --ark-table-body: #1a1f21;
+  --ark-table-head: #14191b;
   --ark-cyan: #22bbff;
   --ark-cyan-ink: #79d7ff;
   --ark-structural: #647277;
