@@ -34,7 +34,12 @@ function thread(id: string, preview: string, updatedAt: number) {
   }
 }
 
-async function writePaginatedForkRollout(codexHome: string, threadId: string, parentThreadId: string): Promise<void> {
+async function writePaginatedForkRollout(
+  codexHome: string,
+  threadId: string,
+  parentThreadId: string,
+  cwd = '/tmp/project',
+): Promise<void> {
   const rolloutDirectory = join(codexHome, 'sessions', '2026', '08', '12')
   await mkdir(rolloutDirectory, { recursive: true })
   await writeFile(
@@ -45,6 +50,7 @@ async function writePaginatedForkRollout(codexHome: string, threadId: string, pa
         payload: {
           session_id: threadId,
           forked_from_id: parentThreadId,
+          cwd,
           history_mode: 'paginated',
           history_base: { thread_id: parentThreadId },
         },
@@ -71,7 +77,7 @@ describe('recoverUnlistedPaginatedForksInThreadList', () => {
     try {
       const result = await recoverUnlistedPaginatedForksInThreadList(
         { data: [thread('thread-parent', 'Original context', 100)], nextCursor: 'next-page' },
-        { archived: false, cursor: null },
+        { archived: false, cursor: null, cwd: '/tmp/project' },
         appServer,
       ) as { data: Array<{ id: string; preview: string }>; nextCursor: string | null }
 
@@ -100,6 +106,46 @@ describe('recoverUnlistedPaginatedForksInThreadList', () => {
         appServer,
       )).resolves.toBe(result)
       expect(appServer.rpc).not.toHaveBeenCalled()
+    } finally {
+      await rm(codexHome, { recursive: true, force: true })
+    }
+  })
+
+  it('skips paginated forks outside the requested working directories before reading them', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'codexui-thread-list-recovery-'))
+    process.env.CODEX_HOME = codexHome
+    await writePaginatedForkRollout(codexHome, 'thread-other-project', 'thread-parent', '/tmp/other-project')
+    const appServer = { rpc: vi.fn() }
+    const result = { data: [thread('thread-parent', 'Original context', 100)], nextCursor: null }
+
+    try {
+      await expect(recoverUnlistedPaginatedForksInThreadList(
+        result,
+        { archived: false, cursor: null, cwd: ['/tmp/project', '/tmp/another-project'] },
+        appServer,
+      )).resolves.toBe(result)
+      expect(appServer.rpc).not.toHaveBeenCalled()
+    } finally {
+      await rm(codexHome, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a recovered thread when its canonical cwd disagrees with rollout metadata', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'codexui-thread-list-recovery-'))
+    process.env.CODEX_HOME = codexHome
+    await writePaginatedForkRollout(codexHome, 'thread-child', 'thread-parent')
+    const appServer = {
+      rpc: vi.fn(async () => ({ thread: { ...thread('thread-child', '', 200), cwd: '/tmp/other-project' } })),
+    }
+    const result = { data: [thread('thread-parent', 'Original context', 100)], nextCursor: null }
+
+    try {
+      await expect(recoverUnlistedPaginatedForksInThreadList(
+        result,
+        { archived: false, cursor: null, cwd: '/tmp/project' },
+        appServer,
+      )).resolves.toBe(result)
+      expect(appServer.rpc).toHaveBeenCalledTimes(1)
     } finally {
       await rm(codexHome, { recursive: true, force: true })
     }

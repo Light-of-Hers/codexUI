@@ -4618,6 +4618,7 @@ function getCodexHomeDir(): string {
 type PaginatedForkRecoveryCandidate = {
   threadId: string
   forkedFromId: string
+  cwd: string
 }
 
 const PAGINATED_FORK_RECOVERY_CACHE_TTL_MS = 30_000
@@ -4676,7 +4677,7 @@ async function readPaginatedForkRecoveryCandidate(sessionPath: string): Promise<
       ) {
         return null
       }
-      return { threadId, forkedFromId }
+      return { threadId, forkedFromId, cwd: readNonEmptyString(payload?.cwd) }
     }
   } catch {
     return null
@@ -4736,6 +4737,17 @@ function shouldRecoverPaginatedForksFromThreadList(params: unknown): boolean {
   return typeof record.cursor !== 'string' || record.cursor.trim().length === 0
 }
 
+function readThreadListCwdFilters(params: unknown): string[] | null {
+  const cwd = asRecord(params)?.cwd
+  if (typeof cwd === 'string') {
+    const normalized = cwd.trim()
+    return normalized ? [normalized] : null
+  }
+  if (!Array.isArray(cwd)) return null
+  const filters = cwd.flatMap((value) => typeof value === 'string' && value.trim() ? [value.trim()] : [])
+  return filters.length > 0 ? filters : null
+}
+
 function fallbackForkPreview(parentPreview: string): string {
   return parentPreview ? `Fork: ${parentPreview}` : 'Forked thread'
 }
@@ -4777,9 +4789,11 @@ export async function recoverUnlistedPaginatedForksInThreadList(
   }
 
   const candidates = await getPaginatedForkRecoveryCandidates()
+  const cwdFilters = readThreadListCwdFilters(params)
   const recoveredThreads: unknown[] = []
   for (const candidate of candidates) {
     if (listedThreadIds.has(candidate.threadId)) continue
+    if (cwdFilters && !cwdFilters.includes(candidate.cwd)) continue
     try {
       const threadReadResult = asRecord(await appServer.rpc('thread/read', {
         threadId: candidate.threadId,
@@ -4787,6 +4801,7 @@ export async function recoverUnlistedPaginatedForksInThreadList(
       }))
       const thread = asRecord(threadReadResult?.thread)
       if (readNonEmptyString(thread?.id) !== candidate.threadId) continue
+      if (candidate.cwd && readNonEmptyString(thread?.cwd) !== candidate.cwd) continue
 
       const preview = readNonEmptyString(thread?.preview)
       recoveredThreads.push(preview
