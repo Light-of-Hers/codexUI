@@ -439,16 +439,20 @@
 }
 
 :root.dark .thread-composer-preview.thread-composer-preview .message-table {
-  @apply border-zinc-700 bg-zinc-900/90 text-zinc-100;
+  border-color: color-mix(in srgb, var(--ark-line-strong) 58%, var(--ark-line));
+  background: var(--ark-panel-solid);
+  color: var(--ark-ink);
 }
 
 :root.dark .thread-composer-preview.thread-composer-preview .message-table-head-cell,
 :root.dark .thread-composer-preview.thread-composer-preview .message-table-cell {
-  @apply border-zinc-700;
+  border-bottom-color: var(--ark-line);
+  border-left-color: color-mix(in srgb, var(--ark-line) 24%, var(--ark-panel-solid));
 }
 
 :root.dark .thread-composer-preview.thread-composer-preview .message-table-head-cell {
-  @apply bg-zinc-800 text-zinc-100;
+  background: color-mix(in srgb, var(--ark-recessed) 80%, var(--ark-panel-solid));
+  color: var(--ark-ink);
 }
 
 :root.dark .thread-composer-preview.thread-composer-preview .message-bold-text {
@@ -1038,12 +1042,16 @@
 }
 
 .message-table {
-  @apply min-w-full border-separate border-spacing-0 overflow-hidden rounded-xl border border-slate-200 bg-white text-sm text-slate-800;
+  @apply min-w-full border-separate border-spacing-0 overflow-hidden rounded-none border bg-white text-sm text-slate-800;
+  border-color: color-mix(in srgb, var(--ark-line-strong) 58%, var(--ark-line));
+  line-height: 1.45;
 }
 
 .message-table-head-cell,
 .message-table-cell {
-  @apply border-b border-l border-slate-200 px-3 py-2 align-top whitespace-pre-wrap break-words;
+  @apply border-b border-l px-2.5 py-2 align-middle whitespace-pre-wrap break-words;
+  border-bottom-color: var(--ark-line);
+  border-left-color: color-mix(in srgb, var(--ark-line) 24%, var(--ark-panel-solid));
   overflow-wrap: anywhere;
 }
 
@@ -1053,7 +1061,8 @@
 }
 
 .message-table-head-cell {
-  @apply bg-slate-100 font-semibold text-slate-900;
+  @apply font-medium text-slate-900;
+  background: color-mix(in srgb, var(--ark-recessed) 80%, var(--ark-panel-solid));
 }
 
 .message-table-body-row:last-child .message-table-cell {
@@ -1463,16 +1472,19 @@
 }
 
 :root.dark .message-table {
-  @apply border-zinc-700 bg-zinc-900/90 text-zinc-100;
+  background: var(--ark-panel-solid);
+  color: var(--ark-ink);
 }
 
 :root.dark .message-table-head-cell,
 :root.dark .message-table-cell {
-  @apply border-zinc-700;
+  border-bottom-color: var(--ark-line);
+  border-left-color: color-mix(in srgb, var(--ark-line) 24%, var(--ark-panel-solid));
 }
 
 :root.dark .message-table-head-cell {
-  @apply bg-zinc-800 text-zinc-100;
+  background: color-mix(in srgb, var(--ark-recessed) 80%, var(--ark-panel-solid));
+  color: var(--ark-ink);
 }
 
 :root.dark .message-code-block {
@@ -2097,7 +2109,7 @@
 }
 
 :root.dark .plan-card-markdown .message-table {
-  @apply bg-zinc-900/90;
+  background: var(--ark-panel-solid);
 }
 
 :root.dark .plan-step-item {
