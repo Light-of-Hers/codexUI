@@ -2064,6 +2064,65 @@ describe('backend queue scheduling', () => {
     processor.dispose()
   })
 
+  it('keeps a queued session running across its completed turn notification', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-queue-running-state-'))
+    vi.stubEnv('CODEX_HOME', tempDir)
+    await writeFile(join(tempDir, '.codex-global-state.json'), JSON.stringify(queuedTurnState()), 'utf8')
+    const listeners: Array<(value: { method: string; params: unknown }) => void> = []
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = []
+    const forwarded: Array<{ method: string; params: Record<string, unknown> }> = []
+    const processor = new BackendQueueProcessor({
+      onNotification(listener: (value: { method: string; params: unknown }) => void) {
+        listeners.push(listener)
+        return () => undefined
+      },
+      async rpc(method: string, params: Record<string, unknown>): Promise<unknown> {
+        calls.push({ method, params })
+        if (method === 'thread/read') {
+          return {
+            thread: {
+              id: 'thread-1',
+              status: { type: 'idle' },
+              turns: [{ id: 'turn-1', status: 'completed' }],
+            },
+          }
+        }
+        return {}
+      },
+    } as never, undefined, undefined, (notification) => {
+      forwarded.push({ method: notification.method, params: notification.params as Record<string, unknown> })
+    })
+
+    try {
+      processor.scheduleThreadQueueDrain('thread-1', 5000)
+      const idle = {
+        method: 'thread/status/changed',
+        params: { threadId: 'thread-1', status: { type: 'idle' } },
+      }
+      const completed = {
+        method: 'turn/completed',
+        params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },
+      }
+
+      listeners[0]?.(idle)
+      listeners[0]?.(completed)
+
+      await vi.waitFor(() => {
+        expect(calls).toHaveLength(3)
+      })
+
+      expect(processor.isNotificationDeferred(idle)).toBe(false)
+      expect(processor.isNotificationDeferred(completed)).toBe(false)
+      expect(forwarded).toEqual([{
+        method: 'thread/status/changed',
+        params: { threadId: 'thread-1', status: { type: 'running' } },
+      }])
+    } finally {
+      processor.dispose()
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
   it('does not drain queued turns while the latest persisted turn has only user input', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'codexui-queue-user-only-'))
     vi.stubEnv('CODEX_HOME', tempDir)

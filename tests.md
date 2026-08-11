@@ -126,6 +126,8 @@ This file tracks manual regression and feature verification steps.
 9. On that direct thread route, set reasoning effort to `Extra High`, send a prompt, and confirm the composer still shows `Extra High` while the turn is running.
 10. Confirm an interrupted/completed `thread/status/changed` notification clears the running state without waiting for a later full thread refresh.
 11. Repeat the same flow in dark theme.
+12. While a turn is running, queue a follow-up for the same thread and let the current turn complete.
+13. Confirm the sidebar and composer stay in the running state until the queued follow-up has started.
 
 #### Expected Results
 - If `thread/read` briefly lags behind `turn/start`, the UI keeps the thread marked as running instead of reverting to idle.
@@ -134,6 +136,7 @@ This file tracks manual regression and feature verification steps.
 - The composer stop button is driven by the selected thread's local running state, so it appears even when the selected session has not yet been merged into the sidebar list.
 - Direct thread routes remain the active composer context even when the thread is not present in the loaded sidebar page, preserving per-thread settings such as `Extra High` reasoning effort.
 - Terminal status notifications such as interrupted, completed, and failed clear the running indicators immediately.
+- When a persisted follow-up is ready, the completed turn's terminal notifications are not shown as an idle interval before the follow-up begins.
 - The follow-up prompt is sent as a steer message without hiding the active-turn controls.
 - Light and dark theme controls remain readable.
 
