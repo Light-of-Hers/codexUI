@@ -3807,18 +3807,54 @@ function readCommandTextFromRecoveredItem(item: Record<string, unknown>): string
   return nestedCommand.trim()
 }
 
-function normalizeCommandForSessionMatching(command: string): string {
-  const trimmed = command.trim()
-  const shellWrapped = trimmed.match(/^(?:\/bin\/)?(?:bash|sh)\s+-lc\s+([\s\S]+)$/u)
-  if (!shellWrapped) return trimmed
+function decodeCommandWrapperArgument(argument: string): string | null {
+  const trimmed = argument.trim()
+  if (trimmed.length < 2) return null
+  const quote = trimmed[0]!
+  if ((quote !== '"' && quote !== "'") || trimmed.at(-1) !== quote) return null
 
-  const argument = shellWrapped[1]!.trim()
-  if (argument.length < 2) return trimmed
-  const quote = argument[0]!
-  if ((quote !== '"' && quote !== "'") || argument.at(-1) !== quote) return trimmed
+  const inner = trimmed.slice(1, -1)
+  if (quote === "'") return inner.replace(/'\\''/g, "'")
 
-  const inner = argument.slice(1, -1)
-  return quote === '"' ? inner.replace(/\\(["\\$`])/g, '$1') : inner
+  let decoded = ''
+  for (let index = 0; index < inner.length; index += 1) {
+    const char = inner[index]!
+    if (char !== '\\' || index + 1 >= inner.length) {
+      decoded += char
+      continue
+    }
+    const next = inner[index + 1]!
+    if (next === '"' || next === '\\' || next === '$' || next === '`') {
+      decoded += next
+      index += 1
+    } else {
+      decoded += char
+    }
+  }
+  return decoded
+}
+
+function unwrapCommandShell(command: string): string | null {
+  const posixShell = command.match(/^(?:(?:\/usr\/bin\/env)\s+)?(?:\/(?:usr\/bin|bin)\/)?(?:bash|sh|zsh)\b[\s\S]*?(?:^|\s)(?:-[A-Za-z]*c[A-Za-z]*|--command)\s+([\s\S]+)$/iu)
+  if (posixShell) return decodeCommandWrapperArgument(posixShell[1]!)
+
+  const powerShell = command.match(/^(?:(?:\/[^\s]+\/)?(?:powershell|pwsh)(?:\.exe)?)\b[\s\S]*?(?:^|\s)(?:-command|-c)\s+([\s\S]+)$/iu)
+  if (powerShell) return decodeCommandWrapperArgument(powerShell[1]!)
+
+  const cmdShell = command.match(/^(?:(?:[A-Za-z]:)?(?:[\\/][^\\/\s]+)*[\\/]?)?cmd(?:\.exe)?\b(?:\s+\/[A-Za-z]+)*\s+\/c\s+([\s\S]+)$/iu)
+  if (cmdShell) return decodeCommandWrapperArgument(cmdShell[1]!)
+
+  return null
+}
+
+function commandMatchVariants(command: string): string[] {
+  const normalizedLineEndings = command.trim().replace(/\r\n?/g, '\n')
+  if (!normalizedLineEndings) return []
+
+  const variants = new Set([normalizedLineEndings])
+  const unwrapped = unwrapCommandShell(normalizedLineEndings)
+  if (unwrapped) variants.add(unwrapped.trim().replace(/\r\n?/g, '\n'))
+  return [...variants].filter(Boolean)
 }
 
 function readCommandCwdFromRecoveredItem(item: Record<string, unknown>): string {
@@ -3838,6 +3874,8 @@ type SessionCommandLookup = {
   byId: Map<string, SessionCommandMatchQueue>
   byCommandAndCwd: Map<string, SessionCommandMatchQueue>
   byCommand: Map<string, SessionCommandMatchQueue>
+  fallbackAll: SessionCommandMatchQueue
+  fallbackByCwd: Map<string, SessionCommandMatchQueue>
   usedIndexes: Set<number>
 }
 
@@ -3863,6 +3901,8 @@ function createSessionCommandLookup(commandMessages: Record<string, unknown>[]):
     byId: new Map(),
     byCommandAndCwd: new Map(),
     byCommand: new Map(),
+    fallbackAll: { indexes: [], nextIndex: 0 },
+    fallbackByCwd: new Map(),
     usedIndexes: new Set(),
   }
 
@@ -3872,16 +3912,14 @@ function createSessionCommandLookup(commandMessages: Record<string, unknown>[]):
     if (id) appendCommandMatchIndex(lookup.byId, id, index)
 
     const command = readCommandTextFromRecoveredItem(item)
-    if (!command) continue
-    appendCommandMatchIndex(lookup.byCommand, command, index)
-
     const cwd = readCommandCwdFromRecoveredItem(item)
-    if (cwd) appendCommandMatchIndex(lookup.byCommandAndCwd, commandAndCwdKey(command, cwd), index)
+    lookup.fallbackAll.indexes.push(index)
+    appendCommandMatchIndex(lookup.fallbackByCwd, cwd, index)
 
-    const normalizedCommand = normalizeCommandForSessionMatching(command)
-    if (normalizedCommand === command) continue
-    appendCommandMatchIndex(lookup.byCommand, normalizedCommand, index)
-    if (cwd) appendCommandMatchIndex(lookup.byCommandAndCwd, commandAndCwdKey(normalizedCommand, cwd), index)
+    for (const commandVariant of commandMatchVariants(command)) {
+      appendCommandMatchIndex(lookup.byCommand, commandVariant, index)
+      if (cwd) appendCommandMatchIndex(lookup.byCommandAndCwd, commandAndCwdKey(commandVariant, cwd), index)
+    }
   }
 
   return lookup
@@ -3902,7 +3940,35 @@ function takeCommandMatchIndex(
   return null
 }
 
-function takeExistingCommandForSessionSlot(
+function peekCommandMatchIndex(
+  queue: SessionCommandMatchQueue | undefined,
+  usedIndexes: Set<number>,
+): number | null {
+  if (!queue) return null
+  while (queue.nextIndex < queue.indexes.length && usedIndexes.has(queue.indexes[queue.nextIndex]!)) {
+    queue.nextIndex += 1
+  }
+  return queue.nextIndex < queue.indexes.length ? queue.indexes[queue.nextIndex]! : null
+}
+
+function takeEarliestCommandMatchIndex(
+  queues: Array<SessionCommandMatchQueue | undefined>,
+  usedIndexes: Set<number>,
+): number | null {
+  let selectedQueue: SessionCommandMatchQueue | undefined
+  let selectedIndex: number | null = null
+
+  for (const queue of queues) {
+    const index = peekCommandMatchIndex(queue, usedIndexes)
+    if (index === null || (selectedIndex !== null && index >= selectedIndex)) continue
+    selectedQueue = queue
+    selectedIndex = index
+  }
+
+  return takeCommandMatchIndex(selectedQueue, usedIndexes)
+}
+
+function takeStrictCommandForSessionSlot(
   slotCommand: SessionRecoveredCommand,
   commandMessages: Record<string, unknown>[],
   commandLookup: SessionCommandLookup,
@@ -3911,21 +3977,66 @@ function takeExistingCommandForSessionSlot(
   let matchIndex = takeCommandMatchIndex(commandLookup.byId.get(slotId), commandLookup.usedIndexes)
 
   if (matchIndex === null) {
-    const slotCommandText = normalizeCommandForSessionMatching(slotCommand.command)
+    const slotCommandTexts = commandMatchVariants(slotCommand.command)
     const slotCwd = slotCommand.cwd?.trim() ?? ''
-    if (slotCommandText.length > 0 && slotCwd.length > 0) {
-      matchIndex = takeCommandMatchIndex(
-        commandLookup.byCommandAndCwd.get(commandAndCwdKey(slotCommandText, slotCwd)),
-        commandLookup.usedIndexes,
-      )
+    if (slotCwd.length > 0) {
+      for (const slotCommandText of slotCommandTexts) {
+        matchIndex = takeCommandMatchIndex(
+          commandLookup.byCommandAndCwd.get(commandAndCwdKey(slotCommandText, slotCwd)),
+          commandLookup.usedIndexes,
+        )
+        if (matchIndex !== null) break
+      }
     }
-    if (matchIndex === null && slotCommandText.length > 0) {
-      matchIndex = takeCommandMatchIndex(commandLookup.byCommand.get(slotCommandText), commandLookup.usedIndexes)
+    if (matchIndex === null) {
+      for (const slotCommandText of slotCommandTexts) {
+        matchIndex = takeCommandMatchIndex(commandLookup.byCommand.get(slotCommandText), commandLookup.usedIndexes)
+        if (matchIndex !== null) break
+      }
     }
   }
 
   if (matchIndex === null) return null
   return commandMessages[matchIndex]!
+}
+
+function takeOrderedFallbackCommandForSessionSlot(
+  slotCommand: SessionRecoveredCommand,
+  commandMessages: Record<string, unknown>[],
+  commandLookup: SessionCommandLookup,
+): Record<string, unknown> | null {
+  const slotCwd = slotCommand.cwd?.trim() ?? ''
+  const matchIndex = slotCwd
+    ? takeEarliestCommandMatchIndex([
+      commandLookup.fallbackByCwd.get(slotCwd),
+      commandLookup.fallbackByCwd.get(''),
+    ], commandLookup.usedIndexes)
+    : takeCommandMatchIndex(commandLookup.fallbackAll, commandLookup.usedIndexes)
+
+  return matchIndex === null ? null : commandMessages[matchIndex]!
+}
+
+function matchSessionCommandSlots(
+  slots: SessionItemSlot[],
+  commandMessages: Record<string, unknown>[],
+): { matches: Map<SessionRecoveredCommand, Record<string, unknown>>, lookup: SessionCommandLookup } {
+  const lookup = createSessionCommandLookup(commandMessages)
+  const matches = new Map<SessionRecoveredCommand, Record<string, unknown>>()
+  const unresolved: SessionRecoveredCommand[] = []
+
+  for (const slot of slots) {
+    if (slot.type !== 'commandExecution' || !slot.command) continue
+    const existing = takeStrictCommandForSessionSlot(slot.command, commandMessages, lookup)
+    if (existing) matches.set(slot.command, existing)
+    else unresolved.push(slot.command)
+  }
+
+  for (const slotCommand of unresolved) {
+    const existing = takeOrderedFallbackCommandForSessionSlot(slotCommand, commandMessages, lookup)
+    if (existing) matches.set(slotCommand, existing)
+  }
+
+  return { matches, lookup }
 }
 
 function takeExistingFileChangeForSessionSlot(
@@ -4268,7 +4379,10 @@ function mergeSessionCommandsIntoTurns(turns: unknown[], sessionLogRaw: string):
     const userMessages = existingItems.filter((it) => it.type === 'userMessage')
 
     let agentIdx = 0
-    const commandLookup = createSessionCommandLookup(commandMessages)
+    const { matches: commandMatches, lookup: commandLookup } = matchSessionCommandSlots(
+      slots,
+      commandMessages,
+    )
     const usedFileChangeIndexes = new Set<number>()
     const interleaved: Record<string, unknown>[] = [...userMessages]
 
@@ -4288,11 +4402,8 @@ function mergeSessionCommandsIntoTurns(turns: unknown[], sessionLogRaw: string):
           agentIdx++
         }
       } else if (slot.type === 'commandExecution' && slot.command) {
-        interleaved.push(takeExistingCommandForSessionSlot(
-          slot.command,
-          commandMessages,
-          commandLookup,
-        ) ?? slot.command as unknown as Record<string, unknown>)
+        interleaved.push(commandMatches.get(slot.command)
+          ?? slot.command as unknown as Record<string, unknown>)
       } else if (slot.type === 'fileChange' && slot.fileChange) {
         interleaved.push(takeExistingFileChangeForSessionSlot(
           slot.fileChange,

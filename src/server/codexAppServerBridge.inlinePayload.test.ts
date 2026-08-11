@@ -1134,6 +1134,115 @@ describe('thread session skill recovery', () => {
     ])
   })
 
+  it('matches commands wrapped by zsh, PowerShell, and cmd.exe', () => {
+    const result = {
+      thread: {
+        id: 'thread-command-wrapper-variants',
+        path: '/tmp/session.jsonl',
+        turns: [{
+          id: 'turn-1',
+          items: [
+            { id: 'user-1', type: 'userMessage', content: [{ type: 'text', text: 'verify', text_elements: [] }] },
+            { id: 'agent-before', type: 'agentMessage', text: 'I will verify it.' },
+            { id: 'agent-after', type: 'agentMessage', text: 'Verification complete.' },
+            { id: 'native-cmd', type: 'commandExecution', command: 'cmd.exe /d /s /c "dir /b"', cwd: '/tmp/project', status: 'completed', aggregatedOutput: '', exitCode: 0 },
+            { id: 'native-zsh', type: 'commandExecution', command: '/bin/zsh -lc "printf \\"checked\\""', cwd: '/tmp/project', status: 'completed', aggregatedOutput: '', exitCode: 0 },
+            { id: 'native-pwsh', type: 'commandExecution', command: 'pwsh -NoProfile -Command "Get-ChildItem -Force"', cwd: '/tmp/project', status: 'completed', aggregatedOutput: '', exitCode: 0 },
+          ],
+        }],
+      },
+    }
+    const sessionLog = [
+      JSON.stringify({ type: 'turn_context', payload: { turn_id: 'turn-1' } }),
+      JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'I will verify it.' }] } }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'custom_tool_call',
+          name: 'exec',
+          status: 'completed',
+          call_id: 'call-wrapper-variants',
+          input: [
+            'const results = await Promise.all([',
+            '  tools.exec_command({"cmd":"printf \\"checked\\"","workdir":"/tmp/project"}),',
+            '  tools.exec_command({"cmd":"Get-ChildItem -Force","workdir":"/tmp/project"}),',
+            '  tools.exec_command({"cmd":"dir /b","workdir":"/tmp/project"}),',
+            ']);',
+          ].join('\n'),
+        },
+      }),
+      JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Verification complete.' }] } }),
+    ].join('\n')
+
+    const merged = mergeRecoveredTurnItemsIntoThreadResult(
+      result,
+      (_threadId, turns) => turns,
+      sessionLog,
+    ) as typeof result
+
+    expect(merged.thread.turns[0].items.map((item) => item.id)).toEqual([
+      'user-1',
+      'agent-before',
+      'native-zsh',
+      'native-pwsh',
+      'native-cmd',
+      'agent-after',
+    ])
+  })
+
+  it('uses source order and working directory for otherwise unmatched commands', () => {
+    const result = {
+      thread: {
+        id: 'thread-command-ordered-fallback',
+        path: '/tmp/session.jsonl',
+        turns: [{
+          id: 'turn-1',
+          items: [
+            { id: 'user-1', type: 'userMessage', content: [{ type: 'text', text: 'verify', text_elements: [] }] },
+            { id: 'agent-before', type: 'agentMessage', text: 'I will verify it.' },
+            { id: 'agent-after', type: 'agentMessage', text: 'Verification complete.' },
+            { id: 'native-second', type: 'commandExecution', command: 'runner --payload second', cwd: '/tmp/second', status: 'completed', aggregatedOutput: '', exitCode: 0 },
+            { id: 'native-first', type: 'commandExecution', command: 'runner --payload first', cwd: '/tmp/first', status: 'completed', aggregatedOutput: '', exitCode: 0 },
+          ],
+        }],
+      },
+    }
+    const sessionLog = [
+      JSON.stringify({ type: 'turn_context', payload: { turn_id: 'turn-1' } }),
+      JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'I will verify it.' }] } }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'custom_tool_call',
+          name: 'exec',
+          status: 'completed',
+          call_id: 'call-ordered-fallback',
+          input: [
+            'const results = await Promise.all([',
+            '  tools.exec_command({"cmd":"printf first","workdir":"/tmp/first"}),',
+            '  tools.exec_command({"cmd":"printf second","workdir":"/tmp/second"}),',
+            ']);',
+          ].join('\n'),
+        },
+      }),
+      JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Verification complete.' }] } }),
+    ].join('\n')
+
+    const merged = mergeRecoveredTurnItemsIntoThreadResult(
+      result,
+      (_threadId, turns) => turns,
+      sessionLog,
+    ) as typeof result
+
+    expect(merged.thread.turns[0].items.map((item) => item.id)).toEqual([
+      'user-1',
+      'agent-before',
+      'native-first',
+      'native-second',
+      'agent-after',
+    ])
+  })
+
   it('recovers later custom exec commands after a malformed nested argument', () => {
     const result = {
       thread: {
