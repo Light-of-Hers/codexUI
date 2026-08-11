@@ -7459,7 +7459,6 @@ class AppServerProcess {
 
 export class BackendQueueProcessor {
   private readonly processingThreadIds = new Set<string>()
-  private readonly queuedThreadIds = new Set<string>()
   private readonly queueDrainTimersByThreadId = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly interruptedTurnCheckTimersByThreadId = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly interruptedTurnResolutionByThreadId = new Map<string, Promise<boolean>>()
@@ -7503,7 +7502,6 @@ export class BackendQueueProcessor {
     this.interruptedTurnResolutionByThreadId.clear()
     this.deferredNotificationByThreadId.clear()
     this.processingThreadIds.clear()
-    this.queuedThreadIds.clear()
     this.intentionalInterruptTurnIds.clear()
     this.intentionalInterruptThreadIds.clear()
     this.autoContinueInFlightThreadIds.clear()
@@ -7522,22 +7520,6 @@ export class BackendQueueProcessor {
     const completedTurn = this.readCompletedTurnNotification(notification)
     const isUnexpectedInterruptedCompletion = readProtocolToken(completedTurn?.status) === 'interrupted'
     const isPotentialInterruptedStatus = isPotentiallyAutoContinuedStatusChange(notification)
-
-    // A persisted follow-up is still part of this session's active work. Hold
-    // the prior turn's terminal notifications until its replacement starts.
-    // Unexpected interruptions keep their dedicated recovery path below.
-    if (
-      threadId
-      && !isUnexpectedInterruptedCompletion
-      && this.queuedThreadIds.has(threadId)
-      && (isPotentialInterruptedStatus || isTurnCompletedNotification(notification))
-    ) {
-      this.deferNotification(threadId, notification)
-      if (isTurnCompletedNotification(notification)) {
-        void this.handleTurnCompletedNotification(notification)
-      }
-      return
-    }
 
     if (
       isInterruptedTurnAutoContinueEnabled()
@@ -7629,10 +7611,7 @@ export class BackendQueueProcessor {
   async scheduleAllQueuedThreads(delayMs = 0): Promise<void> {
     try {
       const state = await readThreadQueueState()
-      const threadIds = Object.keys(state)
-      this.queuedThreadIds.clear()
-      for (const threadId of threadIds) {
-        this.queuedThreadIds.add(threadId)
+      for (const threadId of Object.keys(state)) {
         this.scheduleThreadQueueDrain(threadId, delayMs)
       }
     } catch {
@@ -7642,7 +7621,6 @@ export class BackendQueueProcessor {
 
   scheduleThreadQueueDrain(threadId: string, delayMs = 5000): void {
     if (!threadId) return
-    this.queuedThreadIds.add(threadId)
     const normalizedDelayMs = Math.max(0, delayMs)
     const nextDueAt = Date.now() + normalizedDelayMs
     const existingDueAt = this.queueDrainDueAtByThreadId.get(threadId)
@@ -7709,45 +7687,31 @@ export class BackendQueueProcessor {
     }
   }
 
-  async processThreadQueue(threadId: string): Promise<boolean> {
-    if (this.processingThreadIds.has(threadId)) return false
+  async processThreadQueue(threadId: string): Promise<void> {
+    if (this.processingThreadIds.has(threadId)) return
     this.processingThreadIds.add(threadId)
     try {
       const recoveredModelState = await this.readQueuedTurnRecoveryState(threadId)
       if (!recoveredModelState) {
-        if (await this.updateQueuedThreadMarker(threadId)) {
+        if (await this.hasQueuedTurns(threadId)) {
           this.scheduleThreadQueueDrain(threadId)
         }
-        return false
+        return
       }
       const next = await this.popNextQueuedTurn(threadId)
-      if (!next) {
-        this.queuedThreadIds.delete(threadId)
-        this.forwardDeferredNotifications(threadId)
-        return false
-      }
+      if (!next) return
       try {
         await this.startQueuedTurn(next, recoveredModelState)
-        if (await this.updateQueuedThreadMarker(threadId)) {
+        if (await this.hasQueuedTurns(threadId)) {
           this.scheduleThreadQueueDrain(threadId)
         }
-        this.discardDeferredNotifications(threadId)
-        // turn/start can succeed without a following running-status event.
-        // Publish the confirmed state so the sidebar never lingers on idle.
-        this.forwardNotification?.({
-          method: 'thread/status/changed',
-          params: { threadId, status: { type: 'running' } },
-        })
-        return true
       } catch {
         await this.restoreQueuedTurn(next)
         this.scheduleThreadQueueDrain(threadId)
-        return false
       }
     } catch {
       // Queue processing is best-effort. Keep the bridge alive if app-server is unavailable.
       this.scheduleThreadQueueDrain(threadId)
-      return false
     } finally {
       this.processingThreadIds.delete(threadId)
     }
@@ -7979,16 +7943,6 @@ export class BackendQueueProcessor {
     const state = await readThreadQueueState()
     const queue = state[threadId]
     return Array.isArray(queue) && queue.length > 0
-  }
-
-  private async updateQueuedThreadMarker(threadId: string): Promise<boolean> {
-    const hasQueuedTurns = await this.hasQueuedTurns(threadId)
-    if (hasQueuedTurns) {
-      this.queuedThreadIds.add(threadId)
-    } else {
-      this.queuedThreadIds.delete(threadId)
-    }
-    return hasQueuedTurns
   }
 
   private async readQueuedTurnRecoveryState(threadId: string): Promise<SessionRecoveredModelState | null> {

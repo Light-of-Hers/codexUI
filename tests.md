@@ -124,10 +124,10 @@ This file tracks manual regression and feature verification steps.
 7. In a thread that only receives a running `thread/status/changed` notification before a visible `turn/started` notification, confirm the composer stop button, sidebar running indicator, and `Thinking` overlay still appear.
 8. Open a direct thread route before that thread is visible in the loaded sidebar page, send a prompt, and confirm the composer still switches from send to stop immediately.
 9. On that direct thread route, set reasoning effort to `Extra High`, send a prompt, and confirm the composer still shows `Extra High` while the turn is running.
-10. Confirm an interrupted/completed `thread/status/changed` notification clears the running state without waiting for a later full thread refresh.
-11. Repeat the same flow in dark theme.
-12. While a turn is running, queue a follow-up for the same thread and let the current turn complete.
-13. Confirm the sidebar and composer stay in the running state until the queued follow-up has started.
+10. Confirm an interrupted/completed `thread/status/changed` notification for the active turn clears the running state without waiting for a later full thread refresh.
+11. With notification replay or debug tooling, deliver an `idle`, `turn/completed`, or non-retryable `error` notification for an older turn after a newer turn has started; confirm the newer turn remains running.
+12. During a reconnect, confirm `error` with `willRetry: true` keeps the active turn in the running state.
+13. Repeat the same flow in dark theme.
 
 #### Expected Results
 - If `thread/read` briefly lags behind `turn/start`, the UI keeps the thread marked as running instead of reverting to idle.
@@ -135,8 +135,8 @@ This file tracks manual regression and feature verification steps.
 - If `turn/started` is missed but a running thread status notification arrives, the UI still marks the thread as running and uses the notification turn id for stop/steer.
 - The composer stop button is driven by the selected thread's local running state, so it appears even when the selected session has not yet been merged into the sidebar list.
 - Direct thread routes remain the active composer context even when the thread is not present in the loaded sidebar page, preserving per-thread settings such as `Extra High` reasoning effort.
-- Terminal status notifications such as interrupted, completed, and failed clear the running indicators immediately.
-- When a persisted follow-up is ready, the completed turn's terminal notifications are not shown as an idle interval before the follow-up begins.
+- Terminal status notifications clear running indicators only when they identify the active turn; delayed terminal notifications for an older turn cannot stop a newer turn.
+- Retryable errors keep or restore the active turn's running indicators.
 - The follow-up prompt is sent as a steer message without hiding the active-turn controls.
 - Light and dark theme controls remain readable.
 

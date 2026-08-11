@@ -2750,6 +2750,37 @@ describe('live turn rendering', () => {
     expect(state.selectedLiveOverlay.value).toBeNull()
   })
 
+  it('ignores stale terminal notifications after a newer turn has started', async () => {
+    const { state, notify } = await createLiveStateHarness()
+
+    notify(notification('turn/started', {
+      threadId: 'thread-a',
+      turn: { id: 'turn-stale', threadId: 'thread-a', startedAt: '2026-05-23T00:00:00.000Z' },
+    }))
+    notify(notification('turn/started', {
+      threadId: 'thread-a',
+      turn: { id: 'turn-current', threadId: 'thread-a', startedAt: '2026-05-23T00:00:01.000Z' },
+    }))
+
+    notify(notification('thread/status/changed', {
+      threadId: 'thread-a',
+      status: { type: 'idle', turnId: 'turn-stale' },
+    }))
+    notify(notification('turn/completed', {
+      threadId: 'thread-a',
+      turn: { id: 'turn-stale', threadId: 'thread-a', status: 'completed' },
+    }))
+    notify(notification('error', {
+      threadId: 'thread-a',
+      turnId: 'turn-stale',
+      willRetry: false,
+      error: { message: 'stale turn failed' },
+    }))
+
+    expect(state.selectedThreadInProgress.value).toBe(true)
+    expect(state.selectedLiveOverlay.value?.activityLabel).toBe('Thinking')
+  })
+
   it('clears running state when codex gives up retrying (error willRetry=false)', async () => {
     const { state, notify } = await createLiveStateHarness()
 
@@ -2766,6 +2797,20 @@ describe('live turn rendering', () => {
       turnId: 'turn-1',
       willRetry: true,
       error: { message: 'Reconnecting... 1/5' },
+    }))
+    expect(state.selectedThreadInProgress.value).toBe(true)
+
+    notify(notification('thread/status/changed', {
+      threadId: 'thread-a',
+      status: { type: 'idle', turnId: 'turn-1' },
+    }))
+    expect(state.selectedThreadInProgress.value).toBe(false)
+
+    notify(notification('error', {
+      threadId: 'thread-a',
+      turnId: 'turn-1',
+      willRetry: true,
+      error: { message: 'Reconnecting... 2/5' },
     }))
     expect(state.selectedThreadInProgress.value).toBe(true)
 
