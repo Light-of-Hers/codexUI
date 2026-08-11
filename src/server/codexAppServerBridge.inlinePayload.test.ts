@@ -2263,12 +2263,23 @@ describe('backend queue scheduling', () => {
     })
 
     listeners[0]?.({
+      method: 'thread/status/changed',
+      params: {
+        threadId: 'thread-1',
+        status: { type: 'idle' },
+      },
+    })
+    listeners[0]?.({
       method: 'turn/completed',
       params: {
         threadId: 'thread-1',
         turn: { id: 'turn-1', status: 'interrupted' },
       },
     })
+
+    // Neither terminal notification reaches subscribers while the bridge
+    // determines whether this was an unexpected interruption.
+    expect(forwarded).toEqual([])
 
     await vi.advanceTimersByTimeAsync(250)
     await vi.waitFor(() => {
@@ -2291,13 +2302,51 @@ describe('backend queue scheduling', () => {
     // Auto-continue forwards a synthetic running status so the frontend knows
     // the turn is active again even when codex does not re-emit it.
     await vi.waitFor(() => {
-      expect(forwarded).toContainEqual({
+      expect(forwarded).toEqual([{
         method: 'thread/status/changed',
         params: { threadId: 'thread-1', status: { type: 'running' } },
-      })
+      }])
     })
 
     processor.dispose()
+  })
+
+  it('does not defer an interrupted completion after an intentional stop', async () => {
+    vi.useFakeTimers()
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-intentional-stop-'))
+    vi.stubEnv('CODEX_HOME', tempDir)
+    const listeners: Array<(value: { method: string; params: unknown }) => void> = []
+    const calls: string[] = []
+    const processor = new BackendQueueProcessor({
+      onNotification(listener: (value: { method: string; params: unknown }) => void) {
+        listeners.push(listener)
+        return () => undefined
+      },
+      async rpc(method: string): Promise<unknown> {
+        calls.push(method)
+        throw new Error('thread/read must not run for an intentional stop')
+      },
+    } as never)
+
+    try {
+      processor.recordIntentionalInterrupt('thread-1', 'turn-1')
+      const completion = {
+        method: 'turn/completed',
+        params: {
+          threadId: 'thread-1',
+          turn: { id: 'turn-1', status: 'interrupted' },
+        },
+      }
+      listeners[0]?.(completion)
+
+      await vi.advanceTimersByTimeAsync(250)
+
+      expect(processor.isNotificationDeferred(completion)).toBe(false)
+      expect(calls).toEqual([])
+    } finally {
+      processor.dispose()
+      await rm(tempDir, { recursive: true, force: true })
+    }
   })
 
   it('auto-continues interrupted turns with persisted Moon Bridge model state', async () => {

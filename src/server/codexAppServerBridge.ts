@@ -2446,6 +2446,21 @@ export function shouldAutoContinueInterruptedThreadFromThreadRead(
   return { threadId, turnId }
 }
 
+function isPotentiallyAutoContinuedStatusChange(notification: { method: string; params: unknown }): boolean {
+  if (notification.method !== 'thread/status/changed') return false
+  const params = asRecord(notification.params)
+  if (!params) return false
+
+  const thread = asRecord(params.thread)
+  const candidates = [params.status, params.threadStatus, params.thread_status, thread?.status]
+  for (const candidate of candidates) {
+    const status = asRecord(candidate)
+    const type = readProtocolToken(status?.type || candidate)
+    if (type === 'idle' || type === 'interrupted') return true
+  }
+  return false
+}
+
 function readThreadArchiveFallbackName(threadReadResult: unknown): string {
   const record = asRecord(threadReadResult)
   const thread = asRecord(record?.thread)
@@ -7211,6 +7226,9 @@ export class BackendQueueProcessor {
   private readonly processingThreadIds = new Set<string>()
   private readonly queueDrainTimersByThreadId = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly interruptedTurnCheckTimersByThreadId = new Map<string, ReturnType<typeof setTimeout>>()
+  private readonly interruptedTurnResolutionByThreadId = new Map<string, Promise<boolean>>()
+  private readonly deferredNotificationByThreadId = new Map<string, Array<{ method: string; params: unknown }>>()
+  private readonly deferredNotifications = new WeakSet<object>()
   private readonly intentionalInterruptTurnIds = new Set<string>()
   private readonly intentionalInterruptThreadIds = new Set<string>()
   private readonly autoContinueInFlightThreadIds = new Set<string>()
@@ -7229,18 +7247,7 @@ export class BackendQueueProcessor {
     private readonly forwardNotification: ((notification: { method: string; params: unknown }) => void) | null = null,
   ) {
     this.unsubscribe = appServer.onNotification((notification) => {
-      if (isTurnCompletedNotification(notification)) {
-        void this.handleTurnCompletedNotification(notification)
-        return
-      }
-
-      if (notification.method === 'thread/status/changed') {
-        if (!isInterruptedTurnAutoContinueEnabled()) return
-        const threadId = extractThreadIdFromNotificationParams(notification.params)
-        if (threadId) {
-          this.scheduleInterruptedTurnCheck(threadId)
-        }
-      }
+      this.handleAppServerNotification(notification)
     })
     this.intentionalInterruptStateReady = this.loadIntentionalInterruptState()
     void this.scheduleAllQueuedThreads(1000)
@@ -7257,6 +7264,8 @@ export class BackendQueueProcessor {
       clearTimeout(timer)
     }
     this.interruptedTurnCheckTimersByThreadId.clear()
+    this.interruptedTurnResolutionByThreadId.clear()
+    this.deferredNotificationByThreadId.clear()
     this.processingThreadIds.clear()
     this.intentionalInterruptTurnIds.clear()
     this.intentionalInterruptThreadIds.clear()
@@ -7265,6 +7274,68 @@ export class BackendQueueProcessor {
     this.cursorContextAutoCompactInFlightThreadIds.clear()
     this.cursorContextAutoCompactedTurnIds.clear()
     this.cursorContextAutoCompactCooldownUntilByThreadId.clear()
+  }
+
+  isNotificationDeferred(notification: { method: string; params: unknown }): boolean {
+    return this.deferredNotifications.has(notification)
+  }
+
+  private handleAppServerNotification(notification: { method: string; params: unknown }): void {
+    const threadId = extractThreadIdFromNotificationParams(notification.params)
+    const completedTurn = this.readCompletedTurnNotification(notification)
+    const isUnexpectedInterruptedCompletion = readProtocolToken(completedTurn?.status) === 'interrupted'
+    const isPotentialInterruptedStatus = isPotentiallyAutoContinuedStatusChange(notification)
+
+    if (
+      isInterruptedTurnAutoContinueEnabled()
+      && threadId
+      && !this.intentionalInterruptThreadIds.has(threadId)
+      && (isUnexpectedInterruptedCompletion || isPotentialInterruptedStatus)
+    ) {
+      this.deferNotification(threadId, notification)
+      this.scheduleInterruptedTurnCheck(
+        threadId,
+        250,
+        isUnexpectedInterruptedCompletion ? 'turn/completed' : 'thread/status/changed',
+        completedTurn?.turnId ?? '',
+      )
+      return
+    }
+
+    if (isTurnCompletedNotification(notification)) {
+      void this.handleTurnCompletedNotification(notification)
+      return
+    }
+
+    if (notification.method === 'thread/status/changed' && isInterruptedTurnAutoContinueEnabled() && threadId) {
+      this.scheduleInterruptedTurnCheck(threadId)
+    }
+  }
+
+  private deferNotification(threadId: string, notification: { method: string; params: unknown }): void {
+    this.deferredNotifications.add(notification)
+    const deferred = this.deferredNotificationByThreadId.get(threadId) ?? []
+    deferred.push(notification)
+    this.deferredNotificationByThreadId.set(threadId, deferred)
+  }
+
+  private forwardDeferredNotifications(threadId: string): void {
+    const deferred = this.deferredNotificationByThreadId.get(threadId)
+    if (!deferred || deferred.length === 0) return
+    this.deferredNotificationByThreadId.delete(threadId)
+    for (const notification of deferred) {
+      this.deferredNotifications.delete(notification)
+      this.forwardNotification?.(notification)
+    }
+  }
+
+  private discardDeferredNotifications(threadId: string): void {
+    const deferred = this.deferredNotificationByThreadId.get(threadId)
+    if (!deferred) return
+    this.deferredNotificationByThreadId.delete(threadId)
+    for (const notification of deferred) {
+      this.deferredNotifications.delete(notification)
+    }
   }
 
   recordIntentionalInterrupt(threadId: string, turnId: string): void {
@@ -7349,10 +7420,36 @@ export class BackendQueueProcessor {
     }
     const timer = setTimeout(() => {
       this.interruptedTurnCheckTimersByThreadId.delete(threadId)
-      void this.maybeAutoContinueInterruptedThread(threadId, source, completedTurnId)
+      void this.resolveInterruptedTurnCheck(threadId, source, completedTurnId)
     }, Math.max(0, delayMs))
     timer.unref?.()
     this.interruptedTurnCheckTimersByThreadId.set(threadId, timer)
+  }
+
+  private async resolveInterruptedTurnCheck(
+    threadId: string,
+    source: 'turn/completed' | 'thread/status/changed',
+    completedTurnId: string,
+  ): Promise<void> {
+    const normalizedThreadId = threadId.trim()
+    if (!normalizedThreadId) return
+
+    let resolution = this.interruptedTurnResolutionByThreadId.get(normalizedThreadId)
+    if (!resolution) {
+      resolution = this.maybeAutoContinueInterruptedThread(normalizedThreadId, source, completedTurnId)
+      this.interruptedTurnResolutionByThreadId.set(normalizedThreadId, resolution)
+      void resolution.finally(() => {
+        if (this.interruptedTurnResolutionByThreadId.get(normalizedThreadId) === resolution) {
+          this.interruptedTurnResolutionByThreadId.delete(normalizedThreadId)
+        }
+      })
+    }
+
+    if (await resolution) {
+      this.discardDeferredNotifications(normalizedThreadId)
+    } else {
+      this.forwardDeferredNotifications(normalizedThreadId)
+    }
   }
 
   async processThreadQueue(threadId: string): Promise<void> {
@@ -7884,6 +7981,7 @@ class AppServerRuntime {
       this.forwardNotification({ ...notification, atIso: new Date().toISOString() })
     })
     this.unsubscribeNotifications = this.appServer.onNotification((notification) => {
+      if (this.backendQueueProcessor.isNotificationDeferred(notification)) return
       this.forwardNotification({
         ...notification,
         atIso: new Date().toISOString(),

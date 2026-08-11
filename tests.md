@@ -7849,3 +7849,28 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - Cycle Appearance back to the preferred mode. No data or browser storage cleanup is required.
+
+### Fix: Interrupted turn status continuity
+
+#### Prerequisites
+- App server is running from this repository with interrupted-turn auto-continuation enabled (the default).
+- A thread can produce an unintentional `interrupted` turn that the bridge resumes automatically.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. In light theme, open the affected thread and let an unintentional interruption trigger automatic continuation.
+2. Watch the sidebar running indicator and the conversation activity state during the interruption and the resumed command.
+3. Confirm the thread remains displayed as running until the next command or response arrives.
+4. Deliberately use Stop on a separate active thread and confirm it reaches the normal stopped state rather than being resumed.
+5. Switch to dark theme and repeat steps 1-4; confirm status indicators and Stop controls retain normal contrast.
+
+#### Expected Results
+- A turn that the bridge automatically resumes never flashes as stopped between the interrupted completion and the synthetic running event.
+- An intentional Stop remains terminal and its interrupted completion is not hidden or auto-continued.
+- Light and dark themes preserve existing running and stopped state presentation.
+
+#### Performance Audit
+- The bridge continues to use the existing debounced 250 ms interrupted-turn inspection and one `thread/read` check. Deferred notifications are stored only per affected thread and are released or discarded once, adding no polling loop, duplicate RPC, payload growth, or browser request.
+
+#### Rollback/Cleanup
+- Use Stop on any disposable verification turn. No configuration or browser-storage cleanup is required.
