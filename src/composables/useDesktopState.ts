@@ -1341,6 +1341,9 @@ function areThreadFieldsEqual(first: UiThread, second: UiThread): boolean {
     first.createdAtIso === second.createdAtIso &&
     first.updatedAtIso === second.updatedAtIso &&
     first.preview === second.preview &&
+    first.forkedFromId === second.forkedFromId &&
+    first.forkPointOrdinal === second.forkPointOrdinal &&
+    first.forkPointByteOffset === second.forkPointByteOffset &&
     first.unread === second.unread &&
     first.inProgress === second.inProgress &&
     first.pendingRequestState === second.pendingRequestState
@@ -3203,7 +3206,12 @@ export function useDesktopState() {
     projectGroups.value = mergeThreadGroups(projectGroups.value, flaggedGroups)
   }
 
-  function insertOptimisticThread(threadId: string, cwd: string, firstMessageText: string): void {
+  function insertOptimisticThread(
+    threadId: string,
+    cwd: string,
+    firstMessageText: string,
+    forkedFromId = '',
+  ): void {
     const nowIso = new Date().toISOString()
     const normalizedCwd = normalizePathForUi(cwd)
     const projectName = toProjectName(normalizedCwd)
@@ -3217,6 +3225,7 @@ export function useDesktopState() {
       createdAtIso: nowIso,
       updatedAtIso: nowIso,
       preview: firstMessageText,
+      forkedFromId: forkedFromId.trim() || undefined,
       unread: false,
       inProgress: false,
     }
@@ -6735,7 +6744,7 @@ export function useDesktopState() {
       if (!nextThreadId) return ''
 
       const forkedCwd = forkedThread.cwd.trim() || sourceCwd
-      insertOptimisticThread(nextThreadId, forkedCwd, sourceTitle)
+      insertOptimisticThread(nextThreadId, forkedCwd, sourceTitle, sourceThreadId)
       applyThreadModelStateWithProviderPriority(
         nextThreadId,
         forkedThread.model,
@@ -6792,7 +6801,7 @@ export function useDesktopState() {
 
       const forkedCwd = forked.cwd.trim() || sourceThread?.cwd?.trim() || ''
       const forkedThreadTitle = toForkedThreadTitle(sourceThread?.title || sourceThread?.preview || 'Untitled thread')
-      insertOptimisticThread(forkedThreadId, forkedCwd, forkedThreadTitle)
+      insertOptimisticThread(forkedThreadId, forkedCwd, forkedThreadTitle, normalizedThreadId)
       applyThreadModelStateWithProviderPriority(
         forkedThreadId,
         forked.model,

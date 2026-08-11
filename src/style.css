@@ -353,6 +353,15 @@
   @apply text-zinc-500;
 }
 
+:root.dark .fork-tree-row-item-child::before,
+:root.dark .fork-tree-row-item-child::after {
+  border-color: rgb(82 82 91);
+}
+
+:root.dark .fork-tree-toggle {
+  @apply text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 focus-visible:ring-zinc-600;
+}
+
 :root.dark .project-header-row {
   @apply hover:bg-zinc-800;
 }

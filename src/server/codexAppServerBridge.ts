@@ -4615,24 +4615,27 @@ function getCodexHomeDir(): string {
   return codexHome && codexHome.length > 0 ? codexHome : join(homedir(), '.codex')
 }
 
-type PaginatedForkRecoveryCandidate = {
+type SessionForkLineage = {
   threadId: string
   forkedFromId: string
   cwd: string
+  forkPointOrdinal: number | null
+  forkPointByteOffset: number | null
+  isPaginated: boolean
 }
 
 const PAGINATED_FORK_RECOVERY_CACHE_TTL_MS = 30_000
 const PAGINATED_FORK_SCAN_CONCURRENCY = 8
 const SESSION_ROLLOUT_DIRECTORY_DEPTH = 3
 
-let paginatedForkRecoveryCache: {
+let sessionForkLineageCache: {
   scannedAtMs: number
-  candidates: PaginatedForkRecoveryCandidate[]
+  entries: SessionForkLineage[]
 } | null = null
-let paginatedForkRecoveryScanPromise: Promise<PaginatedForkRecoveryCandidate[]> | null = null
+let sessionForkLineageScanPromise: Promise<SessionForkLineage[]> | null = null
 
 export function invalidatePaginatedForkThreadListRecoveryCache(): void {
-  paginatedForkRecoveryCache = null
+  sessionForkLineageCache = null
 }
 
 async function listSessionRolloutPaths(directory: string, depth = 0): Promise<string[]> {
@@ -4655,7 +4658,11 @@ async function listSessionRolloutPaths(directory: string, depth = 0): Promise<st
   return paths
 }
 
-async function readPaginatedForkRecoveryCandidate(sessionPath: string): Promise<PaginatedForkRecoveryCandidate | null> {
+function readNonNegativeSafeInteger(value: unknown): number | null {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null
+}
+
+async function readSessionForkLineage(sessionPath: string): Promise<SessionForkLineage | null> {
   const stream = createReadStream(sessionPath, { encoding: 'utf8' })
   const lines = createInterface({ input: stream, crlfDelay: Infinity })
 
@@ -4669,15 +4676,23 @@ async function readPaginatedForkRecoveryCandidate(sessionPath: string): Promise<
       const threadId = readNonEmptyString(payload?.session_id) || readNonEmptyString(payload?.id)
       const forkedFromId = readNonEmptyString(payload?.forked_from_id)
       const historyBaseThreadId = readNonEmptyString(historyBase?.thread_id)
-      if (
-        payload?.history_mode !== 'paginated'
-        || !threadId
-        || !forkedFromId
-        || !historyBaseThreadId
-      ) {
-        return null
+      if (!threadId || !forkedFromId) return null
+
+      // `forked_from_id` is the direct parent. A history base can be inherited
+      // through that parent, so it must not change the visible tree topology.
+      const forkPointIsInDirectParent = historyBaseThreadId === forkedFromId
+      return {
+        threadId,
+        forkedFromId,
+        cwd: readNonEmptyString(payload?.cwd),
+        forkPointOrdinal: forkPointIsInDirectParent
+          ? readNonNegativeSafeInteger(historyBase?.end_ordinal_exclusive)
+          : null,
+        forkPointByteOffset: forkPointIsInDirectParent
+          ? readNonNegativeSafeInteger(historyBase?.end_byte_offset)
+          : null,
+        isPaginated: payload?.history_mode === 'paginated' && Boolean(historyBaseThreadId),
       }
-      return { threadId, forkedFromId, cwd: readNonEmptyString(payload?.cwd) }
     }
   } catch {
     return null
@@ -4689,9 +4704,9 @@ async function readPaginatedForkRecoveryCandidate(sessionPath: string): Promise<
   return null
 }
 
-async function scanPaginatedForkRecoveryCandidates(): Promise<PaginatedForkRecoveryCandidate[]> {
+async function scanSessionForkLineage(): Promise<SessionForkLineage[]> {
   const rolloutPaths = await listSessionRolloutPaths(join(getCodexHomeDir(), 'sessions'))
-  const candidates: PaginatedForkRecoveryCandidate[] = []
+  const entries: SessionForkLineage[] = []
   let nextPathIndex = 0
 
   await Promise.all(Array.from(
@@ -4701,34 +4716,38 @@ async function scanPaginatedForkRecoveryCandidates(): Promise<PaginatedForkRecov
         const sessionPath = rolloutPaths[nextPathIndex]
         nextPathIndex += 1
         if (!sessionPath) continue
-        const candidate = await readPaginatedForkRecoveryCandidate(sessionPath)
-        if (candidate) candidates.push(candidate)
+        const entry = await readSessionForkLineage(sessionPath)
+        if (entry) entries.push(entry)
       }
     },
   ))
 
-  return Array.from(new Map(candidates.map((candidate) => [candidate.threadId, candidate])).values())
+  return Array.from(new Map(entries.map((entry) => [entry.threadId, entry])).values())
 }
 
-async function getPaginatedForkRecoveryCandidates(): Promise<PaginatedForkRecoveryCandidate[]> {
+async function getSessionForkLineage(): Promise<SessionForkLineage[]> {
   const now = Date.now()
   if (
-    paginatedForkRecoveryCache
-    && now - paginatedForkRecoveryCache.scannedAtMs < PAGINATED_FORK_RECOVERY_CACHE_TTL_MS
+    sessionForkLineageCache
+    && now - sessionForkLineageCache.scannedAtMs < PAGINATED_FORK_RECOVERY_CACHE_TTL_MS
   ) {
-    return paginatedForkRecoveryCache.candidates
+    return sessionForkLineageCache.entries
   }
-  if (paginatedForkRecoveryScanPromise) return await paginatedForkRecoveryScanPromise
+  if (sessionForkLineageScanPromise) return await sessionForkLineageScanPromise
 
-  paginatedForkRecoveryScanPromise = scanPaginatedForkRecoveryCandidates()
-    .then((candidates) => {
-      paginatedForkRecoveryCache = { scannedAtMs: Date.now(), candidates }
-      return candidates
+  sessionForkLineageScanPromise = scanSessionForkLineage()
+    .then((entries) => {
+      sessionForkLineageCache = { scannedAtMs: Date.now(), entries }
+      return entries
     })
     .finally(() => {
-      paginatedForkRecoveryScanPromise = null
+      sessionForkLineageScanPromise = null
     })
-  return await paginatedForkRecoveryScanPromise
+  return await sessionForkLineageScanPromise
+}
+
+async function getPaginatedForkRecoveryCandidates(): Promise<SessionForkLineage[]> {
+  return (await getSessionForkLineage()).filter((entry) => entry.isPaginated)
 }
 
 function shouldRecoverPaginatedForksFromThreadList(params: unknown): boolean {
@@ -4760,6 +4779,38 @@ function sortThreadListDataByUpdatedAt(data: unknown[]): unknown[] {
     const rightTimestamp = typeof rightUpdatedAt === 'number' && Number.isFinite(rightUpdatedAt) ? rightUpdatedAt : 0
     return rightTimestamp - leftTimestamp
   })
+}
+
+/**
+ * `thread/list` does not expose fork lineage. Attach the local rollout metadata
+ * so the sidebar can build an immediate-parent tree without loading each thread.
+ */
+export async function decorateThreadListWithForkLineage(result: unknown): Promise<unknown> {
+  const resultRecord = asRecord(result)
+  const data = Array.isArray(resultRecord?.data) ? resultRecord.data : null
+  if (!resultRecord || !data) return result
+
+  const lineageByThreadId = new Map(
+    (await getSessionForkLineage()).map((entry) => [entry.threadId, entry]),
+  )
+  let changed = false
+  const decoratedData = data.map((item) => {
+    const thread = asRecord(item)
+    const threadId = readNonEmptyString(thread?.id)
+    const lineage = threadId ? lineageByThreadId.get(threadId) : null
+    if (!thread || !lineage) return item
+    if (lineage.cwd && readNonEmptyString(thread.cwd) !== lineage.cwd) return item
+
+    changed = true
+    return {
+      ...thread,
+      forkedFromId: lineage.forkedFromId,
+      forkPointOrdinal: lineage.forkPointOrdinal,
+      forkPointByteOffset: lineage.forkPointByteOffset,
+    }
+  })
+
+  return changed ? { ...resultRecord, data: decoratedData } : result
 }
 
 /**
@@ -10030,6 +10081,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         }
         if (body.method === 'thread/list') {
           result = await recoverUnlistedPaginatedForksInThreadList(result, rpcParams, effectiveRpcAppServer)
+          result = await decorateThreadListWithForkLineage(result)
         }
 
         setJson(res, 200, { result })

@@ -47,6 +47,10 @@ function readNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
+function readNonNegativeSafeInteger(value: unknown): number | null {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null
+}
+
 function formatStructuredValue(value: unknown): string {
   if (value === null || value === undefined) return ''
   if (typeof value === 'string') return value
@@ -807,6 +811,9 @@ function toUiThread(summary: Thread): UiThread {
     createdAtIso: toIso(summary.createdAt),
     updatedAtIso: toIso(summary.updatedAt),
     preview: summary.preview,
+    forkedFromId: readString(rawSummary.forkedFromId).trim() || undefined,
+    forkPointOrdinal: readNonNegativeSafeInteger(rawSummary.forkPointOrdinal),
+    forkPointByteOffset: readNonNegativeSafeInteger(rawSummary.forkPointByteOffset),
     unread: false,
     inProgress: readThreadInProgress(summary),
   }

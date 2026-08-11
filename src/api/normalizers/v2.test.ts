@@ -82,6 +82,36 @@ describe('normalizeThreadGroupsV2', () => {
 
     expect(groups[0]?.threads[0]?.inProgress).toBe(true)
   })
+
+  it('preserves fork lineage injected into thread-list summaries', () => {
+    const payload: ThreadListResponse = {
+      data: [{
+        id: 'thread-child',
+        preview: 'Forked session',
+        modelProvider: 'openai',
+        createdAt: 1710000000,
+        updatedAt: 1710000300,
+        path: null,
+        cwd: '/tmp/project',
+        cliVersion: '0.147.0',
+        source: 'appServer',
+        gitInfo: null,
+        turns: [],
+        forkedFromId: 'thread-parent',
+        forkPointOrdinal: 42,
+        forkPointByteOffset: 4096,
+      } as ThreadListResponse['data'][number]],
+      nextCursor: null,
+    }
+
+    const groups = normalizeThreadGroupsV2(payload)
+
+    expect(groups[0]?.threads[0]).toMatchObject({
+      forkedFromId: 'thread-parent',
+      forkPointOrdinal: 42,
+      forkPointByteOffset: 4096,
+    })
+  })
 })
 
 describe('thread active turn normalization', () => {

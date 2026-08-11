@@ -153,6 +153,15 @@
               </button>
               <button
                 class="organize-menu-item"
+                :data-active="threadViewMode === 'fork-tree'"
+                type="button"
+                @click="setThreadViewMode('fork-tree')"
+              >
+                <span>{{ t('Fork tree') }}</span>
+                <span v-if="threadViewMode === 'fork-tree'">✓</span>
+              </button>
+              <button
+                class="organize-menu-item"
                 :data-active="showChatsFirst"
                 type="button"
                 @click="toggleShowChatsFirst"
@@ -263,6 +272,104 @@
                 type="button"
                 title="thread_menu"
                 @click.stop="toggleThreadMenu(thread.id)"
+              >
+                <IconTablerDots class="thread-icon" />
+              </button>
+            </div>
+          </template>
+        </SidebarMenuRow>
+      </li>
+    </ul>
+
+    <ul v-else-if="isForkTreeView" class="thread-list thread-list-global fork-tree-list">
+      <li
+        v-for="node in forkTreeNodes"
+        :key="node.thread.id"
+        class="thread-row-item fork-tree-row-item"
+        :class="{ 'fork-tree-row-item-child': node.depth > 0 }"
+        :style="forkTreeNodeStyle(node.depth)"
+        :data-depth="node.depth"
+        :data-menu-open="isThreadMenuOpen(node.thread.id) ? 'true' : 'false'"
+      >
+        <SidebarMenuRow
+          class="thread-row fork-tree-row"
+          :data-active="node.thread.id === selectedThreadId"
+          :data-pinned="isPinned(node.thread.id)"
+          :data-menu-open="isThreadMenuOpen(node.thread.id) ? 'true' : 'false'"
+          :force-right-hover="isThreadMenuOpen(node.thread.id)"
+          @click="onSelect(node.thread.id)"
+          @mouseleave="onThreadRowLeave(node.thread.id, $event)"
+          @contextmenu="onThreadRowContextMenu($event, node.thread.id)"
+        >
+          <template #left>
+            <span class="fork-tree-left-stack">
+              <button
+                v-if="node.hasChildren"
+                class="fork-tree-toggle"
+                type="button"
+                :aria-expanded="isForkTreeExpanded(node.thread.id)"
+                :aria-label="isForkTreeExpanded(node.thread.id) ? t('Collapse fork') : t('Expand fork')"
+                :title="isForkTreeExpanded(node.thread.id) ? t('Collapse fork') : t('Expand fork')"
+                @click.stop="toggleForkTreeNode(node.thread.id)"
+              >
+                <IconTablerChevronDown v-if="isForkTreeExpanded(node.thread.id)" class="thread-icon" />
+                <IconTablerChevronRight v-else class="thread-icon" />
+              </button>
+              <span v-else class="fork-tree-toggle-spacer" aria-hidden="true" />
+              <span class="thread-left-stack">
+                <span
+                  v-if="shouldShowThreadIndicator(node.thread)"
+                  class="thread-status-indicator"
+                  :data-state="getThreadState(node.thread)"
+                />
+                <button
+                  class="thread-delete-button"
+                  type="button"
+                  :data-confirming="isInlineDeleteConfirming(node.thread.id)"
+                  :title="isInlineDeleteConfirming(node.thread.id) ? 'Confirm delete' : t('Delete thread')"
+                  @click.stop="onInlineDeleteClick(node.thread.id)"
+                >
+                  <span v-if="isInlineDeleteConfirming(node.thread.id)" class="thread-delete-confirm-label">Confirm</span>
+                  <IconTablerTrash v-else class="thread-icon" />
+                </button>
+              </span>
+            </span>
+          </template>
+          <button class="thread-main-button" type="button" @click.stop="onSelect(node.thread.id)">
+            <span class="thread-row-title-wrap">
+              <span class="thread-row-title-line">
+                <span class="thread-row-title">{{ node.thread.title }}</span>
+                <IconTablerGitFork v-if="node.thread.hasWorktree" class="thread-row-worktree-icon" :title="t('Worktree thread')" />
+                <span
+                  v-if="threadHasAutomation(node.thread.id)"
+                  class="thread-row-automation-chip"
+                  :title="threadAutomationTooltip(node.thread.id)"
+                >
+                  <IconTablerBolt class="thread-row-automation-icon" />
+                  <span v-if="threadAutomationCount(node.thread.id) > 1" class="thread-row-automation-count">
+                    {{ threadAutomationCount(node.thread.id) }}
+                  </span>
+                </span>
+                <span
+                  v-if="node.thread.pendingRequestState"
+                  class="thread-row-request-chip"
+                  :data-state="node.thread.pendingRequestState"
+                >
+                  {{ threadRequestLabel(node.thread) }}
+                </span>
+              </span>
+            </span>
+          </button>
+          <template #right>
+            <span class="thread-row-time">{{ formatRelativeThread(node.thread) }}</span>
+          </template>
+          <template #right-hover>
+            <div :ref="(el) => setThreadMenuWrapRef(node.thread.id, el)" class="thread-menu-wrap">
+              <button
+                class="thread-menu-trigger"
+                type="button"
+                title="thread_menu"
+                @click.stop="toggleThreadMenu(node.thread.id)"
               >
                 <IconTablerDots class="thread-icon" />
               </button>
@@ -909,6 +1016,7 @@ import { useUiLanguage } from '../../composables/useUiLanguage'
 import { useFeedbackDiagnostics } from '../../composables/useFeedbackDiagnostics'
 import { getPathLeafName, getPathParent, isAbsoluteLikePath, isProjectlessChatPath } from '../../pathUtils.js'
 import SidebarMenuRow from './SidebarMenuRow.vue'
+import { buildForkTree } from './forkTree'
 import { reconcilePinnedThreadIds, reorderPinnedThreadIds } from './pinnedThreadUtils'
 
 const props = defineProps<{
@@ -975,6 +1083,7 @@ type DragPointerSample = {
 
 type MenuDirection = 'up' | 'down'
 type ChatSortMode = 'created' | 'updated'
+type ThreadViewMode = 'project' | 'chronological' | 'fork-tree'
 type AutomationScheduleMode = 'daily' | 'interval' | 'advanced'
 type AutomationIntervalUnit = 'minutes' | 'hours' | 'days'
 type AutomationTargetMode = 'thread' | 'project'
@@ -1128,7 +1237,9 @@ const organizeMenuWrapRef = ref<HTMLElement | null>(null)
 const openThreadMenuPanelRef = ref<HTMLElement | null>(null)
 const isOrganizeMenuOpen = ref(false)
 const THREAD_VIEW_MODE_STORAGE_KEY = 'codex-web-local.thread-view-mode.v1'
-const threadViewMode = ref<'project' | 'chronological'>(loadThreadViewMode())
+const FORK_TREE_COLLAPSED_STORAGE_KEY = 'codex-web-local.fork-tree-collapsed.v1'
+const threadViewMode = ref<ThreadViewMode>(loadThreadViewMode())
+const collapsedForkTreeThreadIds = ref<Record<string, boolean>>(loadForkTreeCollapsedState())
 const projectGroupResizeObserver =
   typeof window !== 'undefined'
     ? new ResizeObserver((entries) => {
@@ -1156,11 +1267,24 @@ function loadCollapsedState(): Record<string, boolean> {
   }
 }
 
-function loadThreadViewMode(): 'project' | 'chronological' {
+function loadThreadViewMode(): ThreadViewMode {
   if (typeof window === 'undefined') return 'project'
 
   const raw = window.localStorage.getItem(THREAD_VIEW_MODE_STORAGE_KEY)
-  return raw === 'chronological' ? 'chronological' : 'project'
+  return raw === 'chronological' || raw === 'fork-tree' ? raw : 'project'
+}
+
+function loadForkTreeCollapsedState(): Record<string, boolean> {
+  if (typeof window === 'undefined') return {}
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(FORK_TREE_COLLAPSED_STORAGE_KEY) || '{}') as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    return Object.fromEntries(
+      Object.entries(parsed).filter(([threadId, collapsed]) => threadId.trim().length > 0 && collapsed === true),
+    )
+  } catch {
+    return {}
+  }
 }
 
 function loadBooleanStorage(key: string, fallback: boolean): boolean {
@@ -1223,6 +1347,15 @@ watch(threadViewMode, (value) => {
   window.localStorage.setItem(THREAD_VIEW_MODE_STORAGE_KEY, value)
 })
 
+watch(
+  collapsedForkTreeThreadIds,
+  (value) => {
+    if (typeof window === 'undefined') return
+    window.localStorage.setItem(FORK_TREE_COLLAPSED_STORAGE_KEY, JSON.stringify(value))
+  },
+  { deep: true },
+)
+
 watch(showChatsFirst, (value) => {
   if (typeof window === 'undefined') return
   window.localStorage.setItem(CHATS_FIRST_STORAGE_KEY, String(value))
@@ -1264,6 +1397,7 @@ const filteredGroups = computed<UiProjectGroup[]>(() => {
 })
 
 const isChronologicalView = computed(() => threadViewMode.value === 'chronological')
+const isForkTreeView = computed(() => threadViewMode.value === 'fork-tree')
 
 const globalThreads = computed<UiThread[]>(() => {
   const rows: UiThread[] = []
@@ -1282,6 +1416,11 @@ const globalThreads = computed<UiThread[]>(() => {
     return secondTimestamp - firstTimestamp
   })
 })
+
+const forkTreeNodes = computed(() => buildForkTree(
+  globalThreads.value,
+  new Set(Object.keys(collapsedForkTreeThreadIds.value)),
+))
 
 const chatThreads = computed(() => {
   const rows = globalThreads.value.filter((thread) => isProjectlessChatPath(thread.cwd))
@@ -2268,9 +2407,24 @@ function toggleOrganizeMenu(): void {
   isOrganizeMenuOpen.value = nextValue
 }
 
-function setThreadViewMode(mode: 'project' | 'chronological'): void {
+function setThreadViewMode(mode: ThreadViewMode): void {
   threadViewMode.value = mode
   isOrganizeMenuOpen.value = false
+}
+
+function isForkTreeExpanded(threadId: string): boolean {
+  return collapsedForkTreeThreadIds.value[threadId] !== true
+}
+
+function toggleForkTreeNode(threadId: string): void {
+  const next = { ...collapsedForkTreeThreadIds.value }
+  if (next[threadId]) delete next[threadId]
+  else next[threadId] = true
+  collapsedForkTreeThreadIds.value = next
+}
+
+function forkTreeNodeStyle(depth: number): Record<string, string> {
+  return { '--fork-tree-depth': String(depth) }
 }
 
 function toggleShowChatsFirst(): void {
@@ -3225,6 +3379,50 @@ onBeforeUnmount(() => {
 
 .thread-list-global {
   @apply pr-0.5;
+}
+
+.fork-tree-list {
+  @apply gap-0;
+}
+
+.fork-tree-row-item {
+  position: relative;
+  padding-left: calc(var(--fork-tree-depth, 0) * 0.875rem);
+}
+
+.fork-tree-row-item-child::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 50%;
+  left: calc(var(--fork-tree-depth, 0) * 0.875rem + 0.5rem);
+  border-left: 1px solid rgb(212 212 216);
+}
+
+.fork-tree-row-item-child::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: calc(var(--fork-tree-depth, 0) * 0.875rem + 0.5rem);
+  width: 0.5rem;
+  border-top: 1px solid rgb(212 212 216);
+}
+
+.fork-tree-row :deep(.sidebar-menu-row-left) {
+  width: 2rem;
+}
+
+.fork-tree-left-stack {
+  @apply flex h-4 w-8 items-center gap-0;
+}
+
+.fork-tree-toggle,
+.fork-tree-toggle-spacer {
+  @apply h-4 w-4 shrink-0 text-zinc-500 flex items-center justify-center;
+}
+
+.fork-tree-toggle {
+  @apply rounded hover:bg-zinc-200 hover:text-zinc-700 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-400;
 }
 
 .project-group > .thread-list {

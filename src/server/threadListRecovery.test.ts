@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  decorateThreadListWithForkLineage,
   invalidatePaginatedForkThreadListRecoveryCache,
   recoverUnlistedPaginatedForksInThreadList,
 } from './codexAppServerBridge'
@@ -38,8 +39,16 @@ async function writePaginatedForkRollout(
   codexHome: string,
   threadId: string,
   parentThreadId: string,
-  cwd = '/tmp/project',
+  options: {
+    cwd?: string
+    historyBaseThreadId?: string
+    historyMode?: 'legacy' | 'paginated'
+    forkPointOrdinal?: number
+    forkPointByteOffset?: number
+  } = {},
 ): Promise<void> {
+  const cwd = options.cwd ?? '/tmp/project'
+  const historyMode = options.historyMode ?? 'paginated'
   const rolloutDirectory = join(codexHome, 'sessions', '2026', '08', '12')
   await mkdir(rolloutDirectory, { recursive: true })
   await writeFile(
@@ -51,8 +60,14 @@ async function writePaginatedForkRollout(
           session_id: threadId,
           forked_from_id: parentThreadId,
           cwd,
-          history_mode: 'paginated',
-          history_base: { thread_id: parentThreadId },
+          history_mode: historyMode,
+          history_base: historyMode === 'paginated'
+            ? {
+                thread_id: options.historyBaseThreadId ?? parentThreadId,
+                end_ordinal_exclusive: options.forkPointOrdinal ?? 0,
+                end_byte_offset: options.forkPointByteOffset ?? 0,
+              }
+            : undefined,
         },
       }),
       JSON.stringify({ type: 'event_msg', payload: { type: 'thread_settings_applied' } }),
@@ -114,7 +129,7 @@ describe('recoverUnlistedPaginatedForksInThreadList', () => {
   it('skips paginated forks outside the requested working directories before reading them', async () => {
     const codexHome = await mkdtemp(join(tmpdir(), 'codexui-thread-list-recovery-'))
     process.env.CODEX_HOME = codexHome
-    await writePaginatedForkRollout(codexHome, 'thread-other-project', 'thread-parent', '/tmp/other-project')
+    await writePaginatedForkRollout(codexHome, 'thread-other-project', 'thread-parent', { cwd: '/tmp/other-project' })
     const appServer = { rpc: vi.fn() }
     const result = { data: [thread('thread-parent', 'Original context', 100)], nextCursor: null }
 
@@ -146,6 +161,56 @@ describe('recoverUnlistedPaginatedForksInThreadList', () => {
         appServer,
       )).resolves.toBe(result)
       expect(appServer.rpc).toHaveBeenCalledTimes(1)
+    } finally {
+      await rm(codexHome, { recursive: true, force: true })
+    }
+  })
+
+  it('attaches direct parent lineage and only exposes a fork point in that parent', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'codexui-thread-list-recovery-'))
+    process.env.CODEX_HOME = codexHome
+    await writePaginatedForkRollout(codexHome, 'thread-child', 'thread-parent', {
+      forkPointOrdinal: 41,
+      forkPointByteOffset: 2048,
+    })
+    await writePaginatedForkRollout(codexHome, 'thread-grandchild', 'thread-child', {
+      historyBaseThreadId: 'thread-parent',
+      forkPointOrdinal: 41,
+      forkPointByteOffset: 2048,
+    })
+    await writePaginatedForkRollout(codexHome, 'thread-legacy-child', 'thread-parent', {
+      historyMode: 'legacy',
+    })
+
+    try {
+      const result = await decorateThreadListWithForkLineage({
+        data: [
+          thread('thread-parent', 'Parent', 100),
+          thread('thread-child', 'Child', 90),
+          thread('thread-grandchild', 'Grandchild', 80),
+          thread('thread-legacy-child', 'Legacy child', 70),
+        ],
+        nextCursor: null,
+      }) as { data: Array<Record<string, unknown>> }
+
+      expect(result.data[1]).toMatchObject({
+        id: 'thread-child',
+        forkedFromId: 'thread-parent',
+        forkPointOrdinal: 41,
+        forkPointByteOffset: 2048,
+      })
+      expect(result.data[2]).toMatchObject({
+        id: 'thread-grandchild',
+        forkedFromId: 'thread-child',
+        forkPointOrdinal: null,
+        forkPointByteOffset: null,
+      })
+      expect(result.data[3]).toMatchObject({
+        id: 'thread-legacy-child',
+        forkedFromId: 'thread-parent',
+        forkPointOrdinal: null,
+        forkPointByteOffset: null,
+      })
     } finally {
       await rm(codexHome, { recursive: true, force: true })
     }

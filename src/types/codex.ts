@@ -70,6 +70,9 @@ export type UiThread = {
   createdAtIso: string
   updatedAtIso: string
   preview: string
+  forkedFromId?: string
+  forkPointOrdinal?: number | null
+  forkPointByteOffset?: number | null
   unread: boolean
   inProgress: boolean
   pendingRequestState?: UiPendingRequestState | null
