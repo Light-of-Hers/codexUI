@@ -215,6 +215,31 @@ This file tracks manual regression and feature verification steps.
 #### Rollback/Cleanup
 - Stop or archive any disposable test turn after verification.
 
+### Feature: Parallel custom-command history positioning
+
+#### Prerequisites
+- App server is running from this repository.
+- A thread can run an agent task whose custom `exec` script issues at least three `tools.exec_command(...)` calls in parallel.
+- The task produces an agent message before the commands and another agent message after them.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. In light theme, open the thread while the task is active and confirm its first agent message is visible.
+2. Wait for the parallel commands to complete, then confirm their collapsed command group remains between the first and second agent messages.
+3. Reload the browser while keeping the CodexUI server running and confirm the same command group stays in that position with the captured command output available.
+4. Switch to dark theme and repeat steps 1-3 with another disposable task.
+
+#### Expected Results
+- Every nested command remains visible; a multi-command custom script does not collapse to one recovered command.
+- Commands are grouped only when consecutive and never appear as one tail group after the final agent response.
+- Light and dark themes preserve the existing command-group controls, output panels, and readable contrast.
+
+#### Performance Audit
+- The recovery parser scans each custom-tool script once and matches command items through bounded per-turn queues. It adds no request, polling loop, or client render pass.
+
+#### Rollback/Cleanup
+- Archive or delete any disposable verification thread after testing. No Codex configuration or session-log cleanup is required.
+
 ### Feature: GitHub-style local editor syntax highlighting
 
 #### Prerequisites

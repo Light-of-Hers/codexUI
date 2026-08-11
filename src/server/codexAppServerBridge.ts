@@ -3336,68 +3336,94 @@ function readCustomToolCallOutput(output: unknown): string {
   return typeof record?.text === 'string' ? record.text : ''
 }
 
-function jsonObjectAfterMarker(input: string, marker: string): string | null {
-  const markerIndex = input.indexOf(marker)
-  if (markerIndex < 0) return null
+function jsonObjectsAfterMarker(input: string, marker: string): string[] {
+  const objects: string[] = []
+  let searchFrom = 0
 
-  let start = markerIndex + marker.length
-  while (/\s/.test(input[start] ?? '')) start += 1
-  if (input[start] !== '{') return null
+  while (searchFrom < input.length) {
+    const markerIndex = input.indexOf(marker, searchFrom)
+    if (markerIndex < 0) break
 
-  let depth = 0
-  let inString = false
-  let escaped = false
-  for (let index = start; index < input.length; index += 1) {
-    const char = input[index]!
-    if (inString) {
-      if (escaped) {
-        escaped = false
-      } else if (char === '\\') {
-        escaped = true
-      } else if (char === '"') {
-        inString = false
-      }
+    let start = markerIndex + marker.length
+    while (/\s/.test(input[start] ?? '')) start += 1
+    if (input[start] !== '{') {
+      searchFrom = markerIndex + marker.length
       continue
     }
 
-    if (char === '"') {
-      inString = true
-    } else if (char === '{') {
-      depth += 1
-    } else if (char === '}') {
-      depth -= 1
-      if (depth === 0) return input.slice(start, index + 1)
+    let depth = 0
+    let inString = false
+    let escaped = false
+    let objectEnd = -1
+    for (let index = start; index < input.length; index += 1) {
+      const char = input[index]!
+      if (inString) {
+        if (escaped) {
+          escaped = false
+        } else if (char === '\\') {
+          escaped = true
+        } else if (char === '"') {
+          inString = false
+        }
+        continue
+      }
+
+      if (char === '"') {
+        inString = true
+      } else if (char === '{') {
+        depth += 1
+      } else if (char === '}') {
+        depth -= 1
+        if (depth === 0) {
+          objectEnd = index + 1
+          break
+        }
+      }
     }
+
+    if (objectEnd < 0) {
+      searchFrom = markerIndex + marker.length
+      continue
+    }
+    objects.push(input.slice(start, objectEnd))
+    searchFrom = objectEnd
   }
 
-  return null
+  return objects
 }
 
-function buildCustomExecRecoveredCommand(payload: Record<string, unknown>): SessionRecoveredCommand | null {
-  if (payload.name !== 'exec') return null
+function buildCustomExecRecoveredCommands(payload: Record<string, unknown>): SessionRecoveredCommand[] {
+  if (payload.name !== 'exec') return []
   const callId = readNonEmptyString(payload.call_id)
   const input = typeof payload.input === 'string' ? payload.input : ''
-  const argumentJson = jsonObjectAfterMarker(input, 'tools.exec_command(')
-  if (!callId || !argumentJson) return null
+  const argumentJsons = jsonObjectsAfterMarker(input, 'tools.exec_command(')
+  if (!callId || argumentJsons.length === 0) return []
 
-  try {
-    const args = asRecord(JSON.parse(argumentJson))
-    const command = readNonEmptyString(args?.cmd)
-    if (!command) return null
-
-    return {
-      id: `session-cmd-${callId}`,
-      type: 'commandExecution',
-      command,
-      cwd: readNonEmptyString(args?.workdir) || readNonEmptyString(args?.cwd) || null,
-      status: payload.status === 'failed' ? 'failed' : 'completed',
-      aggregatedOutput: '',
-      exitCode: null,
-      durationMs: null,
+  const commands: Array<{ command: string; cwd: string | null }> = []
+  for (const argumentJson of argumentJsons) {
+    try {
+      const args = asRecord(JSON.parse(argumentJson))
+      const command = readNonEmptyString(args?.cmd)
+      if (!command) continue
+      commands.push({
+        command,
+        cwd: readNonEmptyString(args?.workdir) || readNonEmptyString(args?.cwd) || null,
+      })
+    } catch {
+      // A malformed nested call must not hide later valid commands in the same script.
     }
-  } catch {
-    return null
   }
+
+  return commands.map((command, index) => ({
+    id: commands.length === 1 ? `session-cmd-${callId}` : `session-cmd-${callId}-${index}`,
+    type: 'commandExecution',
+    command: command.command,
+    cwd: command.cwd,
+    status: payload.status === 'failed' ? 'failed' : 'completed',
+    aggregatedOutput: '',
+    exitCode: null,
+    durationMs: null,
+  }))
 }
 
 type SessionRecoveredFileChangeItem = {
@@ -3571,7 +3597,7 @@ function buildSessionItemOrder(sessionLogRaw: string, turnIds: Set<string>): Map
   let currentTurnId = ''
   let orphanResponseTurnId = ''
   const orderByTurnId = new Map<string, SessionItemSlot[]>()
-  const callIdToCommand = new Map<string, SessionRecoveredCommand>()
+  const callIdToCommands = new Map<string, SessionRecoveredCommand[]>()
   const callIdToToolCall = new Map<string, SessionRecoveredToolCall>()
   const cursorPayloadCache: CursorToolPayloadCache = new Map()
   const lines = sessionLogRaw.split('\n')
@@ -3632,10 +3658,12 @@ function buildSessionItemOrder(sessionLogRaw: string, turnIds: Set<string>): Map
     }
 
     if (payload.type === 'custom_tool_call') {
-      const command = buildCustomExecRecoveredCommand(payload)
-      if (command) {
-        callIdToCommand.set(readNonEmptyString(payload.call_id), command)
-        slots.push({ type: 'commandExecution', command })
+      const commands = buildCustomExecRecoveredCommands(payload)
+      if (commands.length > 0) {
+        callIdToCommands.set(readNonEmptyString(payload.call_id), commands)
+        for (const command of commands) {
+          slots.push({ type: 'commandExecution', command })
+        }
         continue
       }
     }
@@ -3658,7 +3686,7 @@ function buildSessionItemOrder(sessionLogRaw: string, turnIds: Set<string>): Map
         exitCode: null,
         durationMs: null,
       }
-      callIdToCommand.set(callId, command)
+      callIdToCommands.set(callId, [command])
       slots.push({ type: 'commandExecution', command })
       continue
     }
@@ -3689,11 +3717,12 @@ function buildSessionItemOrder(sessionLogRaw: string, turnIds: Set<string>): Map
     if (payload.type === 'function_call_output' || payload.type === 'custom_tool_call_output') {
       const callId = readNonEmptyString(payload.call_id)
       if (!callId) continue
-      const existing = callIdToCommand.get(callId)
+      const commands = callIdToCommands.get(callId)
       const rawOutput = payload.type === 'custom_tool_call_output'
         ? readCustomToolCallOutput(payload.output)
         : typeof payload.output === 'string' ? payload.output : ''
-      if (existing) {
+      if (commands?.length === 1) {
+        const existing = commands[0]!
         const parsed = parseExecCommandOutput(rawOutput)
         existing.aggregatedOutput = parsed.cleanOutput
         existing.exitCode = parsed.exitCode
@@ -3778,29 +3807,105 @@ function readCommandTextFromRecoveredItem(item: Record<string, unknown>): string
   return nestedCommand.trim()
 }
 
+function readCommandCwdFromRecoveredItem(item: Record<string, unknown>): string {
+  const cwd = typeof item.cwd === 'string' ? item.cwd : ''
+  if (cwd.trim()) return cwd.trim()
+  const commandExecution = asRecord(item.commandExecution)
+  const nestedCwd = typeof commandExecution?.cwd === 'string' ? commandExecution.cwd : ''
+  return nestedCwd.trim()
+}
+
+type SessionCommandMatchQueue = {
+  indexes: number[]
+  nextIndex: number
+}
+
+type SessionCommandLookup = {
+  byId: Map<string, SessionCommandMatchQueue>
+  byCommandAndCwd: Map<string, SessionCommandMatchQueue>
+  byCommand: Map<string, SessionCommandMatchQueue>
+  usedIndexes: Set<number>
+}
+
+function commandAndCwdKey(command: string, cwd: string): string {
+  return `${command}\u0000${cwd}`
+}
+
+function appendCommandMatchIndex(
+  lookup: Map<string, SessionCommandMatchQueue>,
+  key: string,
+  index: number,
+): void {
+  let queue = lookup.get(key)
+  if (!queue) {
+    queue = { indexes: [], nextIndex: 0 }
+    lookup.set(key, queue)
+  }
+  queue.indexes.push(index)
+}
+
+function createSessionCommandLookup(commandMessages: Record<string, unknown>[]): SessionCommandLookup {
+  const lookup: SessionCommandLookup = {
+    byId: new Map(),
+    byCommandAndCwd: new Map(),
+    byCommand: new Map(),
+    usedIndexes: new Set(),
+  }
+
+  for (let index = 0; index < commandMessages.length; index += 1) {
+    const item = commandMessages[index]!
+    const id = typeof item.id === 'string' ? item.id.trim() : ''
+    if (id) appendCommandMatchIndex(lookup.byId, id, index)
+
+    const command = readCommandTextFromRecoveredItem(item)
+    if (!command) continue
+    appendCommandMatchIndex(lookup.byCommand, command, index)
+
+    const cwd = readCommandCwdFromRecoveredItem(item)
+    if (cwd) appendCommandMatchIndex(lookup.byCommandAndCwd, commandAndCwdKey(command, cwd), index)
+  }
+
+  return lookup
+}
+
+function takeCommandMatchIndex(
+  queue: SessionCommandMatchQueue | undefined,
+  usedIndexes: Set<number>,
+): number | null {
+  if (!queue) return null
+  while (queue.nextIndex < queue.indexes.length) {
+    const index = queue.indexes[queue.nextIndex++]!
+    if (!usedIndexes.has(index)) {
+      usedIndexes.add(index)
+      return index
+    }
+  }
+  return null
+}
+
 function takeExistingCommandForSessionSlot(
   slotCommand: SessionRecoveredCommand,
   commandMessages: Record<string, unknown>[],
-  usedCommandIndexes: Set<number>,
+  commandLookup: SessionCommandLookup,
 ): Record<string, unknown> | null {
   const slotId = slotCommand.id.trim()
-  let matchIndex = commandMessages.findIndex((item, index) => (
-    !usedCommandIndexes.has(index)
-    && typeof item.id === 'string'
-    && item.id.trim() === slotId
-  ))
+  let matchIndex = takeCommandMatchIndex(commandLookup.byId.get(slotId), commandLookup.usedIndexes)
 
-  if (matchIndex < 0) {
+  if (matchIndex === null) {
     const slotCommandText = slotCommand.command.trim()
-    matchIndex = commandMessages.findIndex((item, index) => (
-      !usedCommandIndexes.has(index)
-      && slotCommandText.length > 0
-      && readCommandTextFromRecoveredItem(item) === slotCommandText
-    ))
+    const slotCwd = slotCommand.cwd?.trim() ?? ''
+    if (slotCommandText.length > 0 && slotCwd.length > 0) {
+      matchIndex = takeCommandMatchIndex(
+        commandLookup.byCommandAndCwd.get(commandAndCwdKey(slotCommandText, slotCwd)),
+        commandLookup.usedIndexes,
+      )
+    }
+    if (matchIndex === null && slotCommandText.length > 0) {
+      matchIndex = takeCommandMatchIndex(commandLookup.byCommand.get(slotCommandText), commandLookup.usedIndexes)
+    }
   }
 
-  if (matchIndex < 0) return null
-  usedCommandIndexes.add(matchIndex)
+  if (matchIndex === null) return null
   return commandMessages[matchIndex]!
 }
 
@@ -4144,7 +4249,7 @@ function mergeSessionCommandsIntoTurns(turns: unknown[], sessionLogRaw: string):
     const userMessages = existingItems.filter((it) => it.type === 'userMessage')
 
     let agentIdx = 0
-    const usedCommandIndexes = new Set<number>()
+    const commandLookup = createSessionCommandLookup(commandMessages)
     const usedFileChangeIndexes = new Set<number>()
     const interleaved: Record<string, unknown>[] = [...userMessages]
 
@@ -4167,7 +4272,7 @@ function mergeSessionCommandsIntoTurns(turns: unknown[], sessionLogRaw: string):
         interleaved.push(takeExistingCommandForSessionSlot(
           slot.command,
           commandMessages,
-          usedCommandIndexes,
+          commandLookup,
         ) ?? slot.command as unknown as Record<string, unknown>)
       } else if (slot.type === 'fileChange' && slot.fileChange) {
         interleaved.push(takeExistingFileChangeForSessionSlot(
@@ -4186,7 +4291,7 @@ function mergeSessionCommandsIntoTurns(turns: unknown[], sessionLogRaw: string):
     }
 
     for (let index = 0; index < commandMessages.length; index += 1) {
-      if (!usedCommandIndexes.has(index)) interleaved.push(commandMessages[index]!)
+      if (!commandLookup.usedIndexes.has(index)) interleaved.push(commandMessages[index]!)
     }
     for (let index = 0; index < fileChangeMessages.length; index += 1) {
       if (!usedFileChangeIndexes.has(index)) interleaved.push(fileChangeMessages[index]!)

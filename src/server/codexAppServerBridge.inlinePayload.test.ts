@@ -953,6 +953,169 @@ describe('thread session skill recovery', () => {
     })
   })
 
+  it('reorders every nested custom exec command between its surrounding agent messages', () => {
+    const result = {
+      thread: {
+        id: 'thread-custom-parallel-exec',
+        path: '/tmp/session.jsonl',
+        turns: [{
+          id: 'turn-1',
+          items: [
+            {
+              id: 'user-1',
+              type: 'userMessage',
+              content: [{ type: 'text', text: 'inspect the project', text_elements: [] }],
+            },
+            { id: 'agent-before', type: 'agentMessage', text: 'I will inspect it.' },
+            { id: 'agent-after', type: 'agentMessage', text: 'The inspection is complete.' },
+            {
+              id: 'native-second',
+              type: 'commandExecution',
+              command: 'pwd',
+              cwd: '/tmp/second',
+              status: 'completed',
+              aggregatedOutput: '/tmp/second',
+              exitCode: 0,
+            },
+            {
+              id: 'native-first',
+              type: 'commandExecution',
+              command: 'pwd',
+              cwd: '/tmp/first',
+              status: 'completed',
+              aggregatedOutput: '/tmp/first',
+              exitCode: 0,
+            },
+            {
+              id: 'native-status',
+              type: 'commandExecution',
+              command: 'git status --short',
+              cwd: '/tmp/project',
+              status: 'completed',
+              aggregatedOutput: ' M src/index.ts',
+              exitCode: 0,
+            },
+          ],
+        }],
+      },
+    }
+    const sessionLog = [
+      JSON.stringify({ type: 'turn_context', payload: { turn_id: 'turn-1' } }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'I will inspect it.' }],
+        },
+      }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'custom_tool_call',
+          name: 'exec',
+          status: 'completed',
+          call_id: 'call-parallel',
+          input: [
+            'const results = await Promise.all([',
+            '  tools.exec_command({"cmd":"pwd","workdir":"/tmp/first"}),',
+            '  tools.exec_command({"cmd":"git status --short","workdir":"/tmp/project"}),',
+            '  tools.exec_command({"cmd":"pwd","workdir":"/tmp/second"}),',
+            ']);',
+            'text(results.map((result) => result.output).join("\\n"));',
+          ].join('\n'),
+        },
+      }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'custom_tool_call_output',
+          call_id: 'call-parallel',
+          output: [{ type: 'input_text', text: 'Script completed\\nOutput:\\ncombined output' }],
+        },
+      }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'The inspection is complete.' }],
+        },
+      }),
+    ].join('\n')
+
+    const merged = mergeRecoveredTurnItemsIntoThreadResult(
+      result,
+      (_threadId, turns) => turns,
+      sessionLog,
+    ) as typeof result
+    const items = merged.thread.turns[0].items
+
+    expect(items.map((item) => item.id)).toEqual([
+      'user-1',
+      'agent-before',
+      'native-first',
+      'native-status',
+      'native-second',
+      'agent-after',
+    ])
+    expect(items.slice(2, 5).map((item) => item.aggregatedOutput)).toEqual([
+      '/tmp/first',
+      ' M src/index.ts',
+      '/tmp/second',
+    ])
+  })
+
+  it('recovers later custom exec commands after a malformed nested argument', () => {
+    const result = {
+      thread: {
+        id: 'thread-custom-malformed-exec',
+        path: '/tmp/session.jsonl',
+        turns: [{
+          id: 'turn-1',
+          items: [
+            { id: 'user-1', type: 'userMessage', content: [{ type: 'text', text: 'inspect', text_elements: [] }] },
+            { id: 'agent-1', type: 'agentMessage', text: 'done' },
+          ],
+        }],
+      },
+    }
+    const sessionLog = [
+      JSON.stringify({ type: 'turn_context', payload: { turn_id: 'turn-1' } }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'custom_tool_call',
+          name: 'exec',
+          status: 'completed',
+          call_id: 'call-malformed',
+          input: [
+            'tools.exec_command({"cmd":"missing close"',
+            'tools.exec_command({"cmd":"pwd","workdir":"/tmp/project"})',
+          ].join('\n'),
+        },
+      }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'done' }],
+        },
+      }),
+    ].join('\n')
+
+    const merged = mergeRecoveredTurnItemsIntoThreadResult(
+      result,
+      (_threadId, turns) => turns,
+      sessionLog,
+    ) as typeof result
+    const items = merged.thread.turns[0].items
+
+    expect(items.map((item) => item.id)).toEqual(['user-1', 'session-cmd-call-malformed', 'agent-1'])
+    expect(items[1]).toMatchObject({ command: 'pwd', cwd: '/tmp/project' })
+  })
+
   it('recovers non-shell function calls as session tool cards', () => {
     const result = {
       thread: {
