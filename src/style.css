@@ -1577,7 +1577,7 @@
 }
 
 :root.dark .cmd-output-wrap.cmd-output-visible {
-  @apply border-zinc-700;
+  border-color: var(--ark-command-border);
 }
 
 :root.dark .file-change-summary-label {
@@ -2666,6 +2666,13 @@
   --ark-table-grid: #a2a9b1;
   --ark-table-body: #f8f9fa;
   --ark-table-head: #ebedef;
+  --ark-command-panel: #e7ebec;
+  --ark-command-code: #f8f9fa;
+  --ark-command-border: #b7c0c2;
+  --ark-command-divider: #cbd2d4;
+  --ark-command-label: #5c6c70;
+  --ark-command-gutter: #7d8c90;
+  --ark-command-text: #253034;
   --ark-cyan: #22bbff;
   --ark-cyan-ink: #087aa9;
   --ark-structural: #5f6c70;
@@ -2689,6 +2696,13 @@
   --ark-table-grid: #68757a;
   --ark-table-body: #1a1f21;
   --ark-table-head: #14191b;
+  --ark-command-panel: #293235;
+  --ark-command-code: #222a2d;
+  --ark-command-border: #516065;
+  --ark-command-divider: #455256;
+  --ark-command-label: #aab7ba;
+  --ark-command-gutter: #829094;
+  --ark-command-text: #e2e9e9;
   --ark-cyan: #22bbff;
   --ark-cyan-ink: #79d7ff;
   --ark-structural: #647277;

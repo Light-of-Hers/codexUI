@@ -7737,7 +7737,11 @@ onBeforeUnmount(() => {
   color: var(--ark-cyan-ink);
 }
 
-.cmd-output-wrap,
+.cmd-output-wrap {
+  border-color: var(--ark-command-border);
+  background: var(--ark-command-panel);
+}
+
 .tool-call-detail-wrap {
   border-color: var(--ark-line-strong);
   background: #17191b;
@@ -7749,9 +7753,47 @@ onBeforeUnmount(() => {
   border-radius: 0;
 }
 
-.cmd-output-wrap.cmd-output-visible,
+.cmd-output-wrap.cmd-output-visible {
+  border-color: var(--ark-command-border);
+}
+
 .tool-call-detail-wrap.tool-call-detail-visible {
   border-color: var(--ark-line-strong);
+}
+
+.cmd-code-box {
+  border-color: var(--ark-command-border);
+  background: var(--ark-command-code);
+  color: var(--ark-command-text);
+}
+
+.cmd-output-section {
+  border-bottom-color: var(--ark-command-divider);
+}
+
+.cmd-output-section-label {
+  color: var(--ark-command-label);
+}
+
+.cmd-code-box-line::before {
+  color: var(--ark-command-gutter);
+}
+
+.cmd-code-box-line-code {
+  color: var(--ark-command-text);
+}
+
+.cmd-code-copy-button {
+  border-color: var(--ark-command-border);
+  background: color-mix(in srgb, var(--ark-command-code) 92%, var(--ark-panel-solid));
+  color: var(--ark-command-label);
+}
+
+.cmd-code-copy-button:hover,
+.cmd-code-copy-button:focus-visible {
+  border-color: var(--ark-cyan);
+  background: color-mix(in srgb, var(--ark-cyan) 9%, var(--ark-command-code));
+  color: var(--ark-cyan-ink);
 }
 
 .file-change-badge,
