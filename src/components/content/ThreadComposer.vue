@@ -2717,16 +2717,16 @@ watch(
 }
 
 .thread-composer-preview :deep(.message-table) {
-  @apply min-w-full border-separate border-spacing-0 overflow-hidden rounded-none border bg-white text-sm text-slate-800;
+  @apply min-w-full border-separate border-spacing-0 overflow-visible rounded-none border bg-white text-sm text-slate-800;
   border-color: color-mix(in srgb, var(--ark-line-strong) 58%, var(--ark-line));
   line-height: 1.45;
 }
 
 .thread-composer-preview :deep(.message-table-head-cell),
 .thread-composer-preview :deep(.message-table-cell) {
-  @apply border-b border-l px-2.5 py-2 align-middle whitespace-pre-wrap break-words;
+  @apply border-b border-l px-2.5 py-2 text-center align-middle whitespace-pre-wrap break-words;
   border-bottom-color: var(--ark-line);
-  border-left-color: color-mix(in srgb, var(--ark-line) 24%, var(--ark-panel-solid));
+  border-left-color: color-mix(in srgb, var(--ark-line) 45%, var(--ark-panel-solid));
   overflow-wrap: anywhere;
 }
 
@@ -3197,7 +3197,7 @@ watch(
 .thread-composer-preview :deep(.message-table-head-cell),
 .thread-composer-preview :deep(.message-table-cell) {
   border-bottom-color: var(--ark-line);
-  border-left-color: color-mix(in srgb, var(--ark-line) 24%, var(--ark-panel-solid));
+  border-left-color: color-mix(in srgb, var(--ark-line) 45%, var(--ark-panel-solid));
 }
 
 .thread-composer-preview :deep(.message-file-link) {
