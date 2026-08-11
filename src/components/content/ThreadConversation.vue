@@ -7737,6 +7737,20 @@ onBeforeUnmount(() => {
   color: var(--ark-cyan-ink);
 }
 
+.cmd-row {
+  border-color: var(--ark-command-border);
+  background: var(--ark-command-row);
+}
+
+.cmd-row.cmd-row-group {
+  background: var(--ark-command-row-group);
+}
+
+.cmd-row:hover {
+  border-color: var(--ark-cyan);
+  background: color-mix(in srgb, var(--ark-cyan) 8%, var(--ark-command-row));
+}
+
 .cmd-output-wrap {
   border-color: var(--ark-command-border);
   background: var(--ark-command-panel);
