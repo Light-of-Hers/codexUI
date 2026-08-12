@@ -167,7 +167,7 @@ describe('recoverUnlistedPaginatedForksInThreadList', () => {
     }
   })
 
-  it('attaches direct parent lineage and only exposes a fork point in that parent', async () => {
+  it('uses the physical history-base session as the parent for an inherited fork point', async () => {
     const codexHome = await mkdtemp(join(tmpdir(), 'codexui-thread-list-recovery-'))
     process.env.CODEX_HOME = codexHome
     await writePaginatedForkRollout(codexHome, 'thread-child', 'thread-parent', {
@@ -202,15 +202,49 @@ describe('recoverUnlistedPaginatedForksInThreadList', () => {
       })
       expect(result.data[2]).toMatchObject({
         id: 'thread-grandchild',
-        forkedFromId: 'thread-child',
-        forkPointOrdinal: null,
-        forkPointByteOffset: null,
+        forkedFromId: 'thread-parent',
+        forkPointOrdinal: 41,
+        forkPointByteOffset: 2048,
       })
       expect(result.data[3]).toMatchObject({
         id: 'thread-legacy-child',
         forkedFromId: 'thread-parent',
         forkPointOrdinal: null,
         forkPointByteOffset: null,
+      })
+    } finally {
+      await rm(codexHome, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps a fork point in the child-local segment beneath that child', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'codexui-thread-list-recovery-'))
+    process.env.CODEX_HOME = codexHome
+    await writePaginatedForkRollout(codexHome, 'thread-child', 'thread-parent', {
+      forkPointOrdinal: 41,
+      forkPointByteOffset: 2048,
+    })
+    await writePaginatedForkRollout(codexHome, 'thread-grandchild', 'thread-child', {
+      historyBaseThreadId: 'thread-child',
+      forkPointOrdinal: 68,
+      forkPointByteOffset: 4096,
+    })
+
+    try {
+      const result = await decorateThreadListWithForkLineage({
+        data: [
+          thread('thread-parent', 'Parent', 100),
+          thread('thread-child', 'Child', 90),
+          thread('thread-grandchild', 'Grandchild', 80),
+        ],
+        nextCursor: null,
+      }) as { data: Array<Record<string, unknown>> }
+
+      expect(result.data[2]).toMatchObject({
+        id: 'thread-grandchild',
+        forkedFromId: 'thread-child',
+        forkPointOrdinal: 68,
+        forkPointByteOffset: 4096,
       })
     } finally {
       await rm(codexHome, { recursive: true, force: true })
@@ -279,7 +313,7 @@ describe('recoverUnlistedPaginatedForksInThreadList', () => {
     }
   })
 
-  it('does not reparent through an active parent that is merely absent from this page', async () => {
+  it('uses an ancestor fork point even when the invocation source is active but absent from this page', async () => {
     const codexHome = await mkdtemp(join(tmpdir(), 'codexui-thread-list-recovery-'))
     process.env.CODEX_HOME = codexHome
     await writePaginatedForkRollout(codexHome, 'thread-active-child', 'thread-parent', {
@@ -299,7 +333,11 @@ describe('recoverUnlistedPaginatedForksInThreadList', () => {
         nextCursor: null,
       }) as { data: Array<Record<string, unknown>> }
 
-      expect(result.data[1]).not.toHaveProperty('forkedFromId')
+      expect(result.data[1]).toMatchObject({
+        id: 'thread-grandchild',
+        forkedFromId: 'thread-parent',
+        forkPointOrdinal: 41,
+      })
     } finally {
       await rm(codexHome, { recursive: true, force: true })
     }

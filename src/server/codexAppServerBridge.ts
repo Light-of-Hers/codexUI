@@ -5238,8 +5238,10 @@ async function readSessionForkLineage(
       const historyBaseThreadId = readNonEmptyString(historyBase?.thread_id)
       if (!threadId) return null
 
-      // `forked_from_id` is the direct parent. A history base can be inherited
-      // through that parent, so it must not change the visible tree topology.
+      // `forked_from_id` identifies the session on which `thread/fork` was
+      // invoked. For paginated history, `history_base` identifies the physical
+      // session containing the selected fork point, which is the sidebar's
+      // actual topology parent.
       const forkPointIsInDirectParent = historyBaseThreadId === forkedFromId
       return {
         threadId,
@@ -5362,8 +5364,10 @@ function sortThreadListDataByUpdatedAt(data: unknown[]): unknown[] {
 
 /**
  * `thread/list` does not expose fork lineage. Attach local rollout metadata so
- * the sidebar can build its tree without loading each thread. If an intermediate
- * parent is archived, fold its branch into the closest listed ancestor.
+ * the sidebar can build its tree without loading each thread. A paginated
+ * history base wins over the invocation source when a fork point belongs to an
+ * ancestor. If an intermediate parent is archived, fold its branch into the
+ * closest listed ancestor.
  */
 export async function decorateThreadListWithForkLineage(result: unknown): Promise<unknown> {
   const resultRecord = asRecord(result)
@@ -5410,41 +5414,38 @@ function resolveVisibleForkLineage(
   let candidate = lineage
   const visitedThreadIds = new Set([lineage.threadId])
 
-  while (!visitedThreadIds.has(candidate.forkedFromId)) {
-    if (listedThreadIds.has(candidate.forkedFromId)) {
-      return {
-        forkedFromId: candidate.forkedFromId,
-        forkPointOrdinal: candidate.forkPointOrdinal,
-        forkPointByteOffset: candidate.forkPointByteOffset,
-      }
-    }
+  while (true) {
+    const topologyParent = readForkTopologyParent(candidate)
+    if (!topologyParent || visitedThreadIds.has(topologyParent.forkedFromId)) return null
+    if (listedThreadIds.has(topologyParent.forkedFromId)) return topologyParent
 
-    visitedThreadIds.add(candidate.forkedFromId)
-    const parentLineage = lineageByThreadId.get(candidate.forkedFromId)
+    visitedThreadIds.add(topologyParent.forkedFromId)
+    const parentLineage = lineageByThreadId.get(topologyParent.forkedFromId)
     if (parentLineage?.isArchived) {
       if (candidate.cwd && parentLineage.cwd && candidate.cwd !== parentLineage.cwd) return null
       candidate = parentLineage
       continue
     }
-
-    // Deletion removes the parent's rollout. For paginated forks, history_base
-    // can still identify the ancestor that supplied the inherited context.
-    if (
-      !parentLineage
-      && candidate.historyBaseThreadId
-      && candidate.historyBaseThreadId !== candidate.forkedFromId
-      && listedThreadIds.has(candidate.historyBaseThreadId)
-    ) {
-      return {
-        forkedFromId: candidate.historyBaseThreadId,
-        forkPointOrdinal: candidate.historyBaseOrdinal,
-        forkPointByteOffset: candidate.historyBaseByteOffset,
-      }
-    }
     return null
   }
+}
 
-  return null
+function readForkTopologyParent(
+  lineage: SessionForkLineage,
+): Pick<SessionForkLineage, 'forkedFromId' | 'forkPointOrdinal' | 'forkPointByteOffset'> | null {
+  if (lineage.isPaginated && lineage.historyBaseThreadId) {
+    return {
+      forkedFromId: lineage.historyBaseThreadId,
+      forkPointOrdinal: lineage.historyBaseOrdinal,
+      forkPointByteOffset: lineage.historyBaseByteOffset,
+    }
+  }
+  if (!lineage.forkedFromId) return null
+  return {
+    forkedFromId: lineage.forkedFromId,
+    forkPointOrdinal: lineage.forkPointOrdinal,
+    forkPointByteOffset: lineage.forkPointByteOffset,
+  }
 }
 
 /**
