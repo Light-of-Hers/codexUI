@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { clearThreadGoal, forkThread, forkThreadThroughTurn, getAvailableModelIds, getCurrentModelConfig, getThreadGoal, getThreadQueueState, getThreadUserMessageIndex, getThreadUserMessageNavigation, listDirectoryComposioConnectors, resumeThread, searchComposerFiles, searchFileLinkPaths, searchThreadMessages, setThreadGoal, setThreadQueueState, startThread, startThreadTurn, steerThreadTurn } from './codexGateway'
+import { clearThreadGoal, forkThread, forkThreadThroughTurn, getAvailableModelIds, getComposerPrompts, getCurrentModelConfig, getThreadGoal, getThreadQueueState, getThreadUserMessageIndex, getThreadUserMessageNavigation, listDirectoryComposioConnectors, resumeThread, searchComposerFiles, searchFileLinkPaths, searchThreadMessages, setThreadGoal, setThreadQueueState, startThread, startThreadTurn, steerThreadTurn } from './codexGateway'
 
 function mockRpcFetch(): { requests: Array<{ method: string, params: Record<string, unknown> }> } {
   const requests: Array<{ method: string, params: Record<string, unknown> }> = []
@@ -836,5 +836,36 @@ describe('searchThreadMessages', () => {
     })))
 
     await expect(searchThreadMessages('thread-1', 'alpha')).rejects.toThrow('Search unavailable')
+  })
+})
+
+describe('getComposerPrompts', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('coalesces concurrent composer requests without retaining a completed cache', async () => {
+    let resolveFetch!: (response: Response) => void
+    const fetchMock = vi.fn(() => new Promise<Response>((resolve) => {
+      resolveFetch = resolve
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const first = getComposerPrompts()
+    const second = getComposerPrompts()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    resolveFetch(new Response(JSON.stringify({ data: [] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    await expect(Promise.all([first, second])).resolves.toEqual([[], []])
+
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ data: [] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    await getComposerPrompts()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 })

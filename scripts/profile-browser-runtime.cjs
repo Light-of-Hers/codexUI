@@ -46,12 +46,20 @@ function buildWarnings(duplicateCounts, apiSummary, apiRows) {
   const warnings = []
   const providerModels = apiSummary.find((row) => row.key === '/codex-api/provider-models')
   const totalApiKB = round(apiRows.reduce((sum, row) => sum + row.responseBytes, 0) / 1024)
+  const isThreadRoute = /(?:^|[#/])thread\//.test(route)
 
   if (duplicateCounts.threadListFirstPage > 1) warnings.push(`threadListFirstPage=${duplicateCounts.threadListFirstPage}`)
-  if (duplicateCounts.threadResume > 1) warnings.push(`threadResume=${duplicateCounts.threadResume}`)
-  if (duplicateCounts.threadRead > 0) warnings.push(`threadRead=${duplicateCounts.threadRead}`)
+  if (duplicateCounts.threadResume > 0) warnings.push(`threadResume=${duplicateCounts.threadResume}`)
+  const allowedThreadReads = isThreadRoute ? 1 : 0
+  if (duplicateCounts.threadRead > allowedThreadReads) warnings.push(`threadRead=${duplicateCounts.threadRead}`)
   if (duplicateCounts.skillsList > 1) warnings.push(`skillsList=${duplicateCounts.skillsList}`)
   if (duplicateCounts.rateLimitsRead > 1) warnings.push(`rateLimitsRead=${duplicateCounts.rateLimitsRead}`)
+  if (duplicateCounts.threadQueueState > 1) warnings.push(`threadQueueState=${duplicateCounts.threadQueueState}`)
+  if (duplicateCounts.pendingServerRequests > 1) warnings.push(`pendingServerRequests=${duplicateCounts.pendingServerRequests}`)
+  if (duplicateCounts.freeModeStatus > 1) warnings.push(`freeModeStatus=${duplicateCounts.freeModeStatus}`)
+  if (duplicateCounts.threadMessageHistory > 0) warnings.push(`threadMessageHistory=${duplicateCounts.threadMessageHistory}`)
+  if (duplicateCounts.prompts > 1) warnings.push(`prompts=${duplicateCounts.prompts}`)
+  if (duplicateCounts.freeModeMutation > 0) warnings.push(`freeModeMutation=${duplicateCounts.freeModeMutation}`)
   if (providerModels && providerModels.maxMs > 1000) warnings.push(`providerModels=${providerModels.maxMs}ms`)
   if (totalApiKB > 750) warnings.push(`totalApiKB=${totalApiKB}`)
 
@@ -220,6 +228,12 @@ async function main() {
     skillsList: apiRows.filter((row) => row.rpc === 'skills/list').length,
     rateLimitsRead: apiRows.filter((row) => row.rpc === 'account/rateLimits/read').length,
     providerModels: apiRows.filter((row) => row.path === '/codex-api/provider-models').length,
+    threadQueueState: apiRows.filter((row) => row.path === '/codex-api/thread-queue-state').length,
+    pendingServerRequests: apiRows.filter((row) => row.path === '/codex-api/server-requests/pending').length,
+    freeModeStatus: apiRows.filter((row) => row.path === '/codex-api/free-mode/status').length,
+    threadMessageHistory: apiRows.filter((row) => row.path === '/codex-api/thread-message-history').length,
+    prompts: apiRows.filter((row) => row.path === '/codex-api/prompts').length,
+    freeModeMutation: apiRows.filter((row) => row.path === '/codex-api/free-mode').length,
   }
   const diagnostics = buildWarnings(duplicateCounts, apiSummary, apiRows)
 

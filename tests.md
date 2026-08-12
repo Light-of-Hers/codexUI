@@ -8347,6 +8347,11 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Performance Audit
 - Opening a cached thread remains synchronous while exactly one forced `thread/read` refresh runs in the background.
 - Notification reconnect and rollout-version changes reuse the same bounded read path and add no polling loop or request fan-out.
+- Initial thread routing defers queue and skills refreshes to the already scheduled startup hydration; the links dropdown loads complete history only when opened.
+- The browser profiler treats one read-only `thread/read` as the direct-route budget and reports any navigation-time `thread/resume` as a warning.
+- Applying a provider that already matches the freshly loaded server status skips the redundant provider mutation while still hydrating model, rate-limit, collaboration-mode, and skills state.
+- Final isolated cold-start profiles on August 13, 2026 report no warnings: home uses 37.1 KiB of API payload with `thread/list=1`, `thread/read=0`, and `thread/resume=0`; a new paginated thread route uses 38.0 KiB with `thread/list=1`, `thread/read=1`, and `thread/resume=0`.
+- Both profiles record one each of skills, rate limits, provider models, queue state, pending requests, provider status, and prompts; neither performs an eager full-history request or provider mutation.
 
 #### Rollback/Cleanup
 - Stop the disposable CLI/UI clients. No thread data is modified by the read-only verification steps.

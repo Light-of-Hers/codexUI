@@ -294,6 +294,7 @@ export type WorkspaceRootsState = {
 let workspaceRootsStateCache: { value: WorkspaceRootsState; expiresAt: number } | null = null
 let workspaceRootsStatePromise: Promise<WorkspaceRootsState> | null = null
 let workspaceRootsStateCacheVersion = 0
+let composerPromptsPromise: Promise<ComposerPromptInfo[]> | null = null
 
 export type StoredQueuedMessage = {
   id: string
@@ -4247,14 +4248,22 @@ export async function getSkillsList(
 }
 
 export async function getComposerPrompts(): Promise<ComposerPromptInfo[]> {
-  try {
-    const response = await fetch('/codex-api/prompts')
-    if (!response.ok) return []
-    const payload = (await response.json()) as { data?: ComposerPromptInfo[] }
-    return Array.isArray(payload.data) ? payload.data : []
-  } catch {
-    return []
-  }
+  if (composerPromptsPromise) return composerPromptsPromise
+
+  composerPromptsPromise = (async () => {
+    try {
+      const response = await fetch('/codex-api/prompts')
+      if (!response.ok) return []
+      const payload = (await response.json()) as { data?: ComposerPromptInfo[] }
+      return Array.isArray(payload.data) ? payload.data : []
+    } catch {
+      return []
+    }
+  })().finally(() => {
+    composerPromptsPromise = null
+  })
+
+  return composerPromptsPromise
 }
 
 export async function createComposerPrompt(name: string, content: string): Promise<ComposerPromptInfo | null> {

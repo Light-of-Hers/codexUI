@@ -1959,6 +1959,7 @@ export function useDesktopState() {
   const loadMessagePromiseByThreadId = new Map<string, Promise<void>>()
   const loadFullHistoryPromiseByThreadId = new Map<string, Promise<void>>()
   const loadUserMessageNavigationPromiseByThreadId = new Map<string, Promise<void>>()
+  let loadPendingServerRequestsPromise: Promise<void> | null = null
   let refreshSkillsPromise: Promise<void> | null = null
   let skillsRefreshDesiredCwd: string | null = null
   let skillsRefreshQueuedForceReload = false
@@ -6809,7 +6810,10 @@ export function useDesktopState() {
     }
   }
 
-  async function selectThread(threadId: string) {
+  async function selectThread(
+    threadId: string,
+    options: { refreshQueue?: boolean; refreshSkills?: boolean } = {},
+  ) {
     setSelectedThreadId(threadId)
 
     // Fire the message + queue fetches in the background so quickly
@@ -6822,10 +6826,12 @@ export function useDesktopState() {
     void loadMessages(threadId, { preferCached: true }).catch((unknownError) => {
       error.value = unknownError instanceof Error ? unknownError.message : 'Unknown application error'
     })
-    if (threadId) {
+    if (threadId && options.refreshQueue !== false) {
       void processQueuedMessages(threadId).catch(() => {})
     }
-    void refreshSkills()
+    if (options.refreshSkills !== false) {
+      void refreshSkills()
+    }
   }
 
   async function archiveThreadById(threadId: string) {
@@ -8011,7 +8017,6 @@ export function useDesktopState() {
     if (typeof window === 'undefined') return
 
     if (stopNotificationStream) return
-    void loadPendingServerRequestsFromBridge()
     let hasReceivedReady = false
     stopNotificationStream = subscribeCodexNotifications((notification) => {
       if (notification.method === 'ready') {
@@ -8026,15 +8031,26 @@ export function useDesktopState() {
   }
 
   async function loadPendingServerRequestsFromBridge(): Promise<void> {
-    try {
-      const rows = await getPendingServerRequests()
-      const normalizedRequests = rows
-        .map((row) => normalizeServerRequest(row))
-        .filter((request): request is UiServerRequest => request !== null)
-      replacePendingServerRequests(normalizedRequests)
-    } catch {
-      // Keep UI usable when pending request endpoint is temporarily unavailable.
+    if (loadPendingServerRequestsPromise) {
+      await loadPendingServerRequestsPromise
+      return
     }
+
+    loadPendingServerRequestsPromise = (async () => {
+      try {
+        const rows = await getPendingServerRequests()
+        const normalizedRequests = rows
+          .map((row) => normalizeServerRequest(row))
+          .filter((request): request is UiServerRequest => request !== null)
+        replacePendingServerRequests(normalizedRequests)
+      } catch {
+        // Keep UI usable when pending request endpoint is temporarily unavailable.
+      }
+    })().finally(() => {
+      loadPendingServerRequestsPromise = null
+    })
+
+    await loadPendingServerRequestsPromise
   }
 
   async function respondToPendingServerRequest(reply: UiServerRequestReply): Promise<boolean> {

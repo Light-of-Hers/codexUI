@@ -1919,11 +1919,6 @@ function onEnsureThreadLinksLoaded(): void {
   const threadId = selectedThreadId.value
   if (threadId) void loadFullHistoryMessages(threadId)
 }
-watch(canShowThreadLinksDropdown, (canShow) => {
-  if (!canShow) return
-  const threadId = selectedThreadId.value
-  if (threadId) void loadFullHistoryMessages(threadId)
-}, { immediate: true })
 const isSelectedThreadInProgress = computed(() => !isHomeRoute.value && selectedThreadInProgress.value)
 const showThreadContextBadge = computed(() => !isHomeRoute.value && !isSkillsRoute.value && !isAutomationsRoute.value && selectedThreadId.value.trim().length > 0)
 const threadSessionId = computed(() => selectedThreadId.value.trim())
@@ -4368,13 +4363,19 @@ function buildProviderStateSignature(provider: ProviderSelection = selectedProvi
 }
 
 let lastAppliedProviderStateSignature = ''
+let lastKnownServerProviderStateSignature = ''
 
 function isAvailableProvider(provider: ProviderSelection): boolean {
   return providerOptions.value.some((option) => option.value === provider)
 }
 
 async function applySelectedProviderState(
-  options: { force?: boolean; refreshAncillary?: boolean; explicitProviderChange?: boolean } = {},
+  options: {
+    force?: boolean
+    refreshAncillary?: boolean
+    refreshStatus?: boolean
+    explicitProviderChange?: boolean
+  } = {},
 ): Promise<void> {
   let provider = selectedProvider.value
   if (provider !== 'codex' && providerOptionsLoaded.value && !isAvailableProvider(provider)) {
@@ -4395,6 +4396,18 @@ async function applySelectedProviderState(
     return
   }
 
+  if (!options.force && signature === lastKnownServerProviderStateSignature) {
+    lastAppliedProviderStateSignature = signature
+    providerError.value = ''
+    if (options.refreshAncillary !== false) {
+      await refreshAncillaryState({
+        includeProviderModels: true,
+        explicitProviderChange: options.explicitProviderChange,
+      })
+    }
+    return
+  }
+
   try {
     if (provider === 'codex') {
       const result = await setFreeMode(false)
@@ -4409,8 +4422,11 @@ async function applySelectedProviderState(
 
     invalidateAppServerRuntimeState()
     lastAppliedProviderStateSignature = signature
+    lastKnownServerProviderStateSignature = signature
     providerError.value = ''
-    await loadFreeModeStatus()
+    if (options.refreshStatus !== false) {
+      await loadFreeModeStatus()
+    }
     if (options.refreshAncillary !== false) {
       await refreshAncillaryState({
         providerChanged: true,
@@ -4457,6 +4473,11 @@ async function loadFreeModeStatus(): Promise<void> {
         .filter((provider) => provider.value.length > 0)
       : []
     providerOptionsLoaded.value = true
+    lastKnownServerProviderStateSignature = status.enabled && status.provider?.trim()
+      ? normalizeProviderSelection(status.provider)
+      : status.enabled
+        ? ''
+        : 'codex'
     if (status.enabled && status.provider && isAvailableProvider(normalizeProviderSelection(status.provider ?? ''))) {
       setSelectedProvider(normalizeProviderSelection(status.provider))
     }
@@ -4596,11 +4617,11 @@ async function initialize(): Promise<void> {
   }
   void loadAccountsState({ silent: true })
   await applyLaunchProjectPathFromUrl()
+  await syncThreadSelectionWithRoute({ applyProvider: false })
   hasInitialized.value = true
   startPolling()
   scheduleStartupBackgroundRefreshes()
-  await syncThreadSelectionWithRoute({ applyProvider: false })
-  await applySelectedProviderState().catch(() => {})
+  await applySelectedProviderState({ refreshStatus: false }).catch(() => {})
 }
 
 async function syncThreadSelectionWithRoute(options: { applyProvider?: boolean } = {}): Promise<void> {
@@ -4625,7 +4646,10 @@ async function syncThreadSelectionWithRoute(options: { applyProvider?: boolean }
         const threadId = routeThreadId.value
         if (!threadId) continue
 
-        await selectThread(threadId)
+        await selectThread(threadId, {
+          refreshQueue: options.applyProvider !== false,
+          refreshSkills: options.applyProvider !== false,
+        })
       }
     } while (hasPendingRouteSync)
 

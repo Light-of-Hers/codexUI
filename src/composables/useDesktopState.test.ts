@@ -121,6 +121,8 @@ beforeEach(() => {
     hasMoreOlder: false,
     turnIndexByTurnId: {},
   })
+  gatewayMocks.getPendingServerRequests.mockReset()
+  gatewayMocks.getPendingServerRequests.mockResolvedValue([])
   gatewayMocks.getThreadSummary.mockResolvedValue(thread('thread-a', '/tmp/project'))
   gatewayMocks.getThreadQueueState.mockResolvedValue({})
   gatewayMocks.getThreadTitleCache.mockResolvedValue({ titles: {} })
@@ -2483,6 +2485,32 @@ describe('turn interruption', () => {
     }
   }
 
+  it('loads pending requests once when the notification stream becomes ready', async () => {
+    installTestWindow()
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({ groups: [], nextCursor: null })
+    let resolvePending!: (value: unknown[]) => void
+    gatewayMocks.getPendingServerRequests.mockReturnValue(new Promise((resolve) => {
+      resolvePending = resolve
+    }))
+    let notify: ((notification: RpcNotification) => void) | null = null
+    gatewayMocks.subscribeCodexNotifications.mockImplementation((handler: (notification: RpcNotification) => void) => {
+      notify = handler
+      return vi.fn()
+    })
+
+    const state = useDesktopState()
+    state.startPolling()
+    expect(gatewayMocks.getPendingServerRequests).not.toHaveBeenCalled()
+    if (!notify) throw new Error('Expected the notification subscription to be registered')
+    const dispatchNotification = notify as (notification: RpcNotification) => void
+    dispatchNotification(notification('ready', {}))
+    await flushMicrotasks()
+
+    expect(gatewayMocks.getPendingServerRequests).toHaveBeenCalledTimes(1)
+    resolvePending([])
+    await flushMicrotasks()
+  })
+
   function threadDetail(activeTurnId: string, inProgress = true) {
     return {
       messages: [],
@@ -3371,6 +3399,25 @@ describe('skills list refresh', () => {
     gatewayMocks.getAvailableModelIds.mockResolvedValue(['gpt-5.5'])
     gatewayMocks.setThreadQueueState.mockResolvedValue(undefined)
   }
+
+  it('can defer selection refreshes to startup hydration', async () => {
+    installTestWindow()
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({
+      groups: [{ projectName: 'repo-a', threads: [thread('thread-a', '/tmp/repo-a')] }],
+      nextCursor: null,
+    })
+    gatewayMocks.getSkillsList.mockResolvedValue([])
+
+    const state = useDesktopState()
+    await state.refreshAll({ includeSelectedThreadMessages: false, refreshAncillary: false })
+    gatewayMocks.getSkillsList.mockClear()
+    gatewayMocks.getThreadQueueState.mockClear()
+
+    await state.selectThread('thread-a', { refreshQueue: false, refreshSkills: false })
+
+    expect(gatewayMocks.getSkillsList).not.toHaveBeenCalled()
+    expect(gatewayMocks.getThreadQueueState).not.toHaveBeenCalled()
+  })
 
   it('reloads skills for an explicit cwd even when selected thread cwd differs', async () => {
     installTestWindow()
