@@ -223,7 +223,7 @@
 
       <p v-else-if="isLoading && groups.length === 0" class="thread-tree-loading">{{ t('Loading threads...') }}</p>
 
-      <ul v-else-if="isChronologicalView" class="thread-list thread-list-global">
+      <ul v-else-if="!forkTreeEnabled && isChronologicalView" class="thread-list thread-list-global">
       <li
         v-for="thread in globalThreads"
         :key="thread.id"

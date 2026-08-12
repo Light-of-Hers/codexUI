@@ -4621,12 +4621,20 @@ type SessionForkLineage = {
   cwd: string
   forkPointOrdinal: number | null
   forkPointByteOffset: number | null
+  historyBaseThreadId: string
+  historyBaseOrdinal: number | null
+  historyBaseByteOffset: number | null
   isPaginated: boolean
+  isArchived: boolean
 }
 
 const PAGINATED_FORK_RECOVERY_CACHE_TTL_MS = 30_000
 const PAGINATED_FORK_SCAN_CONCURRENCY = 8
 const SESSION_ROLLOUT_DIRECTORY_DEPTH = 3
+const SESSION_ROLLOUT_ROOTS = [
+  { directory: 'sessions', isArchived: false },
+  { directory: 'archived_sessions', isArchived: true },
+] as const
 
 let sessionForkLineageCache: {
   scannedAtMs: number
@@ -4662,7 +4670,10 @@ function readNonNegativeSafeInteger(value: unknown): number | null {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null
 }
 
-async function readSessionForkLineage(sessionPath: string): Promise<SessionForkLineage | null> {
+async function readSessionForkLineage(
+  sessionPath: string,
+  isArchived: boolean,
+): Promise<SessionForkLineage | null> {
   const stream = createReadStream(sessionPath, { encoding: 'utf8' })
   const lines = createInterface({ input: stream, crlfDelay: Infinity })
 
@@ -4691,7 +4702,11 @@ async function readSessionForkLineage(sessionPath: string): Promise<SessionForkL
         forkPointByteOffset: forkPointIsInDirectParent
           ? readNonNegativeSafeInteger(historyBase?.end_byte_offset)
           : null,
+        historyBaseThreadId,
+        historyBaseOrdinal: readNonNegativeSafeInteger(historyBase?.end_ordinal_exclusive),
+        historyBaseByteOffset: readNonNegativeSafeInteger(historyBase?.end_byte_offset),
         isPaginated: payload?.history_mode === 'paginated' && Boolean(historyBaseThreadId),
+        isArchived,
       }
     }
   } catch {
@@ -4705,7 +4720,10 @@ async function readSessionForkLineage(sessionPath: string): Promise<SessionForkL
 }
 
 async function scanSessionForkLineage(): Promise<SessionForkLineage[]> {
-  const rolloutPaths = await listSessionRolloutPaths(join(getCodexHomeDir(), 'sessions'))
+  const rolloutPaths = (await Promise.all(SESSION_ROLLOUT_ROOTS.map(async (root) => (
+    (await listSessionRolloutPaths(join(getCodexHomeDir(), root.directory)))
+      .map((sessionPath) => ({ sessionPath, isArchived: root.isArchived }))
+  )))).flat()
   const entries: SessionForkLineage[] = []
   let nextPathIndex = 0
 
@@ -4713,16 +4731,23 @@ async function scanSessionForkLineage(): Promise<SessionForkLineage[]> {
     { length: Math.min(PAGINATED_FORK_SCAN_CONCURRENCY, rolloutPaths.length) },
     async () => {
       while (nextPathIndex < rolloutPaths.length) {
-        const sessionPath = rolloutPaths[nextPathIndex]
+        const rolloutPath = rolloutPaths[nextPathIndex]
         nextPathIndex += 1
-        if (!sessionPath) continue
-        const entry = await readSessionForkLineage(sessionPath)
+        if (!rolloutPath) continue
+        const entry = await readSessionForkLineage(rolloutPath.sessionPath, rolloutPath.isArchived)
         if (entry) entries.push(entry)
       }
     },
   ))
 
-  return Array.from(new Map(entries.map((entry) => [entry.threadId, entry])).values())
+  const lineageByThreadId = new Map<string, SessionForkLineage>()
+  for (const entry of entries) {
+    const existing = lineageByThreadId.get(entry.threadId)
+    if (!existing || (existing.isArchived && !entry.isArchived)) {
+      lineageByThreadId.set(entry.threadId, entry)
+    }
+  }
+  return Array.from(lineageByThreadId.values())
 }
 
 async function getSessionForkLineage(): Promise<SessionForkLineage[]> {
@@ -4747,7 +4772,7 @@ async function getSessionForkLineage(): Promise<SessionForkLineage[]> {
 }
 
 async function getPaginatedForkRecoveryCandidates(): Promise<SessionForkLineage[]> {
-  return (await getSessionForkLineage()).filter((entry) => entry.isPaginated)
+  return (await getSessionForkLineage()).filter((entry) => entry.isPaginated && !entry.isArchived)
 }
 
 function shouldRecoverPaginatedForksFromThreadList(params: unknown): boolean {
@@ -4782,8 +4807,9 @@ function sortThreadListDataByUpdatedAt(data: unknown[]): unknown[] {
 }
 
 /**
- * `thread/list` does not expose fork lineage. Attach the local rollout metadata
- * so the sidebar can build an immediate-parent tree without loading each thread.
+ * `thread/list` does not expose fork lineage. Attach local rollout metadata so
+ * the sidebar can build its tree without loading each thread. If an intermediate
+ * parent is archived, fold its branch into the closest listed ancestor.
  */
 export async function decorateThreadListWithForkLineage(result: unknown): Promise<unknown> {
   const resultRecord = asRecord(result)
@@ -4793,6 +4819,10 @@ export async function decorateThreadListWithForkLineage(result: unknown): Promis
   const lineageByThreadId = new Map(
     (await getSessionForkLineage()).map((entry) => [entry.threadId, entry]),
   )
+  const listedThreadIds = new Set(data.flatMap((item) => {
+    const threadId = readNonEmptyString(asRecord(item)?.id)
+    return threadId ? [threadId] : []
+  }))
   let changed = false
   const decoratedData = data.map((item) => {
     const thread = asRecord(item)
@@ -4801,16 +4831,66 @@ export async function decorateThreadListWithForkLineage(result: unknown): Promis
     if (!thread || !lineage) return item
     if (lineage.cwd && readNonEmptyString(thread.cwd) !== lineage.cwd) return item
 
+    const resolvedLineage = resolveVisibleForkLineage(
+      lineage,
+      listedThreadIds,
+      lineageByThreadId,
+    )
+    if (!resolvedLineage) return item
+
     changed = true
     return {
       ...thread,
-      forkedFromId: lineage.forkedFromId,
-      forkPointOrdinal: lineage.forkPointOrdinal,
-      forkPointByteOffset: lineage.forkPointByteOffset,
+      ...resolvedLineage,
     }
   })
 
   return changed ? { ...resultRecord, data: decoratedData } : result
+}
+
+function resolveVisibleForkLineage(
+  lineage: SessionForkLineage,
+  listedThreadIds: Set<string>,
+  lineageByThreadId: Map<string, SessionForkLineage>,
+): Pick<SessionForkLineage, 'forkedFromId' | 'forkPointOrdinal' | 'forkPointByteOffset'> | null {
+  let candidate = lineage
+  const visitedThreadIds = new Set([lineage.threadId])
+
+  while (!visitedThreadIds.has(candidate.forkedFromId)) {
+    if (listedThreadIds.has(candidate.forkedFromId)) {
+      return {
+        forkedFromId: candidate.forkedFromId,
+        forkPointOrdinal: candidate.forkPointOrdinal,
+        forkPointByteOffset: candidate.forkPointByteOffset,
+      }
+    }
+
+    visitedThreadIds.add(candidate.forkedFromId)
+    const parentLineage = lineageByThreadId.get(candidate.forkedFromId)
+    if (parentLineage?.isArchived) {
+      if (candidate.cwd && parentLineage.cwd && candidate.cwd !== parentLineage.cwd) return null
+      candidate = parentLineage
+      continue
+    }
+
+    // Deletion removes the parent's rollout. For paginated forks, history_base
+    // can still identify the ancestor that supplied the inherited context.
+    if (
+      !parentLineage
+      && candidate.historyBaseThreadId
+      && candidate.historyBaseThreadId !== candidate.forkedFromId
+      && listedThreadIds.has(candidate.historyBaseThreadId)
+    ) {
+      return {
+        forkedFromId: candidate.historyBaseThreadId,
+        forkPointOrdinal: candidate.historyBaseOrdinal,
+        forkPointByteOffset: candidate.historyBaseByteOffset,
+      }
+    }
+    return null
+  }
+
+  return null
 }
 
 /**
@@ -10076,7 +10156,11 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           }
         }
 
-        if (body.method === 'thread/fork' || body.method === 'thread/archive') {
+        if (
+          body.method === 'thread/fork'
+          || body.method === 'thread/archive'
+          || body.method === 'thread/unarchive'
+        ) {
           invalidatePaginatedForkThreadListRecoveryCache()
         }
         if (body.method === 'thread/list') {

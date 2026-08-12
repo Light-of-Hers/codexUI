@@ -45,11 +45,12 @@ async function writePaginatedForkRollout(
     historyMode?: 'legacy' | 'paginated'
     forkPointOrdinal?: number
     forkPointByteOffset?: number
+    storageDirectory?: 'sessions' | 'archived_sessions'
   } = {},
 ): Promise<void> {
   const cwd = options.cwd ?? '/tmp/project'
   const historyMode = options.historyMode ?? 'paginated'
-  const rolloutDirectory = join(codexHome, 'sessions', '2026', '08', '12')
+  const rolloutDirectory = join(codexHome, options.storageDirectory ?? 'sessions', '2026', '08', '12')
   await mkdir(rolloutDirectory, { recursive: true })
   await writeFile(
     join(rolloutDirectory, `rollout-2026-08-12T00-00-00-${threadId}.jsonl`),
@@ -211,6 +212,94 @@ describe('recoverUnlistedPaginatedForksInThreadList', () => {
         forkPointOrdinal: null,
         forkPointByteOffset: null,
       })
+    } finally {
+      await rm(codexHome, { recursive: true, force: true })
+    }
+  })
+
+  it('reparents a child through an archived parent and uses the archived branch point', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'codexui-thread-list-recovery-'))
+    process.env.CODEX_HOME = codexHome
+    await writePaginatedForkRollout(codexHome, 'thread-archived-child', 'thread-parent', {
+      forkPointOrdinal: 41,
+      forkPointByteOffset: 2048,
+      storageDirectory: 'archived_sessions',
+    })
+    await writePaginatedForkRollout(codexHome, 'thread-grandchild', 'thread-archived-child', {
+      forkPointOrdinal: 9,
+      forkPointByteOffset: 512,
+    })
+
+    try {
+      const result = await decorateThreadListWithForkLineage({
+        data: [
+          thread('thread-parent', 'Parent', 100),
+          thread('thread-grandchild', 'Grandchild', 80),
+        ],
+        nextCursor: null,
+      }) as { data: Array<Record<string, unknown>> }
+
+      expect(result.data[1]).toMatchObject({
+        id: 'thread-grandchild',
+        forkedFromId: 'thread-parent',
+        forkPointOrdinal: 41,
+        forkPointByteOffset: 2048,
+      })
+    } finally {
+      await rm(codexHome, { recursive: true, force: true })
+    }
+  })
+
+  it('uses an inherited history base when a deleted parent rollout is unavailable', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'codexui-thread-list-recovery-'))
+    process.env.CODEX_HOME = codexHome
+    await writePaginatedForkRollout(codexHome, 'thread-grandchild', 'thread-deleted-child', {
+      historyBaseThreadId: 'thread-parent',
+      forkPointOrdinal: 41,
+      forkPointByteOffset: 2048,
+    })
+
+    try {
+      const result = await decorateThreadListWithForkLineage({
+        data: [
+          thread('thread-parent', 'Parent', 100),
+          thread('thread-grandchild', 'Grandchild', 80),
+        ],
+        nextCursor: null,
+      }) as { data: Array<Record<string, unknown>> }
+
+      expect(result.data[1]).toMatchObject({
+        id: 'thread-grandchild',
+        forkedFromId: 'thread-parent',
+        forkPointOrdinal: 41,
+        forkPointByteOffset: 2048,
+      })
+    } finally {
+      await rm(codexHome, { recursive: true, force: true })
+    }
+  })
+
+  it('does not reparent through an active parent that is merely absent from this page', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'codexui-thread-list-recovery-'))
+    process.env.CODEX_HOME = codexHome
+    await writePaginatedForkRollout(codexHome, 'thread-active-child', 'thread-parent', {
+      forkPointOrdinal: 41,
+    })
+    await writePaginatedForkRollout(codexHome, 'thread-grandchild', 'thread-active-child', {
+      historyBaseThreadId: 'thread-parent',
+      forkPointOrdinal: 41,
+    })
+
+    try {
+      const result = await decorateThreadListWithForkLineage({
+        data: [
+          thread('thread-parent', 'Parent', 100),
+          thread('thread-grandchild', 'Grandchild', 80),
+        ],
+        nextCursor: null,
+      }) as { data: Array<Record<string, unknown>> }
+
+      expect(result.data[1]).not.toHaveProperty('forkedFromId')
     } finally {
       await rm(codexHome, { recursive: true, force: true })
     }

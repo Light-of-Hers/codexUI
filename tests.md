@@ -7954,12 +7954,14 @@ Markdown files opened through the local editor expose a preview button that rend
 5. Pin a parent that has descendants. Confirm the Pinned section contains the parent and the complete descendant branch, while none of those rows remain in the ordinary thread tree.
 6. Pin a child in an already-pinned parent branch and confirm the child is not duplicated. Drag only a pinned root to reorder pinned branches.
 7. Fork the selected parent once more and confirm the optimistic child immediately appears beneath that parent before the background list refresh completes.
-8. Turn `Group forked sessions` off and confirm the existing project/chats and chronological organization modes return. Turn it on again and confirm the tree is restored.
-9. Switch to dark theme and repeat steps 1-8; confirm branch lines, chevrons, active rows, and hover states retain readable contrast.
-10. Run `pnpm exec vitest run src/components/sidebar/forkTree.test.ts src/api/normalizers/v2.test.ts src/server/threadListRecovery.test.ts` and `pnpm exec vue-tsc --noEmit --pretty false`.
+8. Archive the direct child, refresh the active list, and confirm its visible child is attached under the nearest active ancestor at the archived child's original fork point.
+9. Delete a disposable intermediate paginated child whose grandchild retains a history base for the active ancestor; refresh and confirm that grandchild remains attached to that ancestor.
+10. Turn `Group forked sessions` off and confirm the existing project/chats and chronological organization modes return. Turn it on again and confirm the tree is restored.
+11. Switch to dark theme and repeat steps 1-10; confirm branch lines, chevrons, active rows, and hover states retain readable contrast.
+12. Run `pnpm exec vitest run src/components/sidebar/forkTree.test.ts src/api/normalizers/v2.test.ts src/server/threadListRecovery.test.ts` and `pnpm exec vue-tsc --noEmit --pretty false`.
 
 #### Expected Results
-- The visible fork topology uses each session's direct `forked_from_id`; an inherited `history_base` never re-parents a grandchild to an ancestor.
+- The visible fork topology uses each session's direct `forked_from_id` while its parent is active. If an intermediate parent is archived, descendants fold into the closest active ancestor using that archived parent's fork point. If the parent was deleted, the same reattachment is possible when the child retains an inherited `history_base` for that ancestor; otherwise missing provenance remains a root row.
 - Siblings with known paginated fork points sort by ordinal and byte offset, then by creation time for deterministic ties. Legacy sessions without a stored fork point fall back to creation time.
 - Global fork grouping is on by default and persists as a setting. When on, every loaded child is attached to its direct parent regardless of the old project/chats organization modes.
 - Pinning a thread carries its complete loaded descendant branch into Pinned. Nested pinned roots are deduplicated, and that branch is absent from the ordinary tree.
@@ -7967,7 +7969,7 @@ Markdown files opened through the local editor expose a preview button that rend
 - Light and dark themes preserve normal sidebar controls and readable tree affordances.
 
 #### Performance Audit
-- `thread/list` receives lineage from the same first-line rollout metadata scan already used for paginated-fork recovery. The 30-second shared cache prevents page-by-page rescans and the decoration performs no per-row RPC.
+- `thread/list` receives lineage from the same first-line rollout metadata scan already used for paginated-fork recovery. The scan includes `sessions` and `archived_sessions`, shares a 30-second cache, and performs no per-row RPC. Fork, archive, and unarchive invalidate that cache; active entries win any transient duplicate during an archive move.
 - Tree construction is in-memory over the already-loaded sidebar rows: one map build plus sibling sorting for the ordinary tree and one only when a pinned branch exists. It has cycle protection, so malformed metadata cannot cause recursive rendering or unbounded traversal.
 - No browser profiler or browser automation was run because this task did not explicitly request browser automation. The focused bridge, normalizer, and tree tests plus frontend build provide static coverage; an interactive follow-up should profile a sidebar containing a large fork family with `pnpm run profile:thread`.
 
