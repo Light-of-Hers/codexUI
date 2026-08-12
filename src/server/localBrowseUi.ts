@@ -1168,8 +1168,8 @@ function markdownPreviewStyles(): string {
       --blockquote-bg: #f6f8fa;
       --link-fg: #0969da;
       --link-hover: #1f6feb;
-      --code-bg: rgba(175, 184, 193, 0.2);
-      --code-fg: #24292f;
+      --code-bg: #e7ecee;
+      --code-fg: #273337;
       --block-code-bg: #f6f8fa;
       --block-code-fg: #24292f;
       --table-bg: #ffffff;
@@ -1208,8 +1208,8 @@ function markdownPreviewStyles(): string {
         --blockquote-bg: #161b22;
         --link-fg: #58a6ff;
         --link-hover: #79c0ff;
-        --code-bg: rgba(110, 118, 129, 0.4);
-        --code-fg: #c9d1d9;
+        --code-bg: #293336;
+        --code-fg: #e0e7e8;
         --block-code-bg: #0d1117;
         --block-code-fg: #c9d1d9;
         --table-bg: #0d1117;
@@ -1376,13 +1376,14 @@ function markdownPreviewStyles(): string {
     }
     .message-table-body-row:last-child .message-table-cell { border-bottom: 0; }
     .message-inline-code {
-      border: 1px solid var(--border);
-      border-radius: 5px;
+      border: 0;
+      border-radius: 0;
       background: var(--code-bg);
       color: var(--code-fg);
       font-family: "Fira Code", Consolas, "舟方日明", monospace;
-      font-size: 0.9em;
-      padding: 0.1rem 0.32rem;
+      font-size: 0.875em;
+      line-height: 1.35;
+      padding: 0 0.25rem;
     }
     .message-code-block {
       position: relative;
@@ -2013,6 +2014,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
   const escapedEditorPath = escapeForInlineScriptString(localPath)
   const copyReferenceButton = `<button id="copyRefBtn" type="button">Copy ref</button>`
   const gitDiffButton = '<button id="gitDiffBtn" type="button">Git diff</button>'
+  const openRawLink = `<a href="${escapeHtml(toBrowseHref(localPath, '', '', { raw: true }))}" target="_blank" rel="noopener noreferrer">Open raw</a>`
   const previewButton = supportsMarkdownPreview
     ? '<button id="previewBtn" type="button" aria-pressed="false">Preview</button>'
     : ''
@@ -2355,6 +2357,7 @@ export async function createTextEditorHtml(localPath: string): Promise<string> {
     <div class="row">
       <a href="${escapeHtml(toBrowseHref(parentPath))}">Back</a>
       <button id="saveBtn" type="button">Save</button>
+      ${openRawLink}
       ${copyReferenceButton}
       ${gitDiffButton}
       ${previewButton}
