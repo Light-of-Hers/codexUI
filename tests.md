@@ -129,7 +129,8 @@ This file tracks manual regression and feature verification steps.
 12. During a reconnect, confirm `error` with `willRetry: true` keeps the active turn in the running state.
 13. While a command in the active turn finishes, trigger a `thread/read` refresh before the agent starts its next command; confirm the stop button and sidebar running indicator stay visible.
 14. Switch from an idle session to a session already marked running in the sidebar; before the detail request finishes, confirm the composer stop button and sidebar running indicator remain visible.
-15. Repeat the same flow in dark theme.
+15. With notification replay or a temporary network interruption, omit the final `item/completed` for a command but deliver `turn/completed` for that same turn; confirm the command output remains visible but is no longer marked Running.
+16. Repeat the same flow in dark theme.
 
 #### Expected Results
 - If `thread/read` briefly lags behind `turn/start`, the UI keeps the thread marked as running instead of reverting to idle.
@@ -142,6 +143,7 @@ This file tracks manual regression and feature verification steps.
 - Terminal status notifications clear running indicators only when they identify the active turn; delayed terminal notifications for an older turn cannot stop a newer turn.
 - Retryable errors keep or restore the active turn's running indicators.
 - The follow-up prompt is sent as a steer message without hiding the active-turn controls.
+- A terminal event for the active turn settles any uncompleted live command card while preserving its streamed output; a delayed terminal event for an older turn does not settle a newer command.
 - Light and dark theme controls remain readable.
 
 #### Rollback/Cleanup

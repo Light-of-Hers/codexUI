@@ -2667,7 +2667,7 @@ describe('live turn rendering', () => {
     }
   }
 
-  it('keeps live command output visible after turn completion until persisted messages refresh', async () => {
+  it('settles a live command when its turn completes without an item completion event', async () => {
     const { state, notify } = await createLiveStateHarness()
 
     notify(notification('turn/started', {
@@ -2698,6 +2698,7 @@ describe('live turn rendering', () => {
     const commandMessages = state.messages.value.filter((message) => message.messageType === 'commandExecution')
     expect(commandMessages).toHaveLength(1)
     expect(commandMessages[0].commandExecution?.aggregatedOutput).toBe('running\n')
+    expect(commandMessages[0].commandExecution?.status).toBe('completed')
   })
 
   it('clears a cached active turn when a detail refresh explicitly marks that turn terminal', async () => {
@@ -2941,6 +2942,11 @@ describe('live turn rendering', () => {
       threadId: 'thread-a',
       turn: { id: 'turn-current', threadId: 'thread-a', startedAt: '2026-05-23T00:00:01.000Z' },
     }))
+    notify(notification('item/started', {
+      threadId: 'thread-a',
+      turnId: 'turn-current',
+      item: { id: 'cmd-current', type: 'commandExecution', command: 'pnpm test', cwd: '/tmp/project' },
+    }))
 
     notify(notification('thread/status/changed', {
       threadId: 'thread-a',
@@ -2958,7 +2964,8 @@ describe('live turn rendering', () => {
     }))
 
     expect(state.selectedThreadInProgress.value).toBe(true)
-    expect(state.selectedLiveOverlay.value?.activityLabel).toBe('Thinking')
+    expect(state.selectedLiveOverlay.value?.activityLabel).toBe('Running command')
+    expect(state.messages.value.find((message) => message.id === 'cmd-current')?.commandExecution?.status).toBe('inProgress')
   })
 
   it('clears running state when codex gives up retrying (error willRetry=false)', async () => {

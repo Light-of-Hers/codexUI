@@ -5284,6 +5284,31 @@ export function useDesktopState() {
     pruneLiveMessageOrder(threadId)
   }
 
+  function settleLiveCommandsForCompletedTurn(threadId: string, turnId: string): void {
+    if (!threadId || !turnId) return
+    const previous = liveCommandsByThreadId.value[threadId]
+    if (!previous || previous.length === 0) return
+
+    let changed = false
+    const next = previous.map((message) => {
+      const command = message.commandExecution
+      // A command completion notification may be lost even though the enclosing
+      // turn completion is authoritative. Keep its output card, but do not leave
+      // the stale command spinner running after this exact turn has ended.
+      if (!command || command.status !== 'inProgress' || (message.turnId && message.turnId !== turnId)) {
+        return message
+      }
+      changed = true
+      return {
+        ...message,
+        commandExecution: { ...command, status: 'completed' as const },
+      }
+    })
+
+    if (!changed) return
+    liveCommandsByThreadId.value = { ...liveCommandsByThreadId.value, [threadId]: next }
+  }
+
   function removeLiveCommandsPersistedIn(threadId: string, persistedMessages: UiMessage[]): void {
     const current = liveCommandsByThreadId.value[threadId]
     if (!current || current.length === 0) return
@@ -5728,6 +5753,7 @@ export function useDesktopState() {
       shouldAutoScrollOnNextAgentEvent = false
       const completedThreadId = completedTurn.threadId
       if (completedThreadId) {
+        settleLiveCommandsForCompletedTurn(completedThreadId, completedTurn.turnId)
         setThreadInProgress(completedThreadId, false)
         setTurnActivityForThread(completedThreadId, null)
         markThreadUnreadByEvent(completedThreadId)
