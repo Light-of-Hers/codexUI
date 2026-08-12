@@ -10931,10 +10931,31 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         if (body.method === 'thread/archive') {
           const paramsRecord = asRecord(body.params)
           const threadId = readNonEmptyString(paramsRecord?.threadId)
-          // Archives mutate the rollout on disk. A different provider runtime
-          // can reject the request because the owning runtime still holds its
-          // writer lock, so use the runtime that previously read the thread.
-          const threadOwningRuntime = threadId ? findRuntimeWithThreadState(runtimePool, threadId) : null
+          // Archives mutate the rollout on disk. Use the persisted model
+          // selection to identify its writer: a generic runtime can read the
+          // global thread store but cannot archive a rollout it does not own.
+          let threadOwningRuntime: AppServerRuntime | null = null
+          if (threadId) {
+            try {
+              const threadReadResult = await effectiveRpcAppServer.rpc('thread/read', {
+                threadId,
+                includeTurns: false,
+              })
+              const modelState = readThreadResultModelState(
+                await mergeSessionModelStateIntoThreadResult(threadReadResult),
+              )
+              const provider = modelState.modelProvider.trim().toLowerCase()
+              if (modelState.model && shouldUseProviderRuntime(provider)) {
+                threadOwningRuntime = runtimePool.getRuntimeForState(
+                  buildWrapperRuntimeState(runtimePool.getActiveState(), provider, { model: modelState.model }),
+                )
+              }
+            } catch {
+              // A missing or unreadable rollout can still be associated with
+              // an in-memory runtime from a preceding thread/read.
+            }
+            threadOwningRuntime ??= findRuntimeWithThreadState(runtimePool, threadId)
+          }
           if (threadOwningRuntime && threadOwningRuntime !== effectiveRpcRuntime) {
             effectiveRpcRuntime = threadOwningRuntime
             effectiveRpcAppServer = threadOwningRuntime.appServer

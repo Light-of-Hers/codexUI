@@ -97,7 +97,13 @@ process.stdin.on('data', (chunk) => {
   await chmod(path, 0o755)
 }
 
-async function writeThreadRoutingCommand(path: string, provider: string, logPath: string, ownsThread: boolean, options: { emitStartedNotification?: boolean; interruptError?: string } = {}): Promise<void> {
+async function writeThreadRoutingCommand(path: string, provider: string, logPath: string, ownsThread: boolean, options: {
+  emitStartedNotification?: boolean
+  interruptError?: string
+  readableThread?: boolean
+  threadModel?: string
+  threadModelProvider?: string
+} = {}): Promise<void> {
   await writeFile(path, `#!/usr/bin/env node
 const fs = require('node:fs')
 if (process.argv[2] === '--version') {
@@ -139,14 +145,23 @@ process.stdin.on('data', (chunk) => {
         result(message.id, { config: { model_provider: ${JSON.stringify(provider)}, model: 'gpt-5.5-extra-high' } })
         emitNotification()
       } else if (message.method === 'thread/read') {
-        if (${JSON.stringify(ownsThread)}) {
-          result(message.id, { thread: { id: 'thread-1', status: { type: 'running' }, turns: [{ id: 'turn-1', status: 'inProgress' }] } })
+        if (${JSON.stringify(ownsThread || options.readableThread === true)}) {
+          result(message.id, { thread: {
+            id: 'thread-1',
+            model: ${JSON.stringify(options.threadModel ?? '')},
+            modelProvider: ${JSON.stringify(options.threadModelProvider ?? '')},
+            status: { type: 'running' },
+            turns: [{ id: 'turn-1', status: 'inProgress' }],
+          } })
         } else {
           error(message.id, 'thread not found: thread-1')
         }
       } else if (message.method === 'thread/fork') {
         if (${JSON.stringify(ownsThread)}) result(message.id, { thread: { id: 'forked-thread' } })
         else error(message.id, 'thread not found: thread-1')
+      } else if (message.method === 'thread/archive') {
+        if (${JSON.stringify(ownsThread)}) result(message.id, {})
+        else error(message.id, 'thread thread-1 already has an active writer')
       } else if (message.method === 'turn/interrupt') {
         if (${JSON.stringify(ownsThread)} && interruptError) error(message.id, interruptError)
         else if (${JSON.stringify(ownsThread)}) result(message.id, {})
@@ -3897,6 +3912,96 @@ process.stdin.on('data', (chunk) => {
       expect(log).toContain('cursor:thread/read\n')
       expect(log).toContain('cursor:turn/interrupt\n')
       expect(log).not.toContain('moon:turn/interrupt\n')
+    } finally {
+      middleware.dispose()
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('routes unqualified archive requests to the runtime that previously read the thread', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-provider-archive-routing-'))
+    const commandLogPath = join(tempDir, 'commands.log')
+    const cursorCommand = join(tempDir, 'codex-cursor')
+    const moonCommand = join(tempDir, 'codex-moon')
+    await writeThreadRoutingCommand(cursorCommand, 'cursor', commandLogPath, true)
+    await writeThreadRoutingCommand(moonCommand, 'moon', commandLogPath, false)
+    await writeFile(join(tempDir, 'webui-free-mode.json'), JSON.stringify({
+      enabled: true,
+      apiKey: null,
+      model: 'gpt-5.5-extra-high',
+      provider: 'cursor',
+    }), 'utf8')
+    vi.stubEnv('CODEX_HOME', tempDir)
+    vi.stubEnv('CODEXUI_CODEX_COMMAND', cursorCommand)
+    vi.stubEnv('CODEXUI_CODEX_CURSOR_COMMAND', cursorCommand)
+    vi.stubEnv('CODEXUI_CODEX_MOON_COMMAND', moonCommand)
+
+    const middleware = createCodexBridgeMiddleware()
+
+    try {
+      await invokeBridgeJson(middleware, '/codex-api/free-mode/custom-provider', { provider: 'cursor' })
+      const readResponse = await invokeBridgeJson(middleware, '/codex-api/rpc', {
+        method: 'thread/read',
+        params: { threadId: 'thread-1', includeTurns: true },
+      })
+      expect(readResponse.statusCode, JSON.stringify(readResponse.payload)).toBe(200)
+
+      await invokeBridgeJson(middleware, '/codex-api/free-mode/custom-provider', { provider: 'moon' })
+      const archiveResponse = await invokeBridgeJson(middleware, '/codex-api/rpc', {
+        method: 'thread/archive',
+        params: { threadId: 'thread-1' },
+      })
+
+      expect(archiveResponse.statusCode, JSON.stringify(archiveResponse.payload)).toBe(200)
+      expect(archiveResponse.payload).toEqual({ result: {} })
+      await waitForLogToContain(commandLogPath, 'cursor:thread/archive\n')
+      const log = await readFile(commandLogPath, 'utf8')
+      expect(log).toContain('cursor:thread/read\n')
+      expect(log).toContain('cursor:thread/archive\n')
+      expect(log).not.toContain('moon:thread/archive\n')
+    } finally {
+      middleware.dispose()
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('routes archive requests by the persisted model selection when the default runtime can only read the thread', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-provider-archive-model-routing-'))
+    const commandLogPath = join(tempDir, 'commands.log')
+    const cursorCommand = join(tempDir, 'codex-cursor')
+    const moonCommand = join(tempDir, 'codex-moon')
+    await writeThreadRoutingCommand(cursorCommand, 'cursor', commandLogPath, true)
+    await writeThreadRoutingCommand(moonCommand, 'moon', commandLogPath, false, {
+      readableThread: true,
+      threadModel: 'gpt-5.5-extra-high',
+      threadModelProvider: 'cursor',
+    })
+    await writeFile(join(tempDir, 'webui-free-mode.json'), JSON.stringify({
+      enabled: true,
+      apiKey: null,
+      model: 'deepseek-v4-flash',
+      provider: 'moon',
+    }), 'utf8')
+    vi.stubEnv('CODEX_HOME', tempDir)
+    vi.stubEnv('CODEXUI_CODEX_COMMAND', cursorCommand)
+    vi.stubEnv('CODEXUI_CODEX_CURSOR_COMMAND', cursorCommand)
+    vi.stubEnv('CODEXUI_CODEX_MOON_COMMAND', moonCommand)
+
+    const middleware = createCodexBridgeMiddleware()
+
+    try {
+      const archiveResponse = await invokeBridgeJson(middleware, '/codex-api/rpc', {
+        method: 'thread/archive',
+        params: { threadId: 'thread-1' },
+      })
+
+      expect(archiveResponse.statusCode, JSON.stringify(archiveResponse.payload)).toBe(200)
+      expect(archiveResponse.payload).toEqual({ result: {} })
+      await waitForLogToContain(commandLogPath, 'cursor:thread/archive\n')
+      const log = await readFile(commandLogPath, 'utf8')
+      expect(log).toContain('moon:thread/read\n')
+      expect(log).toContain('cursor:thread/archive\n')
+      expect(log).not.toContain('moon:thread/archive\n')
     } finally {
       middleware.dispose()
       await rm(tempDir, { recursive: true, force: true })

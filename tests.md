@@ -7968,6 +7968,30 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Rollback/Cleanup
 - Stop or archive any disposable test turn. No session rollout files are modified.
 
+### Fix: Archive Uses The Rollout Owner
+
+#### Prerequisites
+- CodexUI has active provider runtimes for at least two model/provider selections.
+- A completed thread was created with a selection different from the current active selection.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. In light theme, switch to a different provider or model from the one used by a completed thread.
+2. Archive that older thread from the sidebar, then refresh the page.
+3. Confirm the thread remains absent from the active sidebar and is available only in archived threads.
+4. Switch to dark theme and repeat steps 1-3; confirm the sidebar archive controls and any failure state remain legible.
+5. Run `pnpm exec vitest run src/server/codexAppServerBridge.inlinePayload.test.ts` and `pnpm exec vue-tsc --noEmit`.
+
+#### Expected Results
+- The bridge reads the target rollout's persisted model selection and sends `thread/archive` to the matching app-server runtime, rather than the currently active runtime.
+- A runtime that can inspect the shared thread store but does not own the rollout writer cannot cause an optimistic archive to be undone by the next page refresh.
+
+#### Performance Audit
+- Archiving adds at most one metadata-only `thread/read` before the existing `thread/archive` RPC. This is a user-initiated, infrequent action; it introduces no polling, list refresh fan-out, or change to normal thread loading.
+
+#### Rollback/Cleanup
+- Archive only disposable verification threads. No manual rollout move or browser-storage cleanup is required.
+
 ### Fix: Paginated fork thread-list recovery
 
 #### Prerequisites
