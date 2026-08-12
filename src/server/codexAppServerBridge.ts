@@ -12953,9 +12953,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 
   middleware.dispose = () => {
     threadSearchIndex = null
-    telegramBridge.stop()
-    terminalManager.dispose()
-    runtimePool.dispose()
+    disposeSharedBridgeState(sharedBridgeState)
   }
   middleware.subscribeNotifications = (
     listener: (value: { method: string; params: unknown; atIso: string }) => void,

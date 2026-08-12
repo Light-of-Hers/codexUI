@@ -102,6 +102,17 @@ function installTestWindow(initialStorage: Record<string, string> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  gatewayMocks.resumeThread.mockReset()
+  gatewayMocks.resumeThread.mockResolvedValue({
+    model: '',
+    modelProvider: '',
+    reasoningEffort: '',
+    messages: [],
+    inProgress: false,
+    activeTurnId: '',
+    hasMoreOlder: false,
+    turnIndexByTurnId: {},
+  })
   gatewayMocks.getThreadDetail.mockReset()
   gatewayMocks.getThreadDetail.mockResolvedValue({
     messages: [],
@@ -914,17 +925,16 @@ describe('thread cache preferCached', () => {
     await state.refreshAll({ includeSelectedThreadMessages: false, refreshAncillary: false })
 
     await state.loadMessages('thread-a')
-    expect(gatewayMocks.resumeThread).toHaveBeenCalledTimes(1)
+    expect(gatewayMocks.resumeThread).not.toHaveBeenCalled()
     expect(state.messages.value).toHaveLength(1)
 
-    // Simulate a stale resume state (e.g. provider switch) so a fresh call
-    // would otherwise be issued for this thread.
+    // Simulate invalidated runtime state so a fresh read is issued.
     state.invalidateAppServerRuntimeState()
 
-    // Point the next resume at a promise that never resolves; if
+    // Point the next read at a promise that never resolves; if
     // loadMessages awaited the network it would deadlock.
     let neverResolve: () => void = () => {}
-    const pendingResume = new Promise((resolve) => {
+    const pendingRead = new Promise((resolve) => {
       neverResolve = () => resolve({
         model: '',
         modelProvider: '',
@@ -936,9 +946,9 @@ describe('thread cache preferCached', () => {
         turnIndexByTurnId: { 'turn-1': 0 },
       })
     })
-    gatewayMocks.resumeThread.mockReturnValueOnce(pendingResume)
+    gatewayMocks.getThreadDetail.mockReturnValueOnce(pendingRead)
 
-    const callsBefore = gatewayMocks.resumeThread.mock.calls.length
+    const callsBefore = gatewayMocks.getThreadDetail.mock.calls.length
     let timeoutHandle: ReturnType<typeof setTimeout> | null = null
     const timeoutPromise = new Promise((_, reject) => {
       timeoutHandle = setTimeout(() => reject(new Error('loadMessages did not return promptly')), 200)
@@ -956,8 +966,10 @@ describe('thread cache preferCached', () => {
     // Cache stayed visible immediately.
     expect(state.messages.value).toHaveLength(1)
     // The background refresh call fired but has not yet completed.
-    expect(gatewayMocks.resumeThread.mock.calls.length).toBe(callsBefore + 1)
+    await waitForCalls(gatewayMocks.getThreadDetail, callsBefore + 1)
+    expect(gatewayMocks.getThreadDetail.mock.calls.length).toBe(callsBefore + 1)
     neverResolve()
+    await flushMicrotasks()
   })
 })
 
@@ -1660,9 +1672,9 @@ describe('session composer model state', () => {
     expect(state.selectedReasoningEffort.value).toBe('xhigh')
   })
 
-  it('hydrates model, provider, and reasoning effort from resumed thread metadata', async () => {
+  it('hydrates model, provider, and reasoning effort from read-only thread metadata', async () => {
     installTestWindow()
-    gatewayMocks.resumeThread.mockResolvedValue({
+    gatewayMocks.getThreadDetail.mockResolvedValue({
       model: 'ark-code-latest',
       modelProvider: 'moon',
       reasoningEffort: 'high',
@@ -1678,7 +1690,8 @@ describe('session composer model state', () => {
 
     await state.loadMessages('thread-a')
 
-    expect(gatewayMocks.resumeThread).toHaveBeenCalledWith('thread-a')
+    expect(gatewayMocks.getThreadDetail).toHaveBeenCalledWith('thread-a')
+    expect(gatewayMocks.resumeThread).not.toHaveBeenCalled()
     expect(state.readModelIdForThread('thread-a')).toBe('ark-code-latest')
     expect(state.selectedModelId.value).toBe('ark-code-latest')
     expect(state.selectedProvider.value).toBe('moon')
@@ -1698,7 +1711,7 @@ describe('session composer model state', () => {
         'thread-a': 'xhigh',
       }),
     })
-    gatewayMocks.resumeThread.mockResolvedValue({
+    gatewayMocks.getThreadDetail.mockResolvedValue({
       model: 'gpt-5.6-terra',
       modelProvider: 'rustcat',
       reasoningEffort: 'xhigh',
@@ -1714,9 +1727,10 @@ describe('session composer model state', () => {
 
     await state.loadMessages('thread-a')
 
-    // Navigation must let resumeThread recover the rollout state instead of
+    // Navigation recovers rollout state without attaching a runtime writer or
     // sending the stale local Ark selection back to the server.
-    expect(gatewayMocks.resumeThread).toHaveBeenCalledWith('thread-a')
+    expect(gatewayMocks.getThreadDetail).toHaveBeenCalledWith('thread-a')
+    expect(gatewayMocks.resumeThread).not.toHaveBeenCalled()
     expect(state.readModelIdForThread('thread-a')).toBe('gpt-5.6-terra')
     expect(state.selectedProvider.value).toBe('rustcat')
     expect(JSON.parse(window.localStorage.getItem('codex-web-local.provider-by-context.v1') ?? '{}')).toEqual({
@@ -1834,8 +1848,8 @@ describe('session composer model state', () => {
     await state.refreshAncillaryState({ providerChanged: true, includeProviderModels: true })
     await state.sendMessageToSelectedThread('use codex now')
 
-    expect(gatewayMocks.resumeThread).toHaveBeenNthCalledWith(1, 'thread-a')
-    expect(gatewayMocks.resumeThread).toHaveBeenNthCalledWith(2, 'thread-a', 'gpt-5.5', 'rustcat')
+    expect(gatewayMocks.resumeThread).toHaveBeenCalledTimes(1)
+    expect(gatewayMocks.resumeThread).toHaveBeenCalledWith('thread-a', 'gpt-5.5', 'rustcat')
     expect(gatewayMocks.startThreadTurn).toHaveBeenCalledWith(
       'thread-a',
       'use codex now',
@@ -1853,10 +1867,7 @@ describe('session composer model state', () => {
       'thread-a': 'codex',
     })
 
-    await state.loadMessages('thread-a', { force: true })
-
-    expect(gatewayMocks.resumeThread).toHaveBeenNthCalledWith(3, 'thread-a')
-    expect(state.selectedProvider.value).toBe('rustcat')
+    expect(state.selectedProvider.value).toBe('codex')
     expect(state.readModelIdForThread('thread-a')).toBe('gpt-5.5')
   })
 
@@ -2007,9 +2018,8 @@ describe('session composer model state', () => {
       }
       await state.sendMessageToSelectedThread(`use ${scenario.targetProvider} now`)
 
-      expect(gatewayMocks.resumeThread).toHaveBeenNthCalledWith(1, 'thread-a')
-      expect(gatewayMocks.resumeThread).toHaveBeenNthCalledWith(
-        2,
+      expect(gatewayMocks.resumeThread).toHaveBeenCalledTimes(1)
+      expect(gatewayMocks.resumeThread).toHaveBeenCalledWith(
         'thread-a',
         scenario.targetModel,
         scenario.targetRpcProvider,
@@ -2153,7 +2163,7 @@ describe('active turn state reconciliation', () => {
       groups: [{ projectName: 'project', threads: [thread('thread-a', '/tmp/project')] }],
       nextCursor: null,
     })
-    gatewayMocks.resumeThread.mockResolvedValue({
+    gatewayMocks.getThreadDetail.mockResolvedValue({
       model: '',
       modelProvider: '',
       reasoningEffort: '',
@@ -2211,7 +2221,7 @@ describe('active turn state reconciliation', () => {
       }],
       nextCursor: null,
     })
-    gatewayMocks.resumeThread.mockResolvedValue({
+    gatewayMocks.getThreadDetail.mockResolvedValue({
       model: '',
       modelProvider: '',
       reasoningEffort: '',
@@ -2244,7 +2254,7 @@ describe('active turn state reconciliation', () => {
     await state.sendMessageToSelectedThread('steer the current work')
     await waitForAsyncCondition(() =>
       gatewayMocks.steerThreadTurn.mock.calls.length > 0 &&
-      gatewayMocks.resumeThread.mock.calls.length >= 2,
+      gatewayMocks.resumeThread.mock.calls.length >= 1,
     )
     await flushAsyncTasks()
 
@@ -2367,7 +2377,9 @@ describe('active turn state reconciliation', () => {
     await state.sendMessageToSelectedThread('continue the paginated thread')
 
     expect(gatewayMocks.getThreadSummary).toHaveBeenCalledWith('thread-a')
-    expect(gatewayMocks.getThreadDetail).not.toHaveBeenCalled()
+    expect(gatewayMocks.getThreadDetail).toHaveBeenCalledTimes(1)
+    expect(gatewayMocks.startThreadTurn.mock.invocationCallOrder[0])
+      .toBeLessThan(gatewayMocks.getThreadDetail.mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER)
     expect(gatewayMocks.startThreadTurn).toHaveBeenCalledWith(
       'thread-a',
       'continue the paginated thread',
@@ -2801,7 +2813,7 @@ describe('live turn rendering', () => {
 
   it('uses a rollout terminal marker to clear an old running turn', async () => {
     const { state, notify } = await createLiveStateHarness()
-    gatewayMocks.resumeThread.mockResolvedValue({
+    gatewayMocks.getThreadDetail.mockResolvedValue({
       model: '',
       modelProvider: '',
       reasoningEffort: '',
@@ -2827,7 +2839,7 @@ describe('live turn rendering', () => {
 
   it('keeps an explicitly newer detail turn running despite an older rollout terminal marker', async () => {
     const { state, notify } = await createLiveStateHarness()
-    gatewayMocks.resumeThread.mockResolvedValue({
+    gatewayMocks.getThreadDetail.mockResolvedValue({
       model: '',
       modelProvider: '',
       reasoningEffort: '',
@@ -2851,7 +2863,6 @@ describe('live turn rendering', () => {
 
   it('refreshes an already loaded selected thread after the notification stream reconnects', async () => {
     const { state, notify } = await createLiveStateHarness()
-    gatewayMocks.resumeThread.mockResolvedValue(null)
     await state.loadMessages('thread-a', { force: true, silent: true })
     gatewayMocks.getThreadDetail.mockClear()
 
@@ -2863,7 +2874,7 @@ describe('live turn rendering', () => {
 
   it('clears a cached active turn when a detail refresh explicitly marks that turn terminal', async () => {
     const { state, notify } = await createLiveStateHarness()
-    gatewayMocks.resumeThread.mockResolvedValue({
+    gatewayMocks.getThreadDetail.mockResolvedValue({
       model: '',
       modelProvider: '',
       reasoningEffort: '',
@@ -3314,7 +3325,7 @@ describe('optimistic user message', () => {
     await state.sendMessageToSelectedThread('hello optimistic')
     expect(state.messages.value.some((message) => message.id.startsWith('optimistic-user-'))).toBe(true)
 
-    gatewayMocks.resumeThread.mockResolvedValue(resumedDetail([
+    gatewayMocks.getThreadDetail.mockResolvedValue(detailWith([
       { id: 'real-user-1', role: 'user', text: 'hello optimistic', turnId: 'turn-1', turnIndex: 0 },
     ]))
     await state.loadMessages('thread-a', { force: true })

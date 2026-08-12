@@ -146,6 +146,7 @@ export default defineConfig({
 
             httpServer.once("close", () => {
               wss.close();
+              bridge.dispose();
             });
           }
         }

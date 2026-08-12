@@ -921,6 +921,9 @@ async function recoverThreadResumeModelState(threadId: string): Promise<{ model:
 }
 
 async function getThreadDetailV2(threadId: string): Promise<{
+  model: string
+  modelProvider: string
+  reasoningEffort: ReasoningEffort | ''
   messages: UiMessage[]
   inProgress: boolean
   activeTurnId: string
@@ -936,6 +939,9 @@ async function getThreadDetailV2(threadId: string): Promise<{
   const startTurnIndex = readThreadTurnStartIndex(payload)
   const normalized = normalizeThreadMessagesV2(payload, startTurnIndex)
   return {
+    model: normalizeThreadModelFromPayload(payload),
+    modelProvider: normalizeThreadModelProviderFromPayload(payload),
+    reasoningEffort: normalizeThreadReasoningEffortFromPayload(payload),
     messages: normalized,
     inProgress: readThreadInProgressFromResponse(payload),
     activeTurnId: readActiveTurnIdFromResponse(payload),
@@ -1051,6 +1057,9 @@ export async function getThreadSummary(threadId: string): Promise<UiThread> {
 }
 
 export async function getThreadDetail(threadId: string): Promise<{
+  model: string
+  modelProvider: string
+  reasoningEffort: ReasoningEffort | ''
   messages: UiMessage[]
   inProgress: boolean
   activeTurnId: string

@@ -6450,7 +6450,7 @@ export function useDesktopState() {
     // UI on a network round-trip.
     if (canServeFromCache) {
       markThreadAsRead(threadId)
-      void loadMessages(threadId, { silent: true }).catch(() => {})
+      void loadMessages(threadId, { silent: true, force: true }).catch(() => {})
       return
     }
 
@@ -6468,7 +6468,6 @@ export function useDesktopState() {
         const loadedVersion = loadedVersionByThreadId.value[threadId] ?? ''
         const loadedRecently =
           Date.now() - (lastMessageLoadAtByThreadId.get(threadId) ?? 0) < RECENT_THREAD_MESSAGE_LOAD_REUSE_MS
-        const needsResume = shouldResumeThread(threadId, forceReload)
         const canReuseLoadedMessages =
           !forceReload &&
           alreadyLoaded &&
@@ -6480,29 +6479,21 @@ export function useDesktopState() {
             )
           )
 
-        if (canReuseLoadedMessages && !needsResume) {
+        if (canReuseLoadedMessages) {
           markThreadAsRead(threadId)
           return
         }
 
-        // Do not seed a navigation-time resume with browser-cached model
-        // settings.  They can predate a provider switch in the persisted
-        // rollout; resumeThread performs a metadata-only thread/read first
-        // and resumes on that recovered provider instead.
-        const resumedThread = needsResume
-          ? await resumeThread(threadId)
-          : null
-        const detail = resumedThread ?? await getThreadDetail(threadId)
-
-        if (resumedThread) {
-          applyThreadModelStateWithProviderPriority(
-            threadId,
-            resumedThread.model,
-            resumedThread.modelProvider,
-            resumedThread.reasoningEffort,
-          )
-          markThreadResumed(threadId)
-        }
+        // Opening history must remain read-only. thread/resume attaches a
+        // runtime writer and can lock the same session away from another
+        // Codex client. Write paths resume lazily immediately before a turn.
+        const detail = await getThreadDetail(threadId)
+        applyThreadModelStateWithProviderPriority(
+          threadId,
+          detail.model ?? '',
+          detail.modelProvider ?? '',
+          detail.reasoningEffort ?? '',
+        )
 
         const { messages: nextMessages, inProgress, activeTurnId, terminalTurnIds, rolloutTurnState, turnIndexByTurnId } = detail
         markThreadMessagesPersisted(threadId, nextMessages)
@@ -7490,16 +7481,20 @@ export function useDesktopState() {
 
     try {
       if (shouldResumeThread(threadId)) {
+        const requestedModelId = readModelIdForThread(threadId)
+        const requestedProviderId = readThreadRpcProviderId(threadId)
         const resumedThread = await resumeThread(
           threadId,
-          readModelIdForThread(threadId) || undefined,
-          readThreadRpcProviderId(threadId) || undefined,
+          requestedModelId || undefined,
+          requestedProviderId || undefined,
         )
-        applyThreadModelStateWithProviderPriority(
-          threadId,
-          resumedThread.model,
-          resumedThread.modelProvider,
-        )
+        if (!requestedModelId && !requestedProviderId) {
+          applyThreadModelStateWithProviderPriority(
+            threadId,
+            resumedThread.model,
+            resumedThread.modelProvider,
+          )
+        }
       }
       const modelId = readModelIdForThread(threadId)
       const modelProviderId = readThreadRpcProviderId(threadId)
@@ -7932,7 +7927,7 @@ export function useDesktopState() {
       const isInProgress = inProgressById.value[threadId] === true
 
       if (isInProgress || hasVersionChange) {
-        await loadMessages(threadId, { silent: true })
+        await loadMessages(threadId, { silent: true, force: hasVersionChange })
       }
     } catch {
       // ignore poll failures and keep last known state
@@ -7980,7 +7975,7 @@ export function useDesktopState() {
         (shouldRefreshThreads && loadedMessagesByThreadId.value[activeThreadId] !== true)
 
       if (shouldRefreshActiveThread) {
-        await loadMessages(activeThreadId, { silent: true })
+        await loadMessages(activeThreadId, { silent: true, force: isActiveDirty || hasVersionChange })
       }
     } catch {
       // Keep UI stable on transient event sync failures.
