@@ -1886,6 +1886,10 @@ export function useDesktopState() {
   const turnErrorByThreadId = ref<Record<string, TurnErrorState>>({})
   const threadNoticeByThreadId = ref<Record<string, ThreadNoticeState>>({})
   const activeTurnIdByThreadId = ref<Record<string, string>>({})
+  // A terminal notification is more specific than a later list snapshot. Keep
+  // it until a different turn explicitly starts so an in-flight thread/list
+  // response cannot resurrect the completed turn as running.
+  const terminalTurnIdByThreadId = ref<Record<string, string>>({})
   const activeTurnProviderIdByThreadId = ref<Record<string, string>>({})
   const interruptBlockedUntilPersistedByThreadId = ref<Record<string, boolean>>({})
   const threadListedByServerById = ref<Record<string, boolean>>({})
@@ -3340,6 +3344,7 @@ export function useDesktopState() {
     turnErrorByThreadId.value = pruneThreadStateMap(turnErrorByThreadId.value, activeThreadIds)
     threadNoticeByThreadId.value = pruneThreadStateMap(threadNoticeByThreadId.value, activeThreadIds)
     activeTurnIdByThreadId.value = pruneThreadStateMap(activeTurnIdByThreadId.value, activeThreadIds)
+    terminalTurnIdByThreadId.value = pruneThreadStateMap(terminalTurnIdByThreadId.value, activeThreadIds)
     activeTurnProviderIdByThreadId.value = pruneThreadStateMap(activeTurnProviderIdByThreadId.value, activeThreadIds)
     interruptBlockedUntilPersistedByThreadId.value = pruneThreadStateMap(
       interruptBlockedUntilPersistedByThreadId.value,
@@ -3465,9 +3470,40 @@ export function useDesktopState() {
     })
   }
 
+  function terminalTurnIdForThread(threadId: string): string {
+    return terminalTurnIdByThreadId.value[threadId]?.trim() ?? ''
+  }
+
+  function isKnownTerminalTurn(threadId: string, turnId: string): boolean {
+    const normalizedTurnId = turnId.trim()
+    return Boolean(normalizedTurnId && terminalTurnIdForThread(threadId) === normalizedTurnId)
+  }
+
+  function markTerminalTurnForThread(threadId: string, turnId: string): void {
+    const normalizedTurnId = turnId.trim()
+    if (!threadId || !normalizedTurnId || terminalTurnIdForThread(threadId) === normalizedTurnId) return
+    terminalTurnIdByThreadId.value = {
+      ...terminalTurnIdByThreadId.value,
+      [threadId]: normalizedTurnId,
+    }
+  }
+
+  function clearTerminalTurnForNewActiveTurn(threadId: string, turnId: string): void {
+    const terminalTurnId = terminalTurnIdForThread(threadId)
+    if (!terminalTurnId || terminalTurnId === turnId.trim()) return
+    terminalTurnIdByThreadId.value = omitKey(terminalTurnIdByThreadId.value, threadId)
+  }
+
+  function restoreTerminalTurnForRetry(threadId: string, turnId: string): void {
+    if (!isKnownTerminalTurn(threadId, turnId)) return
+    terminalTurnIdByThreadId.value = omitKey(terminalTurnIdByThreadId.value, threadId)
+  }
+
   function setActiveTurnForThread(threadId: string, turnId: string): void {
     const normalizedTurnId = turnId.trim()
     if (!threadId || !normalizedTurnId) return
+    if (isKnownTerminalTurn(threadId, normalizedTurnId)) return
+    clearTerminalTurnForNewActiveTurn(threadId, normalizedTurnId)
     if (activeTurnIdByThreadId.value[threadId] !== normalizedTurnId) {
       activeTurnIdByThreadId.value = {
         ...activeTurnIdByThreadId.value,
@@ -3498,7 +3534,7 @@ export function useDesktopState() {
 
   function canApplyLiveTurnUpdate(threadId: string, turnId: string): boolean {
     const activeTurnId = activeTurnIdByThreadId.value[threadId]?.trim() ?? ''
-    return !activeTurnId || !turnId || turnId === activeTurnId
+    return !isKnownTerminalTurn(threadId, turnId) && (!activeTurnId || !turnId || turnId === activeTurnId)
   }
 
   function applyThreadDetailActiveTurnState(
@@ -3507,18 +3543,40 @@ export function useDesktopState() {
       inProgress: boolean
       activeTurnId: string
       terminalTurnIds?: string[]
+      rolloutTurnState?: 'active' | 'terminal'
     },
   ): { activeTurnId: string; inProgress: boolean } {
     if (!threadId) return { activeTurnId: '', inProgress: false }
 
     const activeTurnId = detail.activeTurnId.trim()
+    const cachedTurnId = activeTurnIdByThreadId.value[threadId]?.trim() ?? ''
+    const hasPendingTurnRequest = pendingTurnRequestByThreadId.value[threadId] !== undefined
+    if (
+      detail.rolloutTurnState === 'terminal'
+      && !hasPendingTurnRequest
+      && (!activeTurnId || (cachedTurnId && activeTurnId === cachedTurnId))
+    ) {
+      if (cachedTurnId) {
+        markTerminalTurnForThread(threadId, cachedTurnId)
+      }
+      clearActiveTurnForThread(threadId)
+      return { activeTurnId: '', inProgress: false }
+    }
+
     if (activeTurnId) {
+      if (isKnownTerminalTurn(threadId, activeTurnId)) {
+        return { activeTurnId: '', inProgress: false }
+      }
       setActiveTurnForThread(threadId, activeTurnId)
       return { activeTurnId, inProgress: true }
     }
 
     if (detail.inProgress) {
-      const cachedTurnId = activeTurnIdByThreadId.value[threadId]?.trim() ?? ''
+      if (terminalTurnIdForThread(threadId) && !hasPendingTurnRequest) {
+        // Without an id this snapshot cannot prove that it describes a newer
+        // turn rather than the completed turn we have already observed.
+        return { activeTurnId: '', inProgress: false }
+      }
       if (cachedTurnId) {
         setActiveTurnForThread(threadId, cachedTurnId)
         return { activeTurnId: cachedTurnId, inProgress: true }
@@ -3528,9 +3586,9 @@ export function useDesktopState() {
       return { activeTurnId: '', inProgress: true }
     }
 
-    const cachedTurnId = activeTurnIdByThreadId.value[threadId]?.trim() ?? ''
     if (cachedTurnId) {
-      if (detail.terminalTurnIds?.includes(cachedTurnId)) {
+      if (detail.terminalTurnIds?.includes(cachedTurnId) || isKnownTerminalTurn(threadId, cachedTurnId)) {
+        markTerminalTurnForThread(threadId, cachedTurnId)
         clearActiveTurnForThread(threadId)
         return { activeTurnId: '', inProgress: false }
       }
@@ -5433,7 +5491,7 @@ export function useDesktopState() {
       if (isRunningStatusType(statusChange.statusType)) {
         if (statusChange.turnId) {
           setActiveTurnForThread(statusChange.threadId, statusChange.turnId)
-        } else {
+        } else if (!terminalTurnIdForThread(statusChange.threadId)) {
           ensureActiveTurnActivity(statusChange.threadId)
           setThreadInProgress(statusChange.threadId, true)
         }
@@ -5442,6 +5500,10 @@ export function useDesktopState() {
         }
       } else if (isIdleStatusType(statusChange.statusType)) {
         if (isTerminalUpdateForActiveTurn(statusChange.threadId, statusChange.turnId)) {
+          markTerminalTurnForThread(
+            statusChange.threadId,
+            statusChange.turnId || activeTurnIdByThreadId.value[statusChange.threadId] || '',
+          )
           clearActiveTurnForThread(statusChange.threadId)
           setTurnActivityForThread(statusChange.threadId, null)
           setTurnErrorForThread(statusChange.threadId, null)
@@ -5464,7 +5526,7 @@ export function useDesktopState() {
         setTurnActivityForThread(turnActivity.threadId, turnActivity.activity)
         if (turnId) {
           setActiveTurnForThread(turnActivity.threadId, turnId)
-        } else {
+        } else if (!terminalTurnIdForThread(turnActivity.threadId)) {
           setThreadInProgress(turnActivity.threadId, true)
         }
       }
@@ -5523,6 +5585,7 @@ export function useDesktopState() {
           turnId: completedTurn.turnId,
           durationMs,
         })
+        markTerminalTurnForThread(completedTurn.threadId, completedTurn.turnId)
         clearActiveTurnForThread(completedTurn.threadId)
         setTurnActivityForThread(completedTurn.threadId, null)
         markThreadUnreadByEvent(completedTurn.threadId)
@@ -5577,11 +5640,18 @@ export function useDesktopState() {
       // Clear the in-progress state so the UI stops showing "Thinking".
       if (errorThreadId && isCurrentErrorTurn && notificationErrorState.transient) {
         if (errorTurnId) {
+          // A retryable error is an explicit backend signal that this exact
+          // turn resumed; it is stronger than an earlier transient idle state.
+          restoreTerminalTurnForRetry(errorThreadId, errorTurnId)
           setActiveTurnForThread(errorThreadId, errorTurnId)
-        } else {
+        } else if (!terminalTurnIdForThread(errorThreadId)) {
           setThreadInProgress(errorThreadId, true)
         }
       } else if (errorThreadId && isCurrentErrorTurn && !notificationErrorState.transient) {
+        markTerminalTurnForThread(
+          errorThreadId,
+          errorTurnId || activeTurnIdByThreadId.value[errorThreadId] || '',
+        )
         clearActiveTurnForThread(errorThreadId)
         setTurnActivityForThread(errorThreadId, null)
         clearPendingTurnRequest(errorThreadId)
@@ -5605,6 +5675,10 @@ export function useDesktopState() {
         label: 'Planning',
         details: [],
       })
+    }
+
+    if (completedTurn && isCurrentCompletedTurn) {
+      settleLiveCommandsForCompletedTurn(completedTurn.threadId, completedTurn.turnId)
     }
 
     if (!notificationThreadId || notificationThreadId !== selectedThreadId.value) return
@@ -5753,7 +5827,6 @@ export function useDesktopState() {
       shouldAutoScrollOnNextAgentEvent = false
       const completedThreadId = completedTurn.threadId
       if (completedThreadId) {
-        settleLiveCommandsForCompletedTurn(completedThreadId, completedTurn.turnId)
         setThreadInProgress(completedThreadId, false)
         setTurnActivityForThread(completedThreadId, null)
         markThreadUnreadByEvent(completedThreadId)
@@ -5944,8 +6017,13 @@ export function useDesktopState() {
     let nextActiveTurnIds = activeTurnIdByThreadId.value
     for (const thread of listedThreads) {
       if (thread.inProgress !== true) continue
-      ensureActiveTurnActivity(thread.id)
       const activeTurnId = thread.activeTurnId?.trim() ?? ''
+      // A list request can have started before turn/completed reached the
+      // client. Do not let its stale positive status revive that same turn.
+      if (isKnownTerminalTurn(thread.id, activeTurnId) || (!activeTurnId && terminalTurnIdForThread(thread.id))) {
+        continue
+      }
+      ensureActiveTurnActivity(thread.id)
       // Notifications are more granular than thread/list. Let the list fill a
       // missing turn id during startup or a switch, but never replace a newer
       // id already observed from the live event stream.
@@ -6396,7 +6474,7 @@ export function useDesktopState() {
           markThreadResumed(threadId)
         }
 
-        const { messages: nextMessages, inProgress, activeTurnId, terminalTurnIds, turnIndexByTurnId } = detail
+        const { messages: nextMessages, inProgress, activeTurnId, terminalTurnIds, rolloutTurnState, turnIndexByTurnId } = detail
         markThreadMessagesPersisted(threadId, nextMessages)
         replaceTurnIndexLookupForThread(threadId, turnIndexByTurnId)
         rebindLiveFileChangeTurnIndices(threadId)
@@ -6404,6 +6482,7 @@ export function useDesktopState() {
           inProgress,
           activeTurnId,
           terminalTurnIds,
+          rolloutTurnState,
         })
         const previousPersisted = persistedMessagesByThreadId.value[threadId] ?? []
         const mergedMessages = mergeMessages(previousPersisted, nextMessages, {
@@ -7560,6 +7639,7 @@ export function useDesktopState() {
   }
 
   async function settleInterruptedTurnUiState(threadId: string): Promise<void> {
+    markTerminalTurnForThread(threadId, activeTurnIdByThreadId.value[threadId] ?? '')
     clearActiveTurnForThread(threadId)
     setTurnActivityForThread(threadId, null)
     setTurnErrorForThread(threadId, null)
@@ -7573,6 +7653,7 @@ export function useDesktopState() {
   // success or "no active turn"). Called only after the backend agrees the
   // turn is stopped, so the sidebar never reports "done" prematurely.
   function settleStoppedTurnUiState(threadId: string): void {
+    markTerminalTurnForThread(threadId, activeTurnIdByThreadId.value[threadId] ?? '')
     setThreadInProgress(threadId, false)
     clearActiveTurnForThread(threadId)
     setTurnActivityForThread(threadId, null)
@@ -7920,9 +8001,8 @@ export function useDesktopState() {
 
       const shouldRefreshActiveThread =
         hasVersionChange ||
-        (isActiveDirty && isInProgress) ||
+        isActiveDirty ||
         (isInProgress && loadedMessagesByThreadId.value[activeThreadId] !== true) ||
-        (isActiveDirty && loadedMessagesByThreadId.value[activeThreadId] !== true) ||
         (shouldRefreshThreads && loadedMessagesByThreadId.value[activeThreadId] !== true)
 
       if (shouldRefreshActiveThread) {
@@ -7946,12 +8026,12 @@ export function useDesktopState() {
     }
   }
 
-  async function recoverBridgeState(): Promise<void> {
+  async function recoverBridgeState(options: { refreshSelectedThread?: boolean } = {}): Promise<void> {
     await loadPendingServerRequestsFromBridge()
     pendingThreadsRefresh = !hasLoadedThreads.value
     if (
       selectedThreadId.value &&
-      loadedMessagesByThreadId.value[selectedThreadId.value] !== true
+      (options.refreshSelectedThread === true || loadedMessagesByThreadId.value[selectedThreadId.value] !== true)
     ) {
       pendingThreadMessageRefresh.add(selectedThreadId.value)
     }
@@ -7963,10 +8043,12 @@ export function useDesktopState() {
 
     if (stopNotificationStream) return
     void loadPendingServerRequestsFromBridge()
+    let hasReceivedReady = false
     stopNotificationStream = subscribeCodexNotifications((notification) => {
       if (notification.method === 'ready') {
         clearAllTransientTurnErrors()
-        void recoverBridgeState()
+        void recoverBridgeState({ refreshSelectedThread: hasReceivedReady })
+        hasReceivedReady = true
         return
       }
       applyRealtimeUpdates(notification)
@@ -8047,6 +8129,7 @@ export function useDesktopState() {
     turnErrorByThreadId.value = {}
     threadNoticeByThreadId.value = {}
     activeTurnIdByThreadId.value = {}
+    terminalTurnIdByThreadId.value = {}
     activeTurnProviderIdByThreadId.value = {}
     interruptBlockedUntilPersistedByThreadId.value = {}
     threadListedByServerById.value = {}

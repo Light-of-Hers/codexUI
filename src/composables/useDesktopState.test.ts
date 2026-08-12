@@ -2701,6 +2701,101 @@ describe('live turn rendering', () => {
     expect(commandMessages[0].commandExecution?.status).toBe('completed')
   })
 
+  it('does not let a later thread list revive a completed turn', async () => {
+    const { state, notify } = await createLiveStateHarness()
+
+    notify(notification('turn/started', {
+      threadId: 'thread-a',
+      turn: { id: 'turn-old', threadId: 'thread-a', startedAt: '2026-05-23T00:00:00.000Z' },
+    }))
+    notify(notification('turn/completed', {
+      threadId: 'thread-a',
+      turn: { id: 'turn-old', threadId: 'thread-a', status: 'completed', completedAt: '2026-05-23T00:00:01.000Z' },
+    }))
+    expect(state.selectedThreadInProgress.value).toBe(false)
+
+    // This is the response shape of a thread/list request that was issued
+    // before the completion notification and returned afterwards.
+    gatewayMocks.getThreadGroupsPage.mockResolvedValueOnce({
+      groups: [{
+        projectName: 'project',
+        threads: [{ ...thread('thread-a', '/tmp/project'), inProgress: true, activeTurnId: 'turn-old' }],
+      }],
+      nextCursor: null,
+    })
+    await state.refreshAll({ includeSelectedThreadMessages: false, refreshAncillary: false })
+
+    expect(state.selectedThreadInProgress.value).toBe(false)
+
+    notify(notification('turn/started', {
+      threadId: 'thread-a',
+      turn: { id: 'turn-new', threadId: 'thread-a', startedAt: '2026-05-23T00:00:02.000Z' },
+    }))
+    expect(state.selectedThreadInProgress.value).toBe(true)
+  })
+
+  it('uses a rollout terminal marker to clear an old running turn', async () => {
+    const { state, notify } = await createLiveStateHarness()
+    gatewayMocks.resumeThread.mockResolvedValue({
+      model: '',
+      modelProvider: '',
+      reasoningEffort: '',
+      messages: [],
+      inProgress: true,
+      activeTurnId: 'turn-old',
+      terminalTurnIds: [],
+      rolloutTurnState: 'terminal',
+      hasMoreOlder: false,
+      turnIndexByTurnId: { 'turn-old': 0 },
+    })
+
+    notify(notification('turn/started', {
+      threadId: 'thread-a',
+      turn: { id: 'turn-old', threadId: 'thread-a', startedAt: '2026-05-23T00:00:00.000Z' },
+    }))
+    expect(state.selectedThreadInProgress.value).toBe(true)
+
+    await state.loadMessages('thread-a', { force: true, silent: true })
+
+    expect(state.selectedThreadInProgress.value).toBe(false)
+  })
+
+  it('keeps an explicitly newer detail turn running despite an older rollout terminal marker', async () => {
+    const { state, notify } = await createLiveStateHarness()
+    gatewayMocks.resumeThread.mockResolvedValue({
+      model: '',
+      modelProvider: '',
+      reasoningEffort: '',
+      messages: [],
+      inProgress: true,
+      activeTurnId: 'turn-new',
+      terminalTurnIds: [],
+      rolloutTurnState: 'terminal',
+      hasMoreOlder: false,
+      turnIndexByTurnId: { 'turn-new': 0 },
+    })
+
+    notify(notification('turn/started', {
+      threadId: 'thread-a',
+      turn: { id: 'turn-old', threadId: 'thread-a', startedAt: '2026-05-23T00:00:00.000Z' },
+    }))
+    await state.loadMessages('thread-a', { force: true, silent: true })
+
+    expect(state.selectedThreadInProgress.value).toBe(true)
+  })
+
+  it('refreshes an already loaded selected thread after the notification stream reconnects', async () => {
+    const { state, notify } = await createLiveStateHarness()
+    gatewayMocks.resumeThread.mockResolvedValue(null)
+    await state.loadMessages('thread-a', { force: true, silent: true })
+    gatewayMocks.getThreadDetail.mockClear()
+
+    notify(notification('ready', {}))
+    await flushMicrotasks()
+    notify(notification('ready', {}))
+    await waitForCalls(gatewayMocks.getThreadDetail, 1)
+  })
+
   it('clears a cached active turn when a detail refresh explicitly marks that turn terminal', async () => {
     const { state, notify } = await createLiveStateHarness()
     gatewayMocks.resumeThread.mockResolvedValue({

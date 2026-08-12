@@ -337,6 +337,7 @@ type SessionRecoveredModelState = {
   modelProvider: string
   reasoningEffort: ReasoningEffort | ''
   activeTurnId?: string
+  rolloutTurnState?: 'active' | 'terminal'
 }
 
 type SessionModelStateCacheEntry = {
@@ -433,8 +434,12 @@ export function buildSessionModelState(sessionLogRaw: string): SessionRecoveredM
       const turnId = readNonEmptyString(payloadRecord.turn_id)
       if (eventType === 'task_started' && turnId) {
         state.activeTurnId = turnId
+        state.rolloutTurnState = 'active'
       } else if ((eventType === 'task_complete' || eventType === 'task_aborted' || eventType === 'turn_aborted') && (!turnId || turnId === state.activeTurnId)) {
         delete state.activeTurnId
+        if (state.rolloutTurnState === 'active') {
+          state.rolloutTurnState = 'terminal'
+        }
       }
       if (eventType === 'thread_settings_applied') {
         const threadSettings = asRecord(payloadRecord.thread_settings)
@@ -818,7 +823,7 @@ export async function mergeSessionModelStateIntoThreadResult(result: unknown): P
   } catch {
     return result
   }
-  if (!modelState.model && !modelState.modelProvider && !modelState.reasoningEffort && !modelState.activeTurnId) return result
+  if (!modelState.model && !modelState.modelProvider && !modelState.reasoningEffort && !modelState.activeTurnId && !modelState.rolloutTurnState) return result
 
   const nextRecord: Record<string, unknown> = { ...record }
   const nextThread: Record<string, unknown> = { ...thread }
@@ -834,6 +839,9 @@ export async function mergeSessionModelStateIntoThreadResult(result: unknown): P
   if (modelState.reasoningEffort) {
     nextRecord.reasoningEffort = modelState.reasoningEffort
     nextThread.reasoningEffort = modelState.reasoningEffort
+  }
+  if (modelState.rolloutTurnState) {
+    nextThread.codexUiRolloutTurnState = modelState.rolloutTurnState
   }
 
   return reconcileStaleThreadStatusFromSession({
@@ -10919,6 +10927,19 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         const rpcRuntime = getRpcRuntime(body.method, body.params ?? null)
         let effectiveRpcRuntime = rpcRuntime
         let effectiveRpcAppServer = rpcRuntime.appServer
+
+        if (body.method === 'thread/archive') {
+          const paramsRecord = asRecord(body.params)
+          const threadId = readNonEmptyString(paramsRecord?.threadId)
+          // Archives mutate the rollout on disk. A different provider runtime
+          // can reject the request because the owning runtime still holds its
+          // writer lock, so use the runtime that previously read the thread.
+          const threadOwningRuntime = threadId ? findRuntimeWithThreadState(runtimePool, threadId) : null
+          if (threadOwningRuntime && threadOwningRuntime !== effectiveRpcRuntime) {
+            effectiveRpcRuntime = threadOwningRuntime
+            effectiveRpcAppServer = threadOwningRuntime.appServer
+          }
+        }
 
         if (body.method === 'turn/interrupt') {
           const paramsRecord = asRecord(body.params)

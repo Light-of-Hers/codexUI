@@ -7942,6 +7942,32 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Rollback/Cleanup
 - Use Stop on any disposable verification turn. No configuration or browser-storage cleanup is required.
 
+### Fix: Completed turn status convergence
+
+#### Prerequisites
+- App server is running from this repository and has access to the local Codex rollout store.
+- A thread can run a command and then complete while its sidebar list or notification connection is delayed.
+
+#### Steps
+1. Open the thread and start a turn that runs at least one command.
+2. Let the turn complete, then immediately refresh the sidebar or briefly reconnect the browser network connection.
+3. Confirm the command card no longer has a running spinner, the sidebar running loop disappears, and the composer shows Send rather than Stop.
+4. Start a new turn in the same thread and confirm the normal running indicators return for that new turn.
+5. Repeat steps 1-4 in dark theme.
+6. Run `pnpm exec vitest run src/composables/useDesktopState.test.ts src/server/codexAppServerBridge.inlinePayload.test.ts` and `pnpm run build:frontend`.
+
+#### Expected Results
+- A list response that began before completion cannot reassert the completed turn as running.
+- A notification-stream reconnect refreshes the already loaded selected thread once, so a missed completion notification converges from `thread/read`.
+- When the persisted rollout records the active turn as complete, that terminal evidence clears an otherwise stale app-server running snapshot for the same turn.
+- A different, newly started turn immediately restores the normal running state.
+
+#### Performance Audit
+- Completion and reconnect use the existing event-driven synchronization path. A selected thread receives at most one additional `thread/read` per completed-turn event or stream reconnection; no periodic polling, added payload field outside `thread/read`, or background request loop is introduced.
+
+#### Rollback/Cleanup
+- Stop or archive any disposable test turn. No session rollout files are modified.
+
 ### Fix: Paginated fork thread-list recovery
 
 #### Prerequisites

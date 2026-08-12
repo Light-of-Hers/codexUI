@@ -2567,9 +2567,35 @@ describe('backend queue scheduling', () => {
     }, state.activeTurnId ?? '')
 
     expect(state.activeTurnId).toBeUndefined()
+    expect(state.rolloutTurnState).toBe('terminal')
     expect(result).toEqual({
       thread: { id: 'thread-1', status: { type: 'idle' }, turns: [{ id: 'turn-2', status: 'interrupted' }] },
     })
+  })
+
+  it('attaches a terminal rollout marker without rewriting the app-server status', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-rollout-terminal-marker-'))
+    const sessionPath = join(tempDir, 'session.jsonl')
+    await writeFile(sessionPath, [
+      JSON.stringify({ type: 'event_msg', payload: { type: 'task_started', turn_id: 'turn-2' } }),
+      JSON.stringify({ type: 'event_msg', payload: { type: 'task_complete', turn_id: 'turn-2' } }),
+    ].join('\n'), 'utf8')
+
+    try {
+      const result = await mergeSessionModelStateIntoThreadResult({
+        thread: {
+          id: 'thread-1',
+          path: sessionPath,
+          status: { type: 'inProgress', turnId: 'turn-2' },
+          turns: [{ id: 'turn-2', status: 'inProgress' }],
+        },
+      }) as { thread: { codexUiRolloutTurnState?: string; status: { type: string; turnId: string } } }
+
+      expect(result.thread.codexUiRolloutTurnState).toBe('terminal')
+      expect(result.thread.status).toEqual({ type: 'inProgress', turnId: 'turn-2' })
+    } finally {
+      await rm(tempDir, { recursive: true, force: true })
+    }
   })
 
   it('does not treat an explicitly aborted rollout turn as active', () => {

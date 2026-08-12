@@ -857,10 +857,17 @@ export type ThreadTurnPage = {
   inProgress: boolean
   activeTurnId: string
   terminalTurnIds?: string[]
+  rolloutTurnState?: 'active' | 'terminal'
   hasMoreOlder: boolean
   hasMoreNewer?: boolean
   startTurnIndex: number
   turnIndexByTurnId: ThreadTurnIndexById
+}
+
+function readRolloutTurnStateFromResponse(payload: ThreadReadResponse): 'active' | 'terminal' | undefined {
+  const rawThread = payload.thread as unknown as Record<string, unknown>
+  const state = rawThread.codexUiRolloutTurnState
+  return state === 'active' || state === 'terminal' ? state : undefined
 }
 
 async function getThreadGroupsPageV2(cursor: string | null, limit: number): Promise<ThreadGroupsPage> {
@@ -918,6 +925,7 @@ async function getThreadDetailV2(threadId: string): Promise<{
   inProgress: boolean
   activeTurnId: string
   terminalTurnIds: string[]
+  rolloutTurnState?: 'active' | 'terminal'
   hasMoreOlder: boolean
   turnIndexByTurnId: ThreadTurnIndexById
 }> {
@@ -932,6 +940,7 @@ async function getThreadDetailV2(threadId: string): Promise<{
     inProgress: readThreadInProgressFromResponse(payload),
     activeTurnId: readActiveTurnIdFromResponse(payload),
     terminalTurnIds: readTerminalTurnIdsFromResponse(payload),
+    rolloutTurnState: readRolloutTurnStateFromResponse(payload),
     hasMoreOlder: startTurnIndex > 0,
     turnIndexByTurnId: buildTurnIndexByTurnId(payload, startTurnIndex),
   }
@@ -1046,6 +1055,7 @@ export async function getThreadDetail(threadId: string): Promise<{
   inProgress: boolean
   activeTurnId: string
   terminalTurnIds: string[]
+  rolloutTurnState?: 'active' | 'terminal'
   hasMoreOlder: boolean
   turnIndexByTurnId: ThreadTurnIndexById
 }> {
@@ -1763,6 +1773,7 @@ export type ResumedThread = {
   inProgress: boolean
   activeTurnId: string
   terminalTurnIds?: string[]
+  rolloutTurnState?: 'active' | 'terminal'
   hasMoreOlder: boolean
   turnIndexByTurnId: ThreadTurnIndexById
 }
@@ -1818,6 +1829,7 @@ export async function resumeThread(
     inProgress: readThreadInProgressFromResponse(payload),
     activeTurnId: readActiveTurnIdFromResponse(payload),
     terminalTurnIds: readTerminalTurnIdsFromResponse(payload),
+    rolloutTurnState: readRolloutTurnStateFromResponse(payload),
     hasMoreOlder: startTurnIndex > 0,
     turnIndexByTurnId: buildTurnIndexByTurnId(payload, startTurnIndex),
   }
