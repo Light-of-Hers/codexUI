@@ -1026,7 +1026,7 @@ Model, skill, thinking, and plan controls remain usable while a thread turn is i
 5. Inspect `slowestApiRows` and `duplicateCounts`.
 
 #### Expected Results
-- The selected thread uses exactly one `thread/resume` and zero `thread/read` calls during initial load.
+- The selected thread uses exactly one `thread/read` and zero `thread/resume` calls during initial load.
 - Direct thread route hydration has one owner and does not trigger duplicate selected-thread message loads from route watchers.
 - Thread history loading is not blocked by waiting for `skills/list`, `account/rateLimits/read`, or `collaborationMode/list`.
 - Skills, model metadata, rate limits, and collaboration modes still populate shortly after the thread is visible.
@@ -7345,23 +7345,23 @@ Markdown files opened through the local editor expose a preview button that rend
 3. Open thread A, wait for it to load, then switch to thread B and back to A. Confirm the switch back to A shows the messages immediately without a loading spinner.
 4. Load enough threads (or scroll / filter the sidebar) so that thread A pages out of `projectGroups` (e.g. use workspace root filtering to hide its project). Trigger a sidebar refresh (`Cmd/Ctrl+R` or via the refresh button) so `pruneThreadScopedState` runs.
 5. Re-select thread A from any navigation entry point (URL, breadcrumb, or after re-adding its workspace root). Confirm the persisted messages are still there instantly, without hitting `thread/read` synchronously.
-6. Switch the active provider (e.g. `codex` → moon) so `invalidateAppServerRuntimeState` runs. Re-open a previously visited thread. Confirm the messages appear immediately and a `thread/resume` fires silently in the background (Network tab shows no blocking wait).
+6. Switch the active provider (e.g. `codex` → moon) so `invalidateAppServerRuntimeState` runs. Re-open a previously visited thread. Confirm the messages appear immediately and a `thread/read` fires silently in the background (Network tab shows no blocking wait).
 7. Reload the tab, then re-open a thread that was in the LRU list before the reload. Confirm the LRU list itself was restored from `localStorage` (`codex-web-local.recently-visited-thread-ids.v1`), though the messages will need to be fetched once because in-memory caches do not persist.
 8. Repeat step 3 in both light and dark theme.
 
 #### Expected Results
 - Repeated switches between recently visited threads render messages synchronously — `isLoadingMessages` stays `false` and no spinner appears.
 - Threads that were paged out of the sidebar retain their persisted messages when they had been visited recently, up to `RECENT_THREAD_LRU_LIMIT` (30 threads).
-- After provider switches or other resume-invalidation events, cached messages remain visible; the background `thread/resume` + `thread/read` refresh reconciles quietly.
+- After provider switches or other runtime-invalidation events, cached messages remain visible; a background `thread/read` refresh reconciles quietly without acquiring a writer.
 - The recently-visited thread list is persisted across page reloads via `localStorage`; visiting the same thread multiple times moves it back to the front instead of appending duplicates.
 - Light and dark theme render identically.
 
 #### Performance Audit
 - `setSelectedThreadId` now calls `recordRecentlyVisitedThreadId`, which maintains a de-duplicated LRU array of up to 30 entries and persists it to `codex-web-local.recently-visited-thread-ids.v1`. The write happens only on selection changes.
 - `pruneThreadScopedState` merges `recentlyVisitedThreadIds.value` into `activeThreadIds` before filtering the per-thread maps. This adds an O(N=30) union but avoids the O(K) rebuild of persisted/loaded/turn/live caches that used to trigger a full reload on subsequent visits.
-- `loadMessages` accepts a new `preferCached` option. When cached messages exist, are not force-reloaded, and no turn is in progress, it returns synchronously after `markThreadAsRead` and fires a silent `loadMessages(..., { silent: true })` in the background. The background call goes through the normal path (respecting the `loadMessagePromiseByThreadId` guard) so `thread/resume` + `thread/read` still reconcile server state without blocking the caller.
-- `selectThread` opts into `preferCached`, so user-driven session switches no longer pay for a `thread/resume` round-trip when the messages are already in memory. Programmatic callers (`forkThreadById`, `refreshDesktopState`, `ensureThreadMessagesLoaded`, silent refreshes) keep the previous behavior because they omit the flag.
-- No profiling run was executed in this session because the LRU + preferCached gains are only visible on repeated switches to threads that had been paged out or invalidated. Next measurement: sample `performance.now()` around `selectThread` on a large thread before/after provider switch and confirm the synchronous path (~<5ms) stays flat while the background resume still fires.
+- `loadMessages` accepts a `preferCached` option. When cached messages exist, are not force-reloaded, and no turn is in progress, it returns synchronously after `markThreadAsRead` and fires a forced, silent, read-only refresh in the background. The refresh respects the `loadMessagePromiseByThreadId` guard, so it reconciles server state without blocking the caller or acquiring a runtime writer.
+- `selectThread` opts into `preferCached`, so user-driven session switches no longer pay for a network round-trip before showing messages. Programmatic callers (`forkThreadById`, `refreshDesktopState`, `ensureThreadMessagesLoaded`, silent refreshes) keep the previous behavior because they omit the flag.
+- No profiling run was executed in this session because the LRU + preferCached gains are only visible on repeated switches to threads that had been paged out or invalidated. Next measurement: sample `performance.now()` around `selectThread` on a large thread before/after provider switch and confirm the synchronous path (~<5ms) stays flat while one background read still fires.
 
 #### Rollback/Cleanup
 - Remove `recordRecentlyVisitedThreadId`, the `recentlyVisitedThreadIds` ref, the LRU load/save helpers, and drop the LRU union from `pruneThreadScopedState`.
@@ -7770,7 +7770,7 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Rollback/Cleanup
 - Unpin or re-pin test threads if needed.
 
-### Feature: Resume historical thread provider and model
+### Feature: Read historical thread provider and model
 
 #### Prerequisites
 - App server is running from this repository.
@@ -7786,17 +7786,17 @@ Markdown files opened through the local editor expose a preview button that rend
 6. Repeat steps 2-5 in light theme and dark theme.
 
 #### Expected Results
-- Navigation-time resume does not replay browser-cached model/provider arguments; it performs one metadata-only `thread/read`, then resumes with the recovered model and provider.
+- Navigation reads persisted model/provider metadata without replaying browser-cached arguments or attaching a runtime writer.
 - Provider recovery uses the latest `thread_settings_applied` record when the rollout's `turn_context` does not repeat its provider.
 - Recovered non-empty provider state replaces a stale per-thread browser cache entry, so Ark Coding Plan cannot become sticky after a provider switch.
 - A deliberate composer selection still supplies its chosen provider/model when sending.
-- `Steer` reuses the provider recovered by resume.
+- `Steer` resumes on the provider recovered by the read-only history load.
 - Light and dark theme rendering is unchanged.
 
 #### Performance Audit
-- Each required navigation/runtime resume adds one bounded, metadata-only `thread/read` with `includeTurns: false` before its existing `thread/resume`; cached-first rendering still returns the current thread view immediately and performs the synchronization in the background.
+- Each navigation performs one bounded `thread/read`; `thread/resume` is deferred until the next `turn/start` or `turn/steer`. Cached-first rendering still returns the current thread view immediately and performs read-only synchronization in the background.
 - Profile baseline recorded on July 30, 2026 for a local historical-thread route: 8.57 s total, 248.4 KB API payload, one `thread/resume`, and eight `thread/read` requests. The changed path contributes exactly the single pre-resume metadata read; the other reads come from the existing thread/history/index loading paths. There is no pre-change profile artifact for that route, so the count is recorded for follow-up rather than claimed as an improvement.
-- The read result is enriched from the rollout by the bridge's bounded session-state cache, so recovery does not load full turns or add an unbounded fanout.
+- The read result is enriched from the rollout by the bridge's bounded session-state cache, so provider recovery adds no independent RPC or unbounded fanout.
 - Reading `thread_settings_applied` adds constant-time field extraction to the existing one-pass, cached session-log parse; it adds no extra RPCs beyond the one metadata read, filesystem reads, or cache invalidations.
 
 #### Rollback/Cleanup
@@ -8257,3 +8257,96 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - No persistent data is created. Revert the batching and load-policy changes to restore eager per-delta publication and full-language loading.
+
+### Reliability: Runtime reconciliation and lexical command recovery
+
+#### Prerequisites
+- A disposable thread and a recovered session containing static tuple command maps are available.
+
+#### Steps
+1. Start a thread-list refresh, emit a newer `turn/started`, then resolve the older list response. Confirm the live turn remains active.
+2. Complete a turn, then apply a delayed list snapshot that still marks that same id active. Confirm the thread remains idle.
+3. Recover one legacy exec payload containing an outer `calls` tuple array and a shadowing inner block with another `calls` declaration. Confirm each `.map()` resolves to the nearest lexical declaration.
+4. Run `pnpm exec vitest run src/composables/threadRuntimeReconciliation.test.ts src/composables/useDesktopState.test.ts src/server/codexAppServerBridge.inlinePayload.test.ts` and `pnpm exec vue-tsc --noEmit`.
+
+#### Expected Results
+- The pure reconciliation policy accepts fresh list evidence only when no newer live event changed the generation.
+- Clearing a turn advances its generation exactly once.
+- Static recovery ignores declaration-shaped text inside strings/comments and respects nested block shadowing.
+
+#### Rollback/Cleanup
+- No persistent data is created.
+
+### Performance: Weighted cache lifecycle and 1,000-thread soak
+
+#### Prerequisites
+- Unit tests can run without a live Codex process.
+
+#### Steps
+1. Insert 1,000 synthetic thread entries into the bounded cache with a 64 KiB aggregate budget.
+2. Confirm only the newest 64 one-KiB entries remain and older entries are evicted.
+3. Advance the test clock past the idle TTL and confirm cold entries are removed.
+4. Run `pnpm exec vitest run src/server/boundedLruCache.test.ts src/server/codexAppServerBridge.inlinePayload.test.ts`.
+
+#### Expected Results
+- App-server stream, snapshot, turn-page, captured-item, and live-state caches are limited by entry count, estimated bytes, and 30-minute idle TTL.
+- Rollout snapshots retain the existing 64-entry/64-MiB limit and now expire after 30 idle minutes.
+- Runtime routing retains at most 512 recently used thread owners and expires idle mappings.
+- Archive, process exit, self-heal, and dispose still clear thread-scoped state eagerly.
+
+#### Performance Audit
+- The synthetic 1,000-thread test completes without growing past its configured byte budget.
+- Cache updates on notification hot paths maintain incremental weights rather than serializing an entire cache.
+
+#### Rollback/Cleanup
+- No persistent data is created.
+
+### Engineering: Shared local HTTP routes and reproducible CI
+
+#### Prerequisites
+- Node.js 20 or 22 and pnpm 11.10.0 are installed.
+
+#### Steps
+1. Run `pnpm install --frozen-lockfile` from a clean checkout.
+2. Exercise local browse create/delete, editor save, Markdown preview, raw file, directory listing, image, KaTeX, and Git diff routes in development and production.
+3. Submit a JSON create body larger than 1 MiB and an editor/preview body larger than 10 MiB. Confirm both adapters return HTTP 413.
+4. Run `pnpm exec vitest run src/server/httpServer.test.ts src/components/sidebar/SidebarThreadControls.test.ts`.
+5. Run `pnpm run ci` and the CLI CommonJS smoke check from the built `dist-cli` entry.
+
+#### Expected Results
+- Vite Connect and production Express mount the same `localHttpRoutes` middleware after the Codex bridge.
+- Route status codes, payloads, request limits, and error messages are identical in both environments.
+- Aborted file responses destroy their read stream.
+- The lockfile, Node/pnpm versions, unit tests, type check, builds, and entry/Markdown bundle budgets are enforced in CI.
+- The component mount test verifies stable sidebar labels, footprint classes, and emitted commands.
+
+#### Rollback/Cleanup
+- Remove any disposable files and directories created during manual route verification.
+
+### Reliability: Read-only history browsing and runtime writer release
+
+#### Prerequisites
+- A thread that can be opened from both Codex UI and Codex CLI is available.
+- No turn is currently running in that thread.
+
+#### Steps
+1. Open the existing thread in Codex UI and inspect its history without sending a message.
+2. Attach Codex CLI to the same thread while the UI remains open.
+3. Confirm the CLI can read and continue the session without an `active writer` or `thread-store conflict` error.
+4. Return to Codex UI and send a new message. Confirm the UI performs one `thread/resume` immediately before `turn/start` or `turn/steer`.
+5. Reconnect the notification stream or update the rollout from the other client. Confirm the selected thread performs a forced read-only refresh even if its cache was loaded recently.
+6. Close the Codex UI development server and confirm its bridge-owned app-server child process exits.
+7. Run `pnpm exec vitest run src/composables/useDesktopState.test.ts src/api/codexGateway.test.ts` and `pnpm exec vue-tsc --noEmit`.
+
+#### Expected Results
+- History navigation and background reconciliation use `thread/read`; they never call `thread/resume` or acquire a runtime writer.
+- Only write paths resume the thread, preserving the user's explicit model/provider selection.
+- Cache-first navigation returns immediately and refreshes in the background; dirty or version-changed state cannot be hidden by the recent-load reuse window.
+- Closing Vite disposes the shared bridge and all provider runtimes instead of leaving an app-server process attached.
+
+#### Performance Audit
+- Opening a cached thread remains synchronous while exactly one forced `thread/read` refresh runs in the background.
+- Notification reconnect and rollout-version changes reuse the same bounded read path and add no polling loop or request fan-out.
+
+#### Rollback/Cleanup
+- Stop the disposable CLI/UI clients. No thread data is modified by the read-only verification steps.
