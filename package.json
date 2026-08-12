@@ -85,6 +85,8 @@
     "@types/qrcode-terminal": "^0.12.2",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-vue": "^5.2.1",
+    "@vue/test-utils": "2.4.11",
+    "happy-dom": "20.11.2",
     "playwright": "^1.59.1",
     "tailwindcss": "^4.1.18",
     "tsup": "^8.4.0",
