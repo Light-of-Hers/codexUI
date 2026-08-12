@@ -7975,3 +7975,32 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - Turn off `Group forked sessions` in Settings to return to the prior project/chats and chronological organization modes. For a disposable test hierarchy, archive the child threads; no rollout rewriting is required.
+
+### Feature: Paginated fork conversation history
+
+#### Prerequisites
+- App server is running from this repository and has access to local Codex rollouts.
+- A paginated fork exists whose `history_base` points at a parent thread, ideally with a second nested fork to verify inherited history.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Open the paginated child. Confirm its inherited parent conversation is available through the normal initial load and `Load earlier messages` path, rather than failing with the paginated `thread/read(includeTurns=true)` error.
+2. Confirm one `Fork point` divider appears exactly between the inherited prefix and the child's first local turn. For a nested fork, confirm one divider per fork level, in source order.
+3. Open the title-bar user-message list. Confirm inherited user prompts appear before the `Fork point` marker, the marker has no ordinal and cannot be clicked, and local prompts follow it with continuous numbering.
+4. Select an inherited user prompt from that list and confirm its message window can be loaded and highlighted.
+5. Confirm Edit and response Fork controls are not offered for messages before the most recent fork divider; they remain available for the child’s own local messages.
+6. Repeat steps 1-5 in dark theme and verify both divider lines and labels remain legible.
+7. Run `pnpm exec vitest run src/server/paginatedForkHistory.test.ts src/api/normalizers/v2.test.ts src/api/codexGateway.test.ts src/components/content/threadMessageNavigation.test.ts` and `pnpm run build`.
+
+#### Expected Results
+- Paginated threads use `thread/turns/list` for fully materialized turns when supported. If an older app-server lacks that method, Codex UI restores the local user and assistant messages from the rollout, then recursively supplies the inherited prefix.
+- The rendered history includes only the parent turns at or before the recorded ordinal/byte fork point. Synthetic dividers are presentation-only and are never persisted back to a rollout.
+- `Projects` and `Chats` remain visible while fork grouping is enabled; fork descendants are nested inside their applicable sidebar section.
+
+#### Performance Audit
+- Non-paginated threads perform the existing `thread/read` flow. The compatibility fallback is entered only after the app-server explicitly reports the paginated-read error and local metadata confirms a paginated rollout.
+- Paginated full-turn reads use bounded 100-turn protocol pages and the existing 30-second per-thread read cache. Lineage scans and local turn-boundary parses are cached and are only needed for paginated ancestry or its title-bar index.
+- No browser profiler or browser automation was run because this task did not explicitly request browser automation. The focused tests, type check, and production build cover the read and rendering paths; an interactive follow-up should profile a long multi-level paginated fork with `pnpm run profile:thread`.
+
+#### Rollback/Cleanup
+- Archive any disposable test fork. No rollout file is modified by history reconstruction, so no session-data cleanup is required.

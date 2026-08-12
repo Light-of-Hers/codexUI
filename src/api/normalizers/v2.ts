@@ -590,6 +590,16 @@ export function toUiToolCallMessage(item: unknown): UiMessage | null {
 }
 
 function toUiMessages(item: ThreadItem): UiMessage[] {
+  const rawItem = item as unknown as Record<string, unknown>
+  if (rawItem.type === 'forkBoundary') {
+    return [{
+      id: item.id,
+      role: 'system',
+      text: readString(rawItem.text) || 'Fork point',
+      messageType: 'forkBoundary',
+    }]
+  }
+
   if (item.type === 'agentMessage') {
     const cursorToolMessage = parseCursorToolMessage(item.id, item.text)
     if (cursorToolMessage) {
@@ -651,7 +661,6 @@ function toUiMessages(item: ThreadItem): UiMessage[] {
   }
 
   {
-    const rawItem = item as unknown as Record<string, unknown>
     if (rawItem.type === 'imageGeneration' || rawItem.type === 'image_generation') {
       const result = typeof rawItem.result === 'string' ? toImageGenerationUrl(rawItem.result) : ''
       if (!result) return []

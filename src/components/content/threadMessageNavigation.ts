@@ -7,6 +7,8 @@ export type UserMessageNavigationItem = {
   messageIndex: number
   preview: string
   title: string
+  kind?: 'forkBoundary'
+  sourceThreadId?: string
 }
 
 const DEFAULT_PREVIEW_LENGTH = 88

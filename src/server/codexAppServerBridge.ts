@@ -294,6 +294,7 @@ const PROVIDER_MODELS_FETCH_TIMEOUT_MS = 5_000
 
 const THREAD_RESPONSE_TURN_LIMIT = 3
 const THREAD_TURN_PAGE_READ_CACHE_TTL_MS = 30_000
+const THREAD_TURNS_LIST_PAGE_LIMIT = 100
 const THREAD_METHODS_WITH_TURNS = new Set(['thread/read', 'thread/resume', 'thread/fork', 'thread/rollback'])
 const THREAD_METHODS_WITH_THREAD_SNAPSHOT = new Set([...THREAD_METHODS_WITH_TURNS, 'thread/start'])
 const THREAD_SEARCH_FULL_TEXT_THREAD_LIMIT = 100
@@ -530,6 +531,8 @@ type SessionUserMessageIndexEntry = {
   ordinal: number
   preview: string
   title: string
+  kind?: 'forkBoundary'
+  sourceThreadId?: string
 }
 
 type SessionUserMessageIndexCacheEntry = {
@@ -670,6 +673,106 @@ async function readCachedSessionUserMessageIndex(sessionPath: string): Promise<S
     if (oldestKey) sessionUserMessageIndexCache.delete(oldestKey)
   }
   return entries
+}
+
+function makeForkBoundaryUserMessageIndexEntry(
+  threadId: string,
+  sourceThreadId: string,
+): SessionUserMessageIndexEntry {
+  return {
+    turnId: `${FORK_BOUNDARY_TURN_ID_PREFIX}${threadId}:${sourceThreadId}`,
+    ordinal: 0,
+    preview: 'Fork point',
+    title: 'Fork point',
+    kind: 'forkBoundary',
+    sourceThreadId,
+  }
+}
+
+function resequenceUserMessageIndex(entries: SessionUserMessageIndexEntry[]): SessionUserMessageIndexEntry[] {
+  let ordinal = 0
+  return entries.map((entry) => {
+    if (entry.kind === 'forkBoundary') return { ...entry, ordinal }
+    ordinal += 1
+    return { ...entry, ordinal }
+  })
+}
+
+async function filterUserMessageIndexToHistoryBase(
+  entries: SessionUserMessageIndexEntry[],
+  sourceLineage: SessionForkLineage,
+  endOrdinalExclusive: number | null,
+  endByteOffset: number | null,
+): Promise<SessionUserMessageIndexEntry[]> {
+  if (endOrdinalExclusive === null && endByteOffset === null) return entries
+
+  const localTurnEnds = await readCachedSessionTurnEnds(sourceLineage.sessionPath)
+  if (localTurnEnds.size === 0) return entries
+
+  return entries.filter((entry) => {
+    if (entry.kind === 'forkBoundary') return true
+    const end = localTurnEnds.get(entry.turnId)
+    // A source can inherit an earlier prefix. Those entries have no local
+    // JSONL row and remain part of every later inherited prefix.
+    if (!end) return true
+    if (endOrdinalExclusive !== null && end.ordinal !== null) {
+      return end.ordinal < endOrdinalExclusive
+    }
+    return endByteOffset === null || end.byteOffset <= endByteOffset
+  })
+}
+
+async function mergePaginatedForkUserMessageIndex(
+  threadId: string,
+  lineageByThreadId: Map<string, SessionForkLineage>,
+  visitedThreadIds = new Set<string>(),
+): Promise<SessionUserMessageIndexEntry[]> {
+  const lineage = lineageByThreadId.get(threadId)
+  if (!lineage) return []
+  if (!lineage.isPaginated || !lineage.historyBaseThreadId || visitedThreadIds.has(threadId)) {
+    return await readCachedSessionUserMessageIndex(lineage.sessionPath)
+  }
+
+  const sourceLineage = lineageByThreadId.get(lineage.historyBaseThreadId)
+  if (!sourceLineage) return await readCachedSessionUserMessageIndex(lineage.sessionPath)
+
+  const nextVisitedThreadIds = new Set(visitedThreadIds)
+  nextVisitedThreadIds.add(threadId)
+  const sourceEntries = await mergePaginatedForkUserMessageIndex(
+    sourceLineage.threadId,
+    lineageByThreadId,
+    nextVisitedThreadIds,
+  )
+  const inheritedEntries = await filterUserMessageIndexToHistoryBase(
+    sourceEntries,
+    sourceLineage,
+    lineage.historyBaseOrdinal,
+    lineage.historyBaseByteOffset,
+  )
+  const localEntries = await readCachedSessionUserMessageIndex(lineage.sessionPath)
+  return resequenceUserMessageIndex([
+    ...inheritedEntries,
+    makeForkBoundaryUserMessageIndexEntry(threadId, sourceLineage.threadId),
+    ...localEntries,
+  ])
+}
+
+export async function buildPaginatedForkUserMessageIndex(
+  threadId: string,
+  fallbackSessionPath = '',
+): Promise<SessionUserMessageIndexEntry[]> {
+  if (fallbackSessionPath && isAbsolute(fallbackSessionPath)) {
+    const currentLineage = await readSessionForkLineage(fallbackSessionPath, false)
+    if (!currentLineage?.isPaginated) return await readCachedSessionUserMessageIndex(fallbackSessionPath)
+  }
+  const lineageByThreadId = new Map(
+    (await getSessionForkLineage()).map((entry) => [entry.threadId, entry]),
+  )
+  if (lineageByThreadId.has(threadId)) {
+    return await mergePaginatedForkUserMessageIndex(threadId, lineageByThreadId)
+  }
+  if (!fallbackSessionPath || !isAbsolute(fallbackSessionPath)) return []
+  return await readCachedSessionUserMessageIndex(fallbackSessionPath)
 }
 
 
@@ -1657,6 +1760,246 @@ async function mergeRecoveredTurnItemsIntoThreadResultFromSession(
   )
 }
 
+const FORK_BOUNDARY_ITEM_TYPE = 'forkBoundary'
+const FORK_BOUNDARY_TURN_ID_PREFIX = 'codexui-fork-boundary:'
+const SESSION_TURN_BOUNDARY_CACHE_LIMIT = 128
+
+type SessionTurnEnd = {
+  ordinal: number | null
+  byteOffset: number
+}
+
+type SessionTurnBoundaryCacheEntry = {
+  size: number
+  mtimeMs: number
+  endByTurnId: Map<string, SessionTurnEnd>
+}
+
+const sessionTurnBoundaryCache = new Map<string, SessionTurnBoundaryCacheEntry>()
+
+function isForkBoundaryTurn(turn: unknown): boolean {
+  return readNonEmptyString(asRecord(turn)?.id).startsWith(FORK_BOUNDARY_TURN_ID_PREFIX)
+}
+
+function makeForkBoundaryTurn(threadId: string, sourceThreadId: string): Record<string, unknown> {
+  const id = `${FORK_BOUNDARY_TURN_ID_PREFIX}${threadId}:${sourceThreadId}`
+  return {
+    id,
+    status: 'completed',
+    items: [{
+      id,
+      type: FORK_BOUNDARY_ITEM_TYPE,
+      text: 'Fork point',
+      sourceThreadId,
+    }],
+  }
+}
+
+function buildSessionTurnEnds(sessionLogRaw: string): Map<string, SessionTurnEnd> {
+  const endByTurnId = new Map<string, SessionTurnEnd>()
+  let activeTurnId = ''
+  let byteOffset = 0
+
+  const lines = sessionLogRaw.split('\n')
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const rawLine = lines[lineIndex] ?? ''
+    const lineByteLength = Buffer.byteLength(rawLine, 'utf8') + (lineIndex < lines.length - 1 ? 1 : 0)
+    const lineEndByteOffset = byteOffset + lineByteLength
+    byteOffset = lineEndByteOffset
+    if (!rawLine.trim()) continue
+
+    let row: Record<string, unknown> | null = null
+    try {
+      row = JSON.parse(rawLine) as Record<string, unknown>
+    } catch {
+      continue
+    }
+
+    const payload = asRecord(row.payload)
+    const eventType = row.type === 'event_msg' ? readNonEmptyString(payload?.type) : ''
+    const eventTurnId = readNonEmptyString(payload?.turn_id)
+    if (row.type === 'turn_context') {
+      activeTurnId = eventTurnId || activeTurnId
+    } else if (eventType === 'task_started') {
+      activeTurnId = eventTurnId || activeTurnId
+    }
+
+    const turnId = eventTurnId || activeTurnId
+    if (turnId) {
+      const ordinal = readNonNegativeSafeInteger(row.ordinal)
+      const previous = endByTurnId.get(turnId)
+      endByTurnId.set(turnId, {
+        ordinal: ordinal ?? previous?.ordinal ?? null,
+        byteOffset: lineEndByteOffset,
+      })
+    }
+
+    if (eventType === 'task_complete') {
+      if (!eventTurnId || eventTurnId === activeTurnId) activeTurnId = ''
+    }
+  }
+
+  return endByTurnId
+}
+
+async function readCachedSessionTurnEnds(sessionPath: string): Promise<Map<string, SessionTurnEnd>> {
+  const sessionStat = await stat(sessionPath)
+  const cached = sessionTurnBoundaryCache.get(sessionPath)
+  if (cached && cached.size === sessionStat.size && cached.mtimeMs === sessionStat.mtimeMs) {
+    return cached.endByTurnId
+  }
+
+  const endByTurnId = buildSessionTurnEnds(await readFile(sessionPath, 'utf8'))
+  sessionTurnBoundaryCache.set(sessionPath, {
+    size: sessionStat.size,
+    mtimeMs: sessionStat.mtimeMs,
+    endByTurnId,
+  })
+  if (sessionTurnBoundaryCache.size > SESSION_TURN_BOUNDARY_CACHE_LIMIT) {
+    const oldestKey = sessionTurnBoundaryCache.keys().next().value
+    if (oldestKey) sessionTurnBoundaryCache.delete(oldestKey)
+  }
+  return endByTurnId
+}
+
+async function filterTurnsToHistoryBase(
+  turns: unknown[],
+  sourceLineage: SessionForkLineage,
+  endOrdinalExclusive: number | null,
+  endByteOffset: number | null,
+): Promise<unknown[]> {
+  if (endOrdinalExclusive === null && endByteOffset === null) return turns
+
+  const localTurnEnds = await readCachedSessionTurnEnds(sourceLineage.sessionPath)
+  if (localTurnEnds.size === 0) return turns
+
+  return turns.filter((turn) => {
+    const turnId = readNonEmptyString(asRecord(turn)?.id)
+    const end = turnId ? localTurnEnds.get(turnId) : undefined
+    // A source thread can itself inherit history. Its inherited turns do not
+    // have rows in this rollout, so they remain part of every later prefix.
+    if (!end) return true
+    if (endOrdinalExclusive !== null && end.ordinal !== null) {
+      return end.ordinal < endOrdinalExclusive
+    }
+    return endByteOffset === null || end.byteOffset <= endByteOffset
+  })
+}
+
+function hasTurnPrefix(turns: unknown[], prefix: unknown[]): boolean {
+  const concretePrefix = prefix.filter((turn) => !isForkBoundaryTurn(turn))
+  if (concretePrefix.length === 0) return false
+  if (turns.length < concretePrefix.length) return false
+  return concretePrefix.every((turn, index) => (
+    readNonEmptyString(asRecord(turn)?.id) === readNonEmptyString(asRecord(turns[index])?.id)
+  ))
+}
+
+/**
+ * Paginated forks keep their inherited history in a referenced rollout rather
+ * than copying its turns into the child JSONL. Reconstruct that prefix for the
+ * compatibility `thread/read` surface and leave a synthetic, non-persistent
+ * turn at the exact fork boundary for UI rendering.
+ */
+export async function mergePaginatedForkHistoryIntoThreadResult(
+  result: unknown,
+  readThread: (threadId: string) => Promise<unknown>,
+  lineageByThreadId?: Map<string, SessionForkLineage>,
+  visitedThreadIds = new Set<string>(),
+): Promise<unknown> {
+  const record = asRecord(result)
+  const thread = asRecord(record?.thread)
+  const turns = Array.isArray(thread?.turns) ? thread.turns : null
+  const threadId = readNonEmptyString(thread?.id)
+  if (!record || !thread || !turns || !threadId || visitedThreadIds.has(threadId)) return result
+
+  const currentSessionPath = readNonEmptyString(thread.path)
+  if (currentSessionPath && isAbsolute(currentSessionPath)) {
+    const currentLineage = await readSessionForkLineage(currentSessionPath, false).catch(() => null)
+    if (!currentLineage?.isPaginated) return result
+  }
+
+  const lineages = lineageByThreadId ?? new Map(
+    (await getSessionForkLineage()).map((entry) => [entry.threadId, entry]),
+  )
+  const lineage = lineages.get(threadId)
+  const sourceThreadId = lineage?.historyBaseThreadId
+  if (!lineage?.isPaginated || !sourceThreadId) return result
+
+  const sourceLineage = lineages.get(sourceThreadId)
+  if (!sourceLineage) return result
+
+  const localTurnEnds = await readCachedSessionTurnEnds(lineage.sessionPath).catch(() => new Map<string, SessionTurnEnd>())
+  const firstLocalTurnIndex = turns.findIndex((turn) => {
+    const turnId = readNonEmptyString(asRecord(turn)?.id)
+    return turnId.length > 0 && localTurnEnds.has(turnId)
+  })
+  const boundaryTurn = makeForkBoundaryTurn(threadId, sourceThreadId)
+
+  // Newer app-server builds can materialize the inherited prefix themselves.
+  // Recognize that shape from locally persisted turn ids so the common path
+  // only inserts the visual separator and does not issue ancestor reads.
+  if (firstLocalTurnIndex > 0) {
+    const hasBoundaryAtForkPoint = isForkBoundaryTurn(turns[firstLocalTurnIndex - 1])
+    if (hasBoundaryAtForkPoint) return result
+    return {
+      ...record,
+      thread: {
+        ...thread,
+        turns: [...turns.slice(0, firstLocalTurnIndex), boundaryTurn, ...turns.slice(firstLocalTurnIndex)],
+      },
+    }
+  }
+
+  const nextVisitedThreadIds = new Set(visitedThreadIds)
+  nextVisitedThreadIds.add(threadId)
+  let sourceResult: unknown
+  try {
+    sourceResult = await readThread(sourceThreadId)
+  } catch {
+    return result
+  }
+  const mergedSourceResult = await mergePaginatedForkHistoryIntoThreadResult(
+    sourceResult,
+    readThread,
+    lineages,
+    nextVisitedThreadIds,
+  )
+  const sourceTurns = Array.isArray(asRecord(asRecord(mergedSourceResult)?.thread)?.turns)
+    ? asRecord(asRecord(mergedSourceResult)?.thread)?.turns as unknown[]
+    : []
+  const inheritedTurns = await filterTurnsToHistoryBase(
+    sourceTurns,
+    sourceLineage,
+    lineage.historyBaseOrdinal,
+    lineage.historyBaseByteOffset,
+  )
+  const localTurns = hasTurnPrefix(turns, inheritedTurns)
+    ? turns.slice(inheritedTurns.filter((turn) => !isForkBoundaryTurn(turn)).length)
+    : turns
+
+  return {
+    ...record,
+    thread: {
+      ...thread,
+      turns: [...inheritedTurns, boundaryTurn, ...localTurns],
+    },
+  }
+}
+
+async function mergePaginatedForkHistoryIntoThreadResultFromSession(
+  appServer: AppServerProcess,
+  result: unknown,
+): Promise<unknown> {
+  return mergePaginatedForkHistoryIntoThreadResult(
+    result,
+    async (threadId) => await mergeRecoveredTurnItemsIntoThreadResultFromSession(
+      appServer,
+      await appServer.readThreadForTurnPage(threadId),
+    ),
+  )
+}
+
 function getErrorMessage(payload: unknown, fallback: string): string {
   if (payload instanceof Error && payload.message.trim().length > 0) {
     return payload.message
@@ -1684,6 +2027,13 @@ export function isUnauthenticatedRateLimitError(error: unknown): boolean {
 export function isEmptyThreadReadError(error: unknown): boolean {
   const message = getErrorMessage(error, '').toLowerCase()
   return message.includes('failed to read thread') && message.includes('rollout') && message.includes('is empty')
+}
+
+export function isPaginatedThreadReadError(error: unknown): boolean {
+  const message = getErrorMessage(error, '').toLowerCase()
+  return message.includes('paginated threads')
+    && message.includes('thread/read')
+    && message.includes('includeturns')
 }
 
 function isNoRolloutFoundError(error: unknown): boolean {
@@ -3751,6 +4101,93 @@ function readSessionMessageText(payload: Record<string, unknown>): string {
   return parts.join('')
 }
 
+/**
+ * Older app-server builds reject `thread/read(includeTurns=true)` for a
+ * paginated rollout. Keep a narrow local fallback for those builds: it
+ * reconstructs the user and assistant messages that make up the actual
+ * conversation, while newer builds use `thread/turns/list` with full items.
+ */
+export function buildSessionTurnsFromRollout(sessionLogRaw: string): Record<string, unknown>[] {
+  type RecoveredTurn = {
+    id: string
+    status: 'completed'
+    items: Record<string, unknown>[]
+  }
+
+  let currentTurnId = ''
+  let orphanTurnIndex = 0
+  const turnsById = new Map<string, RecoveredTurn>()
+  const orderedTurnIds: string[] = []
+
+  const getTurn = (turnId: string): RecoveredTurn => {
+    const existing = turnsById.get(turnId)
+    if (existing) return existing
+    const created: RecoveredTurn = { id: turnId, status: 'completed', items: [] }
+    turnsById.set(turnId, created)
+    orderedTurnIds.push(turnId)
+    return created
+  }
+
+  for (const [lineIndex, line] of sessionLogRaw.split('\n').entries()) {
+    if (!line.trim()) continue
+    let row: Record<string, unknown> | null = null
+    try {
+      row = JSON.parse(line) as Record<string, unknown>
+    } catch {
+      continue
+    }
+    const payload = asRecord(row.payload)
+    if (!payload) continue
+
+    if (row.type === 'turn_context') {
+      currentTurnId = readNonEmptyString(payload.turn_id) || currentTurnId
+      continue
+    }
+    if (row.type === 'event_msg') {
+      if (payload.type === 'task_started') {
+        currentTurnId = readNonEmptyString(payload.turn_id) || currentTurnId
+      } else if (payload.type === 'task_complete') {
+        currentTurnId = ''
+      }
+      continue
+    }
+    if (row.type !== 'response_item' || payload.type !== 'message') continue
+    if (payload.role !== 'user' && payload.role !== 'assistant') continue
+
+    let turnId = currentTurnId
+    if (!turnId) {
+      orphanTurnIndex += 1
+      turnId = `rollout-${String(lineIndex + 1)}-${String(orphanTurnIndex)}`
+    }
+    const turn = getTurn(turnId)
+    const itemId = readNonEmptyString(payload.id) || `session-${turnId}-${String(lineIndex + 1)}`
+
+    if (payload.role === 'user') {
+      const text = readSessionUserMessageText(payload)
+      if (text) {
+        turn.items.push({
+          id: itemId,
+          type: 'userMessage',
+          content: [{ type: 'text', text }],
+        })
+      }
+    } else {
+      const text = readSessionMessageText(payload)
+      if (text) {
+        turn.items.push({
+          id: itemId,
+          type: 'agentMessage',
+          text,
+        })
+      }
+    }
+  }
+
+  return orderedTurnIds
+    .map((turnId) => turnsById.get(turnId))
+    .filter((turn): turn is RecoveredTurn => Boolean(turn && turn.items.length > 0))
+}
+
 function buildSessionItemOrder(sessionLogRaw: string, turnIds: Set<string>): Map<string, SessionItemSlot[]> {
   let currentTurnId = ''
   let orphanResponseTurnId = ''
@@ -4615,7 +5052,7 @@ function getCodexHomeDir(): string {
   return codexHome && codexHome.length > 0 ? codexHome : join(homedir(), '.codex')
 }
 
-type SessionForkLineage = {
+export type SessionForkLineage = {
   threadId: string
   forkedFromId: string
   cwd: string
@@ -4626,6 +5063,7 @@ type SessionForkLineage = {
   historyBaseByteOffset: number | null
   isPaginated: boolean
   isArchived: boolean
+  sessionPath: string
 }
 
 const PAGINATED_FORK_RECOVERY_CACHE_TTL_MS = 30_000
@@ -4687,14 +5125,14 @@ async function readSessionForkLineage(
       const threadId = readNonEmptyString(payload?.session_id) || readNonEmptyString(payload?.id)
       const forkedFromId = readNonEmptyString(payload?.forked_from_id)
       const historyBaseThreadId = readNonEmptyString(historyBase?.thread_id)
-      if (!threadId || !forkedFromId) return null
+      if (!threadId) return null
 
       // `forked_from_id` is the direct parent. A history base can be inherited
       // through that parent, so it must not change the visible tree topology.
       const forkPointIsInDirectParent = historyBaseThreadId === forkedFromId
       return {
         threadId,
-        forkedFromId,
+        forkedFromId: forkedFromId ?? '',
         cwd: readNonEmptyString(payload?.cwd),
         forkPointOrdinal: forkPointIsInDirectParent
           ? readNonNegativeSafeInteger(historyBase?.end_ordinal_exclusive)
@@ -4707,6 +5145,7 @@ async function readSessionForkLineage(
         historyBaseByteOffset: readNonNegativeSafeInteger(historyBase?.end_byte_offset),
         isPaginated: payload?.history_mode === 'paginated' && Boolean(historyBaseThreadId),
         isArchived,
+        sessionPath,
       }
     }
   } catch {
@@ -7531,6 +7970,71 @@ class AppServerProcess {
     return this.lastThreadReadSnapshotByThreadId.get(threadId) ?? null
   }
 
+  private async readPaginatedThreadTurns(threadId: string): Promise<unknown[]> {
+    const turns: unknown[] = []
+    const seenCursors = new Set<string>()
+    let cursor: string | null = null
+
+    do {
+      const page = asRecord(await this.rpc('thread/turns/list', {
+        threadId,
+        cursor,
+        limit: THREAD_TURNS_LIST_PAGE_LIMIT,
+        sortDirection: 'asc',
+        itemsView: 'full',
+      }))
+      const data = Array.isArray(page?.data) ? page.data : null
+      if (!data) {
+        throw new Error('thread/turns/list returned an invalid payload')
+      }
+      turns.push(...data)
+      const nextCursor = readNonEmptyString(page?.nextCursor)
+      if (!nextCursor || seenCursors.has(nextCursor)) break
+      seenCursors.add(nextCursor)
+      cursor = nextCursor
+    } while (cursor)
+
+    return turns
+  }
+
+  private async readPaginatedThreadForTurnPage(threadId: string, originalError: unknown): Promise<unknown> {
+    const metadataResult = await this.rpc('thread/read', {
+      threadId,
+      includeTurns: false,
+    })
+    const metadataRecord = asRecord(metadataResult)
+    const thread = asRecord(metadataRecord?.thread)
+    const sessionPath = readNonEmptyString(thread?.path)
+    if (!metadataRecord || !thread || !sessionPath || !isAbsolute(sessionPath)) {
+      throw originalError
+    }
+
+    const lineage = await readSessionForkLineage(
+      sessionPath,
+      sessionPath.split(/[\\/]+/u).includes('archived_sessions'),
+    ).catch(() => null)
+    if (!lineage?.isPaginated) throw originalError
+
+    let turns: unknown[]
+    try {
+      turns = await this.readPaginatedThreadTurns(threadId)
+    } catch {
+      // Older Codex versions have the same pagination storage format but no
+      // turns/list endpoint. Reconstruct the local portion, then the caller
+      // recursively supplies the inherited prefix from its source rollout.
+      const sessionLogRaw = await readFile(sessionPath, 'utf8').catch(() => '')
+      turns = sessionLogRaw ? buildSessionTurnsFromRollout(sessionLogRaw) : []
+    }
+
+    return {
+      ...metadataRecord,
+      thread: {
+        ...thread,
+        turns,
+      },
+    }
+  }
+
   async readThreadForTurnPage(threadId: string): Promise<unknown> {
     const now = Date.now()
     const cached = this.threadTurnPageReadCacheByThreadId.get(threadId)
@@ -7543,6 +8047,9 @@ class AppServerProcess {
     const promise = this.rpc('thread/read', {
       threadId,
       includeTurns: true,
+    }).catch(async (error) => {
+      if (!isPaginatedThreadReadError(error)) throw error
+      return await this.readPaginatedThreadForTurnPage(threadId, error)
     }).then((result) => {
       this.threadTurnPageReadCacheByThreadId.set(threadId, {
         result,
@@ -9290,7 +9797,11 @@ type ThreadTurnSliceResponse = {
 async function readPreparedThreadReadResult(appServer: AppServerProcess, threadId: string): Promise<PreparedThreadReadResult> {
   const threadReadResult = await appServer.readThreadForTurnPage(threadId)
   const recoveredThreadReadResult = await mergeRecoveredTurnItemsIntoThreadResultFromSession(appServer, threadReadResult)
-  const enrichedThreadReadResult = await mergeSessionModelStateIntoThreadResult(recoveredThreadReadResult)
+  const inheritedThreadReadResult = await mergePaginatedForkHistoryIntoThreadResultFromSession(
+    appServer,
+    recoveredThreadReadResult,
+  )
+  const enrichedThreadReadResult = await mergeSessionModelStateIntoThreadResult(inheritedThreadReadResult)
   const record = asRecord(enrichedThreadReadResult)
   const thread = asRecord(record?.thread)
   if (!record || !thread) {
@@ -10120,6 +10631,15 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 	              return
 	            }
 	          }
+	          if (body.method === 'thread/read' && isPaginatedThreadReadError(error)) {
+	            const params = asRecord(rpcParams)
+	            const paginatedThreadId = readNonEmptyString(params?.threadId)
+	            if (paginatedThreadId) {
+	              rpcResult = await effectiveRpcAppServer.readThreadForTurnPage(paginatedThreadId)
+	            } else {
+	              throw error
+	            }
+	          } else {
             if (body.method === 'turn/interrupt' && isNoActiveTurnToInterruptError(error)) {
               writeDebugLog('rpc-turn-interrupt-no-active', 'turn/interrupt found no active turn; treating stop as settled', {
                 threadId,
@@ -10127,13 +10647,17 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
               setJson(res, 200, { result: {} })
               return
             }
-	          throw error
+	            throw error
+          }
           }
 	        }
         const recoveredResult = THREAD_METHODS_WITH_TURNS.has(body.method)
           ? await mergeRecoveredTurnItemsIntoThreadResultFromSession(effectiveRpcAppServer, rpcResult)
           : rpcResult
-        const trimmedResult = trimThreadTurnsInRpcResult(body.method, recoveredResult)
+        const inheritedHistoryResult = THREAD_METHODS_WITH_TURNS.has(body.method)
+          ? await mergePaginatedForkHistoryIntoThreadResultFromSession(effectiveRpcAppServer, recoveredResult)
+          : recoveredResult
+        const trimmedResult = trimThreadTurnsInRpcResult(body.method, inheritedHistoryResult)
         const sanitizedResult = await sanitizeThreadTurnsInlinePayloads(body.method, trimmedResult)
         const skillMergedResult = THREAD_METHODS_WITH_TURNS.has(body.method)
           ? await mergeSessionSkillInputsIntoThreadResult(sanitizedResult)
@@ -10306,7 +10830,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           }
 
           try {
-            const entries = await readCachedSessionUserMessageIndex(sessionPath)
+            const entries = await buildPaginatedForkUserMessageIndex(threadId, sessionPath)
             setJson(res, 200, { entries })
           } catch {
             setJson(res, 200, { entries: [] })
@@ -10338,7 +10862,8 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           }
 
           try {
-            const count = await readCachedSessionUserMessageCount(sessionPath)
+            const entries = await buildPaginatedForkUserMessageIndex(threadId, sessionPath)
+            const count = entries.filter((entry) => entry.kind !== 'forkBoundary').length
             setJson(res, 200, { count })
           } catch {
             setJson(res, 200, { count: 0 })
@@ -10359,7 +10884,11 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 
           const threadReadResult = await appServer.readThreadForTurnPage(threadId)
           const recoveredThreadReadResult = await mergeRecoveredTurnItemsIntoThreadResultFromSession(appServer, threadReadResult)
-          const enrichedThreadReadResult = await mergeSessionModelStateIntoThreadResult(recoveredThreadReadResult)
+          const inheritedThreadReadResult = await mergePaginatedForkHistoryIntoThreadResultFromSession(
+            appServer,
+            recoveredThreadReadResult,
+          )
+          const enrichedThreadReadResult = await mergeSessionModelStateIntoThreadResult(inheritedThreadReadResult)
           const sanitized = await sanitizeThreadTurnsInlinePayloads('thread/read', enrichedThreadReadResult)
           const result = await mergeSessionSkillInputsIntoThreadResult(sanitized)
 
@@ -10381,10 +10910,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           return
         }
 
-        const threadReadResult = await appServer.rpc('thread/read', {
-          threadId,
-          includeTurns: true,
-        })
+        const threadReadResult = await appServer.readThreadForTurnPage(threadId)
         const threadReadRecord = asRecord(threadReadResult)
         const threadRecord = asRecord(threadReadRecord?.thread)
         const sessionPath = readNonEmptyString(threadRecord?.path)
@@ -10423,10 +10949,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         }
 
         try {
-          const threadReadResult = await appServer.rpc('thread/read', {
-            threadId,
-            includeTurns: true,
-          })
+          const threadReadResult = await appServer.readThreadForTurnPage(threadId)
           const sanitized = await sanitizeThreadTurnsInlinePayloads('thread/read', threadReadResult)
           appServer.storeThreadReadSnapshot(threadId, sanitized)
 
@@ -10522,7 +11045,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
             return
           }
 
-          const threadReadResult = await appServer.rpc('thread/read', { threadId, includeTurns: true })
+          const threadReadResult = await appServer.readThreadForTurnPage(threadId)
           const record = asRecord(threadReadResult)
           const thread = asRecord(record?.thread)
           const turns = Array.isArray(thread?.turns) ? thread.turns : []

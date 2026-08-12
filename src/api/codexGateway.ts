@@ -1087,6 +1087,8 @@ export type ThreadUserMessageIndexEntry = {
   ordinal: number
   preview: string
   title: string
+  kind?: 'forkBoundary'
+  sourceThreadId?: string
 }
 
 export async function getThreadUserMessageIndex(threadId: string): Promise<ThreadUserMessageIndexEntry[]> {
@@ -1106,8 +1108,10 @@ export async function getThreadUserMessageIndex(threadId: string): Promise<Threa
       const ordinal = typeof record.ordinal === 'number' ? Math.max(0, Math.floor(record.ordinal)) : 0
       const preview = typeof record.preview === 'string' ? record.preview : ''
       const title = typeof record.title === 'string' ? record.title : preview
-      if (!turnId || !ordinal) continue
-      entries.push({ turnId, ordinal, preview, title })
+      const kind = record.kind === 'forkBoundary' ? 'forkBoundary' : undefined
+      const sourceThreadId = typeof record.sourceThreadId === 'string' ? record.sourceThreadId : undefined
+      if (!turnId || (!ordinal && kind !== 'forkBoundary')) continue
+      entries.push({ turnId, ordinal, preview, title, kind, sourceThreadId })
     }
     return entries
   } catch (error) {

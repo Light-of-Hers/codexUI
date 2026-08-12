@@ -22,7 +22,19 @@
       </li>
       <template v-for="(message, messageIndex) in visibleMessages" :key="message.id">
       <li
-        v-if="!hiddenGroupedRunnableItemIds.has(message.id) && !hiddenFileChangeMessageIds.has(message.id)"
+        v-if="message.messageType === 'forkBoundary'"
+        class="conversation-item conversation-item-fork-boundary"
+        :data-message-id="message.id"
+        data-message-type="forkBoundary"
+      >
+        <div class="fork-boundary" role="separator" :aria-label="message.text || 'Fork point'">
+          <span class="fork-boundary-line" />
+          <span class="fork-boundary-label">{{ message.text || 'Fork point' }}</span>
+          <span class="fork-boundary-line" />
+        </div>
+      </li>
+      <li
+        v-else-if="!hiddenGroupedRunnableItemIds.has(message.id) && !hiddenFileChangeMessageIds.has(message.id)"
         class="conversation-item"
         :class="{ 'conversation-item-jump-highlight': highlightedMessageId === message.id }"
         :data-role="message.role"
@@ -829,8 +841,19 @@
             :style="{ height: `${messageNavigationTopSpacerHeight}px` }"
             aria-hidden="true"
           />
-          <li v-for="item in visibleUserMessageNavigationItems" :key="item.turnId || item.id || `ord-${item.ordinal}`" class="message-nav-list-item">
+          <li
+            v-for="item in visibleUserMessageNavigationItems"
+            :key="item.turnId || item.id || `ord-${item.ordinal}`"
+            class="message-nav-list-item"
+            :class="{ 'message-nav-fork-boundary': item.kind === 'forkBoundary' }"
+          >
+            <div v-if="item.kind === 'forkBoundary'" class="message-nav-fork-boundary-marker" role="separator" :aria-label="item.title">
+              <span />
+              <span>{{ item.title }}</span>
+              <span />
+            </div>
             <button
+              v-else
               type="button"
               class="message-nav-item"
               :title="item.title"
@@ -1357,6 +1380,7 @@ function showImplementPlanButton(message: UiMessage): boolean {
     && message.messageType !== 'plan.live'
     && message.role === 'assistant'
     && Boolean(message.turnId)
+    && !isMessageInInheritedForkHistory(message)
 }
 
 function implementPlan(message: UiMessage): void {
@@ -1718,6 +1742,8 @@ const userMessageNavigationItems = computed<UserMessageNavigationItem[]>(() => {
       messageIndex: -1,
       preview: entry.preview,
       title: entry.title,
+      kind: entry.kind,
+      sourceThreadId: entry.sourceThreadId,
     }))
   }
 
@@ -1732,7 +1758,7 @@ const userMessageNavigationItems = computed<UserMessageNavigationItem[]>(() => {
   return loadedItems
 })
 const messageNavigationCountLabel = computed(() => {
-  const loaded = userMessageNavigationItems.value.length
+  const loaded = userMessageNavigationItems.value.filter((item) => item.kind !== 'forkBoundary').length
   const totalProp = props.userMessageNavigationTotal
   const total = typeof totalProp === 'number' && totalProp >= 0 ? Math.max(totalProp, loaded) : null
   if (total !== null) return total
@@ -1741,7 +1767,7 @@ const messageNavigationCountLabel = computed(() => {
 })
 const messageNavigationHeaderStatus = computed(() => {
   const items = userMessageNavigationItems.value
-  const loaded = items.length
+  const loaded = items.filter((item) => item.kind !== 'forkBoundary').length
   const sessionEntries = props.userMessageNavigationIndex ?? []
   const usingSessionIndex = sessionEntries.length > 0
   const totalProp = props.userMessageNavigationTotal
@@ -2504,11 +2530,35 @@ const copyableResponseContentByAnchorId = computed<Record<string, string>>(() =>
   return next
 })
 
+const latestForkBoundaryMessageIndex = computed(() => {
+  for (let index = visibleMessages.value.length - 1; index >= 0; index -= 1) {
+    if (visibleMessages.value[index]?.messageType === 'forkBoundary') return index
+  }
+  return -1
+})
+
+const inheritedForkHistoryMessageIds = computed(() => {
+  const boundaryIndex = latestForkBoundaryMessageIndex.value
+  return new Set(
+    boundaryIndex < 0
+      ? []
+      : visibleMessages.value.slice(0, boundaryIndex).map((message) => message.id),
+  )
+})
+
+function isMessageInInheritedForkHistory(message: UiMessage): boolean {
+  return inheritedForkHistoryMessageIds.value.has(message.id)
+}
+
 const forkableTurnIndexByAnchorId = computed<Record<string, number>>(() => {
   const groupedTurns = new Map<string, { anchorMessageId: string; turnIndex: number }>()
 
   for (const message of visibleMessages.value) {
-    if (!isCopyableAssistantMessage(message) || typeof message.turnIndex !== 'number') continue
+    if (
+      !isCopyableAssistantMessage(message)
+      || typeof message.turnIndex !== 'number'
+      || isMessageInInheritedForkHistory(message)
+    ) continue
 
     const responseKey = `turn:${message.turnIndex}`
     const existing = groupedTurns.get(responseKey)
@@ -3092,7 +3142,11 @@ function forkResponse(anchorMessageId: string): void {
 const editableTurnIdByMessageId = computed<Record<string, string>>(() => {
   const next: Record<string, string> = {}
   for (const message of visibleMessages.value) {
-    if (message.role !== 'user' || typeof message.turnIndex !== 'number') continue
+    if (
+      message.role !== 'user'
+      || typeof message.turnIndex !== 'number'
+      || isMessageInInheritedForkHistory(message)
+    ) continue
     const turnId = typeof message.turnId === 'string' && message.turnId.length > 0 ? message.turnId : ''
     if (!turnId || message.text.trim().length === 0) continue
     next[message.id] = turnId
@@ -5423,6 +5477,7 @@ function restoreMessageAnchor(container: HTMLElement, anchor: { messageId: strin
 }
 
 async function jumpToUserMessage(item: UserMessageNavigationItem): Promise<void> {
+  if (item.kind === 'forkBoundary') return
   closeMessageNavigation()
   autoFollowOutput.value = false
 
@@ -5666,7 +5721,11 @@ watch(
     if (highlightedMessageId.value && !renderedMessages.some((message) => message.id === highlightedMessageId.value)) {
       clearHighlightedMessage()
     }
-    if (!isMessageNavigationLoading.value && !messageNavigationSourceMessages.value.some((message) => message.role === 'user')) {
+    if (
+      !isMessageNavigationLoading.value
+      && !messageNavigationSourceMessages.value.some((message) => message.role === 'user')
+      && !userMessageNavigationItems.value.some((item) => item.kind !== 'forkBoundary')
+    ) {
       closeMessageNavigation()
     }
 
@@ -5915,6 +5974,22 @@ onBeforeUnmount(() => {
   @apply justify-center;
 }
 
+.conversation-item-fork-boundary {
+  @apply items-center py-2;
+}
+
+.fork-boundary {
+  @apply mx-auto flex w-full max-w-[min(var(--chat-column-max,45rem),100%)] items-center gap-3 px-1 text-[11px] font-medium text-zinc-400 dark:text-zinc-500;
+}
+
+.fork-boundary-line {
+  @apply h-px min-w-0 flex-1 bg-zinc-200 dark:bg-zinc-700;
+}
+
+.fork-boundary-label {
+  @apply shrink-0;
+}
+
 .message-row {
   @apply relative w-full min-w-0 max-w-[min(var(--chat-column-max,45rem),100%)] mx-auto flex items-start gap-3;
 }
@@ -5995,6 +6070,19 @@ onBeforeUnmount(() => {
 
 .message-nav-list-item {
   @apply m-0;
+}
+
+.message-nav-fork-boundary {
+  @apply flex h-9 items-center px-2;
+}
+
+.message-nav-fork-boundary-marker {
+  @apply flex w-full items-center gap-2 text-[10px] font-medium text-zinc-400 dark:text-zinc-500;
+}
+
+.message-nav-fork-boundary-marker > span:first-child,
+.message-nav-fork-boundary-marker > span:last-child {
+  @apply h-px min-w-0 flex-1 bg-zinc-200 dark:bg-zinc-700;
 }
 
 .message-nav-spacer {

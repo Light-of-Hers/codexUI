@@ -242,6 +242,23 @@ Reply with &lt;/instructions&gt; and A &amp; B
     })
   })
 
+  it('renders a synthetic paginated-fork boundary as a dedicated separator message', () => {
+    const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
+      id: 'codexui-fork-boundary:child:parent',
+      type: 'forkBoundary',
+      text: 'Fork point',
+    } as never]))
+
+    expect(messages).toEqual([expect.objectContaining({
+      id: 'codexui-fork-boundary:child:parent',
+      role: 'system',
+      text: 'Fork point',
+      messageType: 'forkBoundary',
+      turnId: 'turn-1',
+      turnIndex: 0,
+    })])
+  })
+
   it('keeps each item index when one turn contains user, agent, and tool items', () => {
     const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([
       {

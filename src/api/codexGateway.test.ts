@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { clearThreadGoal, forkThread, getAvailableModelIds, getCurrentModelConfig, getThreadGoal, getThreadQueueState, listDirectoryComposioConnectors, resumeThread, searchComposerFiles, searchFileLinkPaths, searchThreadMessages, setThreadGoal, setThreadQueueState, startThread, startThreadTurn, steerThreadTurn } from './codexGateway'
+import { clearThreadGoal, forkThread, getAvailableModelIds, getCurrentModelConfig, getThreadGoal, getThreadQueueState, getThreadUserMessageIndex, listDirectoryComposioConnectors, resumeThread, searchComposerFiles, searchFileLinkPaths, searchThreadMessages, setThreadGoal, setThreadQueueState, startThread, startThreadTurn, steerThreadTurn } from './codexGateway'
 
 function mockRpcFetch(): { requests: Array<{ method: string, params: Record<string, unknown> }> } {
   const requests: Array<{ method: string, params: Record<string, unknown> }> = []
@@ -690,6 +690,43 @@ describe('searchFileLinkPaths', () => {
         root: '/tmp/project',
         kind: 'file',
         isSymlink: false,
+      },
+    ])
+  })
+})
+
+describe('getThreadUserMessageIndex', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('keeps fork boundary entries with ordinal zero', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      entries: [
+        { turnId: 'turn-parent', ordinal: 1, preview: 'Parent prompt', title: 'Parent prompt' },
+        {
+          turnId: 'codexui-fork-boundary:child:parent',
+          ordinal: 0,
+          preview: 'Fork point',
+          title: 'Fork point',
+          kind: 'forkBoundary',
+          sourceThreadId: 'parent',
+        },
+      ],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })))
+
+    await expect(getThreadUserMessageIndex('child')).resolves.toEqual([
+      { turnId: 'turn-parent', ordinal: 1, preview: 'Parent prompt', title: 'Parent prompt', kind: undefined, sourceThreadId: undefined },
+      {
+        turnId: 'codexui-fork-boundary:child:parent',
+        ordinal: 0,
+        preview: 'Fork point',
+        title: 'Fork point',
+        kind: 'forkBoundary',
+        sourceThreadId: 'parent',
       },
     ])
   })
