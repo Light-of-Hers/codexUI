@@ -1095,6 +1095,7 @@ import {
   type UserMessageNavigationItem,
 } from './threadMessageNavigation'
 import { observeMermaidTheme, renderMermaidDiagrams } from './mermaidRenderer'
+import { needsRichMarkdownRenderer } from './markdownLoadPolicy'
 
 import IconTablerArrowUp from '../icons/IconTablerArrowUp.vue'
 import IconTablerChevronDown from '../icons/IconTablerChevronDown.vue'
@@ -1105,7 +1106,6 @@ import IconTablerGitFork from '../icons/IconTablerGitFork.vue'
 import IconTablerSearch from '../icons/IconTablerSearch.vue'
 import IconTablerX from '../icons/IconTablerX.vue'
 
-type HighlightJsModule = (typeof import('highlight.js'))['default']
 type MarkdownRendererModule = typeof import('./markdownRenderer')
 
 const ThreadPendingRequestPanel = defineAsyncComponent(() => import('./ThreadPendingRequestPanel.vue'))
@@ -1900,13 +1900,11 @@ let searchHighlightResetTimer: ReturnType<typeof setTimeout> | null = null
 let highlightedMessageResetTimer: ReturnType<typeof setTimeout> | null = null
 let conversationScrollPromise: Promise<void> | null = null
 const trackedPendingImages = new WeakSet<HTMLImageElement>()
-const highlightJsModule = ref<HighlightJsModule | null>(null)
 const highlightCacheVersion = ref(0)
 const markdownRendererVersion = ref(0)
 const markdownImageFailureVersion = ref(0)
 const agentAvatarSrc = '/icons/agent-avatar.png'
 const userAvatarSrc = '/icons/user-avatar.png'
-let highlightJsLoader: Promise<void> | null = null
 let markdownRendererModule: MarkdownRendererModule | null = null
 let markdownRendererLoader: Promise<MarkdownRendererModule> | null = null
 let markdownRendererLoadScheduled = false
@@ -1996,9 +1994,6 @@ function setRenderWindow(start: number, end: number): void {
 
   const nextStart = Math.max(0, Math.min(Math.floor(start), messageCount - 1))
   const nextEnd = Math.max(nextStart + 1, Math.min(Math.floor(end), messageCount))
-  if (typeof window !== 'undefined' && (nextStart !== renderWindowStart.value || nextEnd !== renderWindowEnd.value)) {
-    console.warn('[DEBUG:switch-lag] setRenderWindow', { from: [renderWindowStart.value, renderWindowEnd.value], to: [nextStart, nextEnd], messageCount, autoFollow: autoFollowOutput.value, latestTurnStart: latestTurnStartIndex.value })
-  }
   renderWindowStart.value = nextStart
   renderWindowEnd.value = nextEnd
 }
@@ -2048,23 +2043,6 @@ function clampRenderWindowToMessages(): void {
 const showJumpToLatestButton = computed(
   () => !autoFollowOutput.value && (props.messages.length > 0 || props.pendingRequests.length > 0 || Boolean(props.liveOverlay)),
 )
-
-function ensureHighlightJsLoaded(): Promise<void> {
-  if (highlightJsModule.value) return Promise.resolve()
-  if (!highlightJsLoader) {
-    highlightJsLoader = import('highlight.js')
-      .then((module) => {
-        highlightJsModule.value = module.default
-        highlightHtmlCache.clear()
-        markdownHtmlCache.clear()
-        highlightCacheVersion.value += 1
-      })
-      .finally(() => {
-        highlightJsLoader = null
-      })
-  }
-  return highlightJsLoader
-}
 
 function loadMarkdownRendererModule(): Promise<MarkdownRendererModule> {
   if (markdownRendererModule) return Promise.resolve(markdownRendererModule)
@@ -4610,22 +4588,7 @@ function normalizeCodeLanguage(language: string): string {
 }
 
 function renderHighlightedCodeAsHtmlUncached(language: string, value: string): string {
-  const normalizedLanguage = normalizeCodeLanguage(language)
-  if (!normalizedLanguage) return escapeHtml(value)
-  const highlighter = highlightJsModule.value
-  if (!highlighter) return escapeHtml(value)
-
-  try {
-    if (highlighter.getLanguage(normalizedLanguage)) {
-      return highlighter.highlight(value, {
-        language: normalizedLanguage,
-        ignoreIllegals: true,
-      }).value
-    }
-  } catch {
-    // Fall back to plain escaped code when highlighting fails.
-  }
-
+  void language
   return escapeHtml(value)
 }
 
@@ -5723,19 +5686,10 @@ watch(
 )
 
 watch(
-  () => props.messages.length,
-  (messageCount) => {
-    if (messageCount === 0) return
+  () => visibleMessages.value.some((message) => needsRichMarkdownRenderer(message.text)),
+  (needsRichRenderer) => {
+    if (!needsRichRenderer) return
     scheduleMarkdownRendererLoad()
-  },
-  { immediate: true },
-)
-
-watch(
-  () => visibleMessages.value.some((message) => message.text.includes('```')),
-  (hasCodeBlocks) => {
-    if (!hasCodeBlocks || highlightJsModule.value) return
-    void ensureHighlightJsLoaded()
   },
   { immediate: true },
 )
@@ -5803,9 +5757,6 @@ function onConversationScroll(): void {
   const container = conversationListRef.value
   if (!container || props.isLoading) return
   const atBottom = isAtBottom(container)
-  if (typeof window !== 'undefined') {
-    console.warn('[DEBUG:switch-lag] onScroll', { scrollTop: Math.round(container.scrollTop), atBottom, isRenderingLatest: isRenderingLatest.value, autoFollowBefore: autoFollowOutput.value, hasMoreAbove: hasMoreAbove.value, hasMoreBelow: hasMoreBelow.value, window: [renderWindowStart.value, renderWindowEnd.value], messageCount: props.messages.length })
-  }
   // While the agent streams, props.messages grows every frame but the render
   // window is reconciled asynchronously, so isRenderingLatest can be
   // transiently false even when the user is parked at the bottom. Only turn

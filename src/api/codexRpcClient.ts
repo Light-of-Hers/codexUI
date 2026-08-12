@@ -174,13 +174,9 @@ export function subscribeRpcNotifications(onNotification: (value: RpcNotificatio
   const scheduleReconnect = (attach: () => void, attempt: number) => {
     if (closed || reconnectTimer !== null) return
     const delayMs = Math.min(1000 * (2 ** attempt), 10000)
-    console.warn('[DEBUG:subscribeRpcNotifications] scheduling reconnect attempt=%d delayMs=%d', attempt, delayMs)
-    fetch('/codex-api/debug-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tag: 'sse-reconnect-scheduled', message: 'subscribeRpcNotifications', extra: { attempt, delayMs } }) }).catch(() => {})
     reconnectTimer = window.setTimeout(() => {
       reconnectTimer = null
       if (closed) return
-      console.warn('[DEBUG:subscribeRpcNotifications] reconnect attempt %d — attaching', attempt)
-      fetch('/codex-api/debug-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tag: 'sse-reconnect-attach', message: 'subscribeRpcNotifications', extra: { attempt } }) }).catch(() => {})
       attach()
     }, delayMs)
   }
@@ -218,8 +214,6 @@ export function subscribeRpcNotifications(onNotification: (value: RpcNotificatio
     source.onerror = () => {
       if (closed || isConnectionClosed) return
       if (source.readyState === EventSource.CLOSED) {
-        console.warn('[DEBUG:subscribeRpcNotifications] SSE closed — reconnect attempt=%d readyState=%d', attempt, source.readyState)
-        fetch('/codex-api/debug-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tag: 'sse-closed', message: 'subscribeRpcNotifications', extra: { attempt, readyState: source.readyState } }) }).catch(() => {})
         isConnectionClosed = true
         source.close()
         scheduleReconnect(() => attachSse(attempt + 1), attempt)
@@ -280,13 +274,9 @@ export function subscribeRpcNotifications(onNotification: (value: RpcNotificatio
         return
       }
       if (!didOpen) {
-        console.warn('[DEBUG:subscribeRpcNotifications] WS never opened — falling back to SSE')
-        fetch('/codex-api/debug-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tag: 'ws-never-opened', message: 'subscribeRpcNotifications', extra: {} }) }).catch(() => {})
         attachSse()
         return
       }
-      console.warn('[DEBUG:subscribeRpcNotifications] WS closed — reconnect attempt=%d', attempt)
-      fetch('/codex-api/debug-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tag: 'ws-closed', message: 'subscribeRpcNotifications', extra: { attempt } }) }).catch(() => {})
       scheduleReconnect(() => attachWebSocket(attempt + 1), attempt)
     }
 

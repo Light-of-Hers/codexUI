@@ -1976,6 +1976,12 @@ export function useDesktopState() {
   let shouldAutoScrollOnNextAgentEvent = false
   const pendingTurnStartsById = new Map<string, TurnStartedInfo>()
   const fallbackRetryInFlightThreadIds = new Set<string>()
+  type PendingAgentDelta = { threadId: string; messageId: string; turnId: string; chunks: string[] }
+  type PendingCommandDelta = { threadId: string; itemId: string; chunks: string[] }
+  const pendingAgentDeltas = new Map<string, PendingAgentDelta>()
+  const pendingCommandDeltas = new Map<string, PendingCommandDelta>()
+  const pendingReasoningDeltas = new Map<string, string[]>()
+  let liveDeltaFrame = 0
   let preserveUnlistedSelectedThread = false
 
 
@@ -2086,17 +2092,6 @@ export function useDesktopState() {
       combined = [...persisted, ...liveMessages]
     }
 
-    if (typeof window !== 'undefined' && combined.length > 0) {
-      console.warn('[DEBUG:switch-lag] messages order', {
-        threadId,
-        length: combined.length,
-        persistedLength: persisted.length,
-        liveLength: liveMessages.length,
-        optimisticId: optimistic?.id ?? '',
-        first5: combined.slice(0, 5).map((m) => ({ role: m.role, turnIndex: m.turnIndex, type: m.messageType, id: m.id })),
-        last2: combined.slice(-2).map((m) => ({ role: m.role, turnIndex: m.turnIndex, type: m.messageType, id: m.id })),
-      })
-    }
     const summary = turnSummaryByThreadId.value[threadId]
     if (!summary) return combined
     return insertTurnSummaryMessage(combined, summary)
@@ -2436,9 +2431,6 @@ export function useDesktopState() {
   function setSelectedThreadId(nextThreadId: string): void {
     const sameThread = selectedThreadId.value === nextThreadId
     if (!sameThread) {
-      if (typeof window !== 'undefined') {
-        console.warn('[DEBUG:switch-lag] setSelectedThreadId', { from: selectedThreadId.value, to: nextThreadId })
-      }
       selectedThreadId.value = nextThreadId
       saveSelectedThreadId(nextThreadId)
     }
@@ -2576,7 +2568,6 @@ export function useDesktopState() {
   }
 
   function syncThreadProvidersFromGroups(groups: UiProjectGroup[]): void {
-    const syncEntries = Object.entries(selectedProviderByContext.value).filter(([, v]) => v && v !== 'codex')
     let nextProviderMap = selectedProviderByContext.value
     let changed = false
     const selectedContextId = toProviderSelectionContextId(selectedThreadId.value)
@@ -2615,11 +2606,6 @@ export function useDesktopState() {
 
     if (!changed) return
 
-    const afterEntries = Object.entries(nextProviderMap).filter(([, v]) => v && v !== 'codex')
-    const removed = syncEntries.filter(([k]) => !afterEntries.some(([k2]) => k2 === k)).map(([k, v]) => k + '=' + v)
-    if (removed.length > 0) {
-      console.warn('[DEBUG:syncThreadProvidersFromGroups] cleaned user-set providers: %s', removed.join(', '))
-    }
     selectedProviderByContext.value = nextProviderMap
     selectedProvider.value = readSelectedProvider(nextProviderMap, selectedThreadId.value)
     saveSelectedProviderMap(nextProviderMap)
@@ -3998,6 +3984,96 @@ export function useDesktopState() {
     setLiveAgentMessagesForThread(threadId, next)
   }
 
+  function pendingLiveDeltaKey(threadId: string, itemId: string): string {
+    return `${threadId}\u0000${itemId}`
+  }
+
+  function flushPendingLiveDeltas(): void {
+    if (liveDeltaFrame && typeof window !== 'undefined' && typeof window.cancelAnimationFrame === 'function') {
+      window.cancelAnimationFrame(liveDeltaFrame)
+    }
+    liveDeltaFrame = 0
+
+    for (const pending of pendingAgentDeltas.values()) {
+      const existing = (liveAgentMessagesByThreadId.value[pending.threadId] ?? [])
+        .find((message) => message.id === pending.messageId)
+      const nextText = `${existing?.text ?? ''}${pending.chunks.join('')}`
+      if (isCursorToolCallText(nextText)) {
+        setLiveAgentMessagesForThread(
+          pending.threadId,
+          removeLiveAgentMessagesByIds(
+            liveAgentMessagesByThreadId.value[pending.threadId] ?? [],
+            new Set([pending.messageId]),
+          ),
+        )
+      } else {
+        upsertLiveAgentMessage(pending.threadId, {
+          id: pending.messageId,
+          role: 'assistant',
+          text: nextText,
+          messageType: 'agentMessage.live',
+          turnId: pending.turnId || undefined,
+        })
+      }
+    }
+    pendingAgentDeltas.clear()
+
+    for (const [threadId, chunks] of pendingReasoningDeltas) {
+      const previous = liveReasoningTextByThreadId.value[threadId] ?? ''
+      setLiveReasoningText(threadId, `${previous}${chunks.join('')}`)
+    }
+    pendingReasoningDeltas.clear()
+
+    for (const pending of pendingCommandDeltas.values()) {
+      const current = (liveCommandsByThreadId.value[pending.threadId] ?? [])
+        .find((message) => message.id === pending.itemId)
+      if (!current?.commandExecution) continue
+      upsertLiveCommand(pending.threadId, {
+        ...current,
+        commandExecution: {
+          ...current.commandExecution,
+          aggregatedOutput: `${current.commandExecution.aggregatedOutput}${pending.chunks.join('')}`,
+        },
+      })
+    }
+    pendingCommandDeltas.clear()
+  }
+
+  function scheduleLiveDeltaFlush(): void {
+    if (liveDeltaFrame) return
+    if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+      flushPendingLiveDeltas()
+      return
+    }
+    liveDeltaFrame = window.requestAnimationFrame(() => {
+      liveDeltaFrame = 0
+      flushPendingLiveDeltas()
+    })
+  }
+
+  function bufferAgentDelta(threadId: string, delta: { messageId: string; delta: string; turnId: string }): void {
+    const key = pendingLiveDeltaKey(threadId, delta.messageId)
+    const pending = pendingAgentDeltas.get(key)
+    if (pending) pending.chunks.push(delta.delta)
+    else pendingAgentDeltas.set(key, { threadId, messageId: delta.messageId, turnId: delta.turnId, chunks: [delta.delta] })
+    scheduleLiveDeltaFlush()
+  }
+
+  function bufferReasoningDelta(threadId: string, delta: string): void {
+    const chunks = pendingReasoningDeltas.get(threadId)
+    if (chunks) chunks.push(delta)
+    else pendingReasoningDeltas.set(threadId, [delta])
+    scheduleLiveDeltaFlush()
+  }
+
+  function bufferCommandDelta(threadId: string, itemId: string, delta: string): void {
+    const key = pendingLiveDeltaKey(threadId, itemId)
+    const pending = pendingCommandDeltas.get(key)
+    if (pending) pending.chunks.push(delta)
+    else pendingCommandDeltas.set(key, { threadId, itemId, chunks: [delta] })
+    scheduleLiveDeltaFlush()
+  }
+
   function upsertLiveFileChangeMessage(threadId: string, nextMessage: UiMessage): void {
     const previous = liveFileChangeMessagesByThreadId.value[threadId] ?? []
     const next = upsertMessage(previous, nextMessage)
@@ -4024,12 +4100,6 @@ export function useDesktopState() {
       ...liveReasoningTextByThreadId.value,
       [threadId]: normalized,
     }
-  }
-
-  function appendLiveReasoningText(threadId: string, delta: string): void {
-    if (!threadId) return
-    const previous = liveReasoningTextByThreadId.value[threadId] ?? ''
-    setLiveReasoningText(threadId, `${previous}${delta}`)
   }
 
   function clearLiveReasoningForThread(threadId: string): void {
@@ -5449,6 +5519,14 @@ export function useDesktopState() {
     if (handleServerRequestNotification(notification)) {
       return
     }
+    if (
+      notification.method !== 'item/agentMessage/delta'
+      && notification.method !== 'item/reasoning/summaryTextDelta'
+      && notification.method !== 'item/reasoning/textDelta'
+      && notification.method !== 'item/commandExecution/outputDelta'
+    ) {
+      flushPendingLiveDeltas()
+    }
 
     if (notification.method === 'account/rateLimits/updated') {
       scheduleRateLimitRefresh()
@@ -5696,24 +5774,7 @@ export function useDesktopState() {
 
     const liveAgentMessageDelta = readAgentMessageDelta(notification)
     if (liveAgentMessageDelta) {
-      const existing = (liveAgentMessagesByThreadId.value[notificationThreadId] ?? [])
-        .find((message) => message.id === liveAgentMessageDelta.messageId)
-      const nextText = `${existing?.text ?? ''}${liveAgentMessageDelta.delta}`
-      if (isCursorToolCallText(nextText)) {
-        const next = removeLiveAgentMessagesByIds(
-          liveAgentMessagesByThreadId.value[notificationThreadId] ?? [],
-          new Set([liveAgentMessageDelta.messageId]),
-        )
-        setLiveAgentMessagesForThread(notificationThreadId, next)
-      } else {
-        upsertLiveAgentMessage(notificationThreadId, {
-          id: liveAgentMessageDelta.messageId,
-          role: 'assistant',
-          text: nextText,
-          messageType: 'agentMessage.live',
-          turnId: liveAgentMessageDelta.turnId || undefined,
-        })
-      }
+      bufferAgentDelta(notificationThreadId, liveAgentMessageDelta)
     }
 
     const completedAgentMessageResult = readAgentMessageCompleted(notification)
@@ -5753,7 +5814,7 @@ export function useDesktopState() {
 
     const liveReasoningDelta = readReasoningDelta(notification)
     if (liveReasoningDelta) {
-      appendLiveReasoningText(notificationThreadId, liveReasoningDelta.delta)
+      bufferReasoningDelta(notificationThreadId, liveReasoningDelta.delta)
     }
 
     const sectionBreakMessageId = readReasoningSectionBreakMessageId(notification)
@@ -5779,13 +5840,7 @@ export function useDesktopState() {
 
     const commandDelta = readCommandOutputDelta(notification)
     if (commandDelta) {
-      const current = (liveCommandsByThreadId.value[notificationThreadId] ?? []).find((m) => m.id === commandDelta.itemId)
-      if (current?.commandExecution) {
-        upsertLiveCommand(notificationThreadId, {
-          ...current,
-          commandExecution: { ...current.commandExecution, aggregatedOutput: `${current.commandExecution.aggregatedOutput}${commandDelta.delta}` },
-        })
-      }
+      bufferCommandDelta(notificationThreadId, commandDelta.itemId, commandDelta.delta)
     }
 
     const commandCompleted = readCommandExecutionCompleted(notification)
@@ -6375,9 +6430,6 @@ export function useDesktopState() {
 
     const existingLoad = loadMessagePromiseByThreadId.get(threadId)
     if (existingLoad) {
-      if (typeof window !== 'undefined') {
-        console.warn('[DEBUG:switch-lag] loadMessages awaiting existingLoad', { threadId, preferCached: options.preferCached === true, silent: options.silent === true, force: options.force === true })
-      }
       await existingLoad
       return
     }
@@ -6770,35 +6822,6 @@ export function useDesktopState() {
   async function selectThread(threadId: string) {
     setSelectedThreadId(threadId)
 
-    // [DEBUG:switch-lag] Snapshot what we already have in memory for this
-    // thread at switch time so we can tell whether the latest reply is
-    // available from live state (instant) or has to wait for a thread/read
-    // round-trip. Remove once the switch-latency regression is resolved.
-    if (threadId && typeof window !== 'undefined') {
-      const liveAgent = liveAgentMessagesByThreadId.value[threadId] ?? []
-      const liveCommands = liveCommandsByThreadId.value[threadId] ?? []
-      const persisted = persistedMessagesByThreadId.value[threadId] ?? []
-      const version = currentThreadVersion(threadId)
-      const loadedVersion = loadedVersionByThreadId.value[threadId] ?? ''
-      const inProgress = inProgressById.value[threadId] === true
-      const unread = eventUnreadByThreadId.value[threadId] === true
-      const alreadyLoaded = loadedMessagesByThreadId.value[threadId] === true
-      console.warn('[DEBUG:switch-lag]', {
-        threadId,
-        alreadyLoaded,
-        inProgress,
-        unread,
-        persistedCount: persisted.length,
-        liveAgentCount: liveAgent.length,
-        liveAgentLatestId: liveAgent.at(-1)?.id ?? '',
-        liveAgentLatestType: liveAgent.at(-1)?.messageType ?? '',
-        liveCommandsCount: liveCommands.length,
-        versionMatches: version.length === 0 || loadedVersion === version,
-        version,
-        loadedVersion,
-      })
-    }
-
     // Fire the message + queue fetches in the background so quickly
     // clicking another thread is not blocked on the previous thread's
     // pending network work. Per-thread loading/caching maps guarantee that
@@ -7052,14 +7075,10 @@ export function useDesktopState() {
     // notification hasn't arrived yet or the event-sync debounce hasn't run.
     const recheckedTurnId = await resolveActiveTurnIdForThread(threadId)
     if (recheckedTurnId && !isInProgress) {
-      console.warn('[DEBUG:sendMessageToSelectedThread] stale inProgress=false, CLI says active turn=%s — switching to steer', recheckedTurnId)
-      fetch('/codex-api/debug-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tag: 'send-stale-inprogress-fixup', message: 'CLI says turn active but inProgress was false', extra: { threadId, turnId: recheckedTurnId, mode } }) }).catch(() => {})
       isInProgress = true
     }
 
     if (isInProgress) {
-      console.warn('[DEBUG:sendMessageToSelectedThread] steer during in-progress — threadId=%s mode=%s', threadId, mode)
-      fetch('/codex-api/debug-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tag: 'send-steer-inprogress', message: 'steer during in-progress', extra: { threadId, mode } }) }).catch(() => {})
       shouldAutoScrollOnNextAgentEvent = true
       error.value = ''
       setTurnErrorForThread(threadId, null)
@@ -7555,17 +7574,6 @@ export function useDesktopState() {
     fileAttachments: FileAttachment[] = [],
     collaborationModeOverride?: CollaborationModeKind,
   ): Promise<void> {
-    console.warn('[DEBUG:sendMessageToSelectedThread] steer found no active turn — starting a new turn instead; threadId=%s', threadId)
-    fetch('/codex-api/debug-log', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        tag: 'send-steer-no-active-fallback',
-        message: 'turn/steer found no active turn; starting a new turn',
-        extra: { threadId },
-      }),
-    }).catch(() => {})
-
     clearActiveTurnForThread(threadId)
     setTurnSummaryForThread(threadId, null)
     setTurnErrorForThread(threadId, null)
@@ -7642,12 +7650,9 @@ export function useDesktopState() {
 
   async function interruptSelectedThreadTurn(): Promise<void> {
     const threadId = selectedThreadId.value
-    console.warn('[DEBUG:interruptSelectedThreadTurn] called — threadId=%s timestamp=%s stack=%s', threadId, new Date().toISOString(), new Error().stack?.split('\n').slice(2, 6).join('\n') || '(no stack)')
-    const stackSummary = new Error().stack?.split('\n').slice(2, 5).join('\n') || '(no stack)'
-    fetch('/codex-api/debug-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tag: 'interrupt-called', message: 'interruptSelectedThreadTurn', extra: { threadId, stack: stackSummary } }) }).catch(() => {})
     if (!threadId) return
-    if (inProgressById.value[threadId] !== true) { console.warn('[DEBUG:interruptSelectedThreadTurn] skipped — thread not in progress'); return }
-    if (interruptBlockedUntilPersistedByThreadId.value[threadId] === true) { console.warn('[DEBUG:interruptSelectedThreadTurn] skipped — interrupt blocked (persistence gate)'); return }
+    if (inProgressById.value[threadId] !== true) return
+    if (interruptBlockedUntilPersistedByThreadId.value[threadId] === true) return
 
     // Keep the UI showing "running" until codex confirms the turn actually
     // stopped. Clearing inProgress here would make the sidebar report
@@ -7687,16 +7692,7 @@ export function useDesktopState() {
               settleStoppedTurnUiState(threadId)
             } else {
               const message = rpcError instanceof Error ? rpcError.message : 'Failed to interrupt active turn'
-              console.warn('[DEBUG:interruptSelectedThreadTurn] soft interrupt RPC failed - threadId=%s error=%s', threadId, message)
-              fetch('/codex-api/debug-log', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  tag: 'interrupt-soft-rpc-failed',
-                  message,
-                  extra: { threadId, turnId },
-                }),
-              }).catch(() => {})
+              error.value = message
             }
           }
         } else {
@@ -8088,6 +8084,13 @@ export function useDesktopState() {
       }
     }
     delayedTurnSyncTimerByThreadId.clear()
+    if (liveDeltaFrame && typeof window !== 'undefined' && typeof window.cancelAnimationFrame === 'function') {
+      window.cancelAnimationFrame(liveDeltaFrame)
+    }
+    liveDeltaFrame = 0
+    pendingAgentDeltas.clear()
+    pendingCommandDeltas.clear()
+    pendingReasoningDeltas.clear()
     activeReasoningItemId = ''
     shouldAutoScrollOnNextAgentEvent = false
     persistedMessagesByThreadId.value = {}

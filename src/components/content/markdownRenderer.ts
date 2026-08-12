@@ -7,7 +7,7 @@ import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import remarkParse from 'remark-parse'
 import remarkRehype from 'remark-rehype'
-import { all as lowlightAll } from 'lowlight'
+import { common as lowlightCommon } from 'lowlight'
 import { unified } from 'unified'
 import { HIGHLIGHT_LANGUAGE_ALIASES } from '../../utils/codeLanguage.js'
 
@@ -188,7 +188,7 @@ export function createMarkdownProcessor(context: MarkdownRenderContext) {
     .use(rehypeKatex)
     .use(rehypeHighlight, {
       aliases: HIGHLIGHT_LANGUAGE_ALIASES,
-      languages: lowlightAll,
+      languages: lowlightCommon,
       detect: false,
     })
     .use(() => (tree) => {

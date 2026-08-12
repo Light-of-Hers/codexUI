@@ -2924,6 +2924,35 @@ describe('live turn rendering', () => {
     ])
   })
 
+  it('publishes repeated streaming deltas once per animation frame', async () => {
+    const { state, notify } = await createLiveStateHarness()
+    let frameCallback!: FrameRequestCallback
+    const testWindow = window as unknown as {
+      requestAnimationFrame: (callback: FrameRequestCallback) => number
+      cancelAnimationFrame: (handle: number) => void
+    }
+    testWindow.requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
+      frameCallback = callback
+      return 1
+    })
+    testWindow.cancelAnimationFrame = vi.fn()
+
+    notify(notification('item/agentMessage/delta', {
+      threadId: 'thread-a', turnId: 'turn-1', itemId: 'agent-1', delta: 'one ',
+    }))
+    notify(notification('item/agentMessage/delta', {
+      threadId: 'thread-a', turnId: 'turn-1', itemId: 'agent-1', delta: 'two ',
+    }))
+    notify(notification('item/agentMessage/delta', {
+      threadId: 'thread-a', turnId: 'turn-1', itemId: 'agent-1', delta: 'three',
+    }))
+
+    expect(testWindow.requestAnimationFrame).toHaveBeenCalledTimes(1)
+    expect(state.messages.value).toEqual([])
+    frameCallback(0)
+    expect(state.messages.value.map((message) => message.text)).toEqual(['one two three'])
+  })
+
   it('reorders an incremental persisted snapshot by item position without a page refresh', async () => {
     installTestWindow()
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true })) as never)

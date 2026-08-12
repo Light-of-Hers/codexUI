@@ -8229,3 +8229,31 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - Archive the disposable thread after verification. Failed archive attempts intentionally preserve their sidecar directory for a safe retry.
+
+### Performance: Frame-batched streaming and content-gated Markdown
+
+#### Prerequisites
+- App server is running from this repository with one thread that can stream a long response and one thread containing code fences, math, links, and annotations.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Stream a long assistant response with reasoning and command output. Confirm the first delta appears immediately and subsequent deltas remain smooth.
+2. Complete items and the enclosing turn while deltas are pending. Confirm all buffered text/output appears before terminal cards and statuses settle.
+3. Open a thread containing only prose, lists, bold, and inline code. Confirm the rich Markdown chunk is not requested.
+4. Open messages containing fenced code, math, Markdown links/images, highlights, or annotation commands. Confirm the rich renderer loads once and output remains formatted.
+5. Inspect fenced JavaScript, TypeScript, shell, JSON, Python, CSS, and XML in light and dark themes. Confirm common-language highlighting and copy controls remain readable.
+6. Scroll during a stream and switch between threads. Confirm no switch/scroll debug messages or interrupt stack construction appears in the browser console.
+7. Run `pnpm exec vitest run src/composables/useDesktopState.test.ts src/components/content/markdownRenderer.test.ts src/components/content/markdownLoadPolicy.test.ts`, `pnpm exec vue-tsc --noEmit`, and `pnpm run build:frontend`.
+
+#### Expected Results
+- Agent, reasoning, and command delta chunks are keyed by thread/item and published at most once per animation frame; non-delta terminal events flush pending chunks first.
+- Ordinary messages stay on the lightweight renderer. Rich syntax loads one Markdown renderer with a common language grammar set instead of a second full Highlight.js bundle.
+- Production interaction paths no longer build large debug objects, stack traces, or console output for each render-window/scroll/state update.
+
+#### Performance Audit
+- Focused tests pass 147 tests; type checking and the production frontend build pass.
+- The production entry chunk falls from about 948 kB to 652 kB, the rich Markdown chunk falls from about 1,335 kB to 573 kB, and the separate 657 kB full Highlight.js chunk is removed.
+- Streaming publishes one reactive update per animation frame instead of one array/object copy per delta.
+
+#### Rollback/Cleanup
+- No persistent data is created. Revert the batching and load-policy changes to restore eager per-delta publication and full-language loading.

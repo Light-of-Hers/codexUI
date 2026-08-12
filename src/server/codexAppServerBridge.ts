@@ -8293,7 +8293,6 @@ class AppServerProcess {
         return
       }
 
-      console.error('[DEBUG:AppServerProcess] codex app-server exited — stopping=%s pid=%d', this.stopping, proc.pid ?? -1)
       writeDebugLog('app-server-exit', 'codex app-server exited', {
         stopping: this.stopping,
         pid: proc.pid ?? -1,
@@ -8348,7 +8347,6 @@ class AppServerProcess {
 
     if (typeof message.method === 'string' && typeof message.id !== 'number') {
       if (message.method.startsWith('turn/') || message.method.startsWith('thread/') || message.method === 'error') {
-        console.warn('[DEBUG:AppServerProcess] notification method=%s', message.method)
         writeDebugLog('app-server-notification', message.method, {
           threadId: this.extractThreadIdFromParams(message.params ?? null),
           params: message.method === 'error' ? message.params ?? null : undefined,
@@ -9283,7 +9281,6 @@ export class BackendQueueProcessor {
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      console.warn('[DEBUG:BackendQueueProcessor] interrupted-turn inspection failed — threadId=%s source=%s error=%s', normalizedThreadId, source, message)
       writeDebugLog('auto-continue-interrupted-turn-read-failed', 'Interrupted turn inspection failed', {
         threadId: normalizedThreadId,
         source,
@@ -9322,7 +9319,6 @@ export class BackendQueueProcessor {
 
     this.autoContinueInFlightThreadIds.add(normalizedThreadId)
     try {
-      console.warn('[DEBUG:BackendQueueProcessor] auto-continuing interrupted turn — threadId=%s turnId=%s source=%s', snapshot.threadId, snapshot.turnId, source)
       writeDebugLog('auto-continue-interrupted-turn', 'Auto-continuing interrupted turn', {
         threadId: snapshot.threadId,
         turnId: snapshot.turnId,
@@ -9388,7 +9384,6 @@ export class BackendQueueProcessor {
       return true
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      console.warn('[DEBUG:BackendQueueProcessor] auto-continue interrupted turn failed — threadId=%s turnId=%s error=%s', snapshot.threadId, snapshot.turnId, message)
       writeDebugLog('auto-continue-interrupted-turn-failed', 'Auto-continue interrupted turn failed', {
         threadId: snapshot.threadId,
         turnId: snapshot.turnId,
@@ -9416,7 +9411,6 @@ export class BackendQueueProcessor {
     this.cursorContextAutoCompactInFlightThreadIds.add(threadId)
     this.cursorContextAutoCompactCooldownUntilByThreadId.set(threadId, now + CURSOR_CONTEXT_AUTO_COMPACT_COOLDOWN_MS)
     try {
-      console.warn('[DEBUG:BackendQueueProcessor] auto-starting Cursor context compact — threadId=%s turnId=%s', threadId, turnId)
       writeDebugLog('cursor-context-auto-compact-start', 'Auto-starting Cursor context compact after context overflow', {
         threadId,
         turnId,
@@ -9425,7 +9419,6 @@ export class BackendQueueProcessor {
       return true
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      console.warn('[DEBUG:BackendQueueProcessor] Cursor context auto-compact failed — threadId=%s turnId=%s error=%s', threadId, turnId, message)
       writeDebugLog('cursor-context-auto-compact-failed', 'Cursor context auto-compact failed', {
         threadId,
         turnId,
