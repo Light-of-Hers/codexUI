@@ -84,6 +84,7 @@
             :is-thread-list-fully-loaded="isThreadListFullyLoaded"
             :search-query="sidebarSearchQuery"
             :search-matched-thread-ids="serverMatchedThreadIds"
+            :fork-tree-enabled="forkTreeEnabled"
             @select="onSelectThread"
             @archive="onArchiveThread" @start-new-thread="onStartNewThread" @rename-project="onRenameProject"
             @browse-thread-files="onBrowseThreadFiles"
@@ -240,6 +241,10 @@
               <button class="sidebar-settings-row" type="button" :title="SETTINGS_HELP.chatWidth" @click="cycleChatWidth">
                 <span class="sidebar-settings-label">{{ t('Chat width') }}</span>
                 <span class="sidebar-settings-value">{{ chatWidthLabel }}</span>
+              </button>
+              <button class="sidebar-settings-row" type="button" :title="SETTINGS_HELP.forkTree" @click="toggleForkTreeEnabled">
+                <span class="sidebar-settings-label">{{ t('Group forked sessions') }}</span>
+                <span class="sidebar-settings-toggle" :class="{ 'is-on': forkTreeEnabled }" />
               </button>
               <button class="sidebar-settings-row" type="button" :title="SETTINGS_HELP.dictationClickToToggle" @click="toggleDictationClickToToggle">
                 <span class="sidebar-settings-label">{{ t('Click to toggle dictation') }}</span>
@@ -1178,6 +1183,7 @@ const SETTINGS_HELP = {
   inProgressSendMode: t('If a turn is still running, choose whether a new prompt should steer the current turn or be queued.'),
   appearance: t('Switch between system theme, light mode, and dark mode.'),
   chatWidth: t('Choose how wide the conversation column and composer can grow on desktop screens.'),
+  forkTree: t('Keep forked sessions nested beneath the session they directly forked from.'),
   dictationClickToToggle: t('Use click-to-start and click-to-stop dictation instead of hold-to-talk.'),
   dictationAutoSend: t('Automatically send transcribed dictation when recording stops.'),
   dictationLanguage: t('Choose transcription language or keep auto-detect.'),
@@ -1541,6 +1547,7 @@ const DARK_MODE_KEY = 'codex-web-local.dark-mode.v1'
 const DICTATION_CLICK_TO_TOGGLE_KEY = 'codex-web-local.dictation-click-to-toggle.v1'
 const DICTATION_AUTO_SEND_KEY = 'codex-web-local.dictation-auto-send.v1'
 const DICTATION_LANGUAGE_KEY = 'codex-web-local.dictation-language.v1'
+const FORK_TREE_ENABLED_KEY = 'codex-web-local.fork-tree-enabled.v1'
 
 const CHAT_WIDTH_KEY = 'codex-web-local.chat-width.v1'
 const MOBILE_RESUME_RELOAD_MIN_HIDDEN_MS = 400
@@ -1550,6 +1557,7 @@ const darkMode = ref<'system' | 'light' | 'dark'>(loadDarkModePref())
 const chatWidth = ref<ChatWidthMode>(loadChatWidthPref())
 const dictationClickToToggle = ref(loadBoolPref(DICTATION_CLICK_TO_TOGGLE_KEY, false))
 const dictationAutoSend = ref(loadBoolPref(DICTATION_AUTO_SEND_KEY, true))
+const forkTreeEnabled = ref(loadBoolPref(FORK_TREE_ENABLED_KEY, true))
 const dictationLanguage = ref(loadDictationLanguagePref())
 const dictationLanguageOptions = computed(() => buildDictationLanguageOptions())
 const showFirstLaunchPluginsCard = ref(false)
@@ -4334,6 +4342,11 @@ function cycleChatWidth(): void {
   const idx = order.indexOf(chatWidth.value)
   chatWidth.value = order[(idx + 1) % order.length]
   window.localStorage.setItem(CHAT_WIDTH_KEY, chatWidth.value)
+}
+
+function toggleForkTreeEnabled(): void {
+  forkTreeEnabled.value = !forkTreeEnabled.value
+  window.localStorage.setItem(FORK_TREE_ENABLED_KEY, forkTreeEnabled.value ? '1' : '0')
 }
 
 function toggleDictationClickToToggle(): void {

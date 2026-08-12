@@ -65,6 +65,7 @@ function readDirectParentId(thread: UiThread, threadsById: Map<string, UiThread>
 export function buildForkTree(
   threads: UiThread[],
   collapsedThreadIds: ReadonlySet<string> = new Set(),
+  rootThreadIds?: readonly string[],
 ): ForkTreeNode[] {
   const threadsById = new Map(threads.map((thread) => [thread.id, thread]))
   const childrenByParentId = new Map<string, UiThread[]>()
@@ -81,7 +82,21 @@ export function buildForkTree(
     else childrenByParentId.set(parentId, [thread])
   }
 
-  roots.sort(compareForkRoots)
+  const requestedRootIds = rootThreadIds?.flatMap((threadId) => {
+    const normalizedThreadId = threadId.trim()
+    return normalizedThreadId && threadsById.has(normalizedThreadId) ? [normalizedThreadId] : []
+  })
+  const requestedRootIdSet = requestedRootIds ? new Set(requestedRootIds) : null
+  const selectedRoots = requestedRootIds
+    ? requestedRootIds.filter((threadId) => {
+        let parentId = readDirectParentId(threadsById.get(threadId)!, threadsById)
+        while (parentId) {
+          if (requestedRootIdSet?.has(parentId)) return false
+          parentId = readDirectParentId(threadsById.get(parentId)!, threadsById)
+        }
+        return true
+      })
+    : roots.sort(compareForkRoots).map((thread) => thread.id)
   for (const children of childrenByParentId.values()) {
     children.sort(compareForkChildren)
   }
@@ -94,6 +109,9 @@ export function buildForkTree(
     for (const child of children) visit(child, depth + 1)
   }
 
-  for (const root of roots) visit(root, 0)
+  for (const rootId of selectedRoots) {
+    const root = threadsById.get(rootId)
+    if (root) visit(root, 0)
+  }
   return nodes
 }

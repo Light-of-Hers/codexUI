@@ -7939,7 +7939,7 @@ Markdown files opened through the local editor expose a preview button that rend
 #### Rollback/Cleanup
 - Archive the disposable fork created for verification. No rollout rewriting or browser-storage cleanup is required.
 
-### Feature: Fork tree sidebar
+### Feature: Global fork grouping
 
 #### Prerequisites
 - App server is running from this repository and can access the local `CODEX_HOME` session store.
@@ -7947,25 +7947,29 @@ Markdown files opened through the local editor expose a preview button that rend
 - Light and dark themes are both available from Settings.
 
 #### Steps
-1. In light theme, open the sidebar's Projects overflow menu and select `Fork tree` under Organize.
+1. In light theme, open Settings and confirm `Group forked sessions` is on by default.
 2. Confirm the direct chain is displayed as parent, child, then grandchild, even when the grandchild inherits the parent's original fork context.
 3. Confirm sibling forks under the same parent appear in their source-conversation fork-point order, rather than in last-updated order.
 4. Collapse a parent with the chevron, refresh the page, and confirm its descendants remain hidden; expand it again and confirm the original sibling order returns.
-5. Fork the selected parent once more and confirm the optimistic child immediately appears beneath that parent before the background list refresh completes.
-6. Switch between `By project`, `Chronological list`, and `Fork tree`; confirm existing thread selection, menus, pinning, archive actions, and search still work.
-7. Switch to dark theme and repeat steps 1-6; confirm branch lines, chevrons, active rows, and hover states retain readable contrast.
-8. Run `pnpm exec vitest run src/components/sidebar/forkTree.test.ts src/api/normalizers/v2.test.ts src/server/threadListRecovery.test.ts` and `pnpm exec vue-tsc --noEmit --pretty false`.
+5. Pin a parent that has descendants. Confirm the Pinned section contains the parent and the complete descendant branch, while none of those rows remain in the ordinary thread tree.
+6. Pin a child in an already-pinned parent branch and confirm the child is not duplicated. Drag only a pinned root to reorder pinned branches.
+7. Fork the selected parent once more and confirm the optimistic child immediately appears beneath that parent before the background list refresh completes.
+8. Turn `Group forked sessions` off and confirm the existing project/chats and chronological organization modes return. Turn it on again and confirm the tree is restored.
+9. Switch to dark theme and repeat steps 1-8; confirm branch lines, chevrons, active rows, and hover states retain readable contrast.
+10. Run `pnpm exec vitest run src/components/sidebar/forkTree.test.ts src/api/normalizers/v2.test.ts src/server/threadListRecovery.test.ts` and `pnpm exec vue-tsc --noEmit --pretty false`.
 
 #### Expected Results
 - The visible fork topology uses each session's direct `forked_from_id`; an inherited `history_base` never re-parents a grandchild to an ancestor.
 - Siblings with known paginated fork points sort by ordinal and byte offset, then by creation time for deterministic ties. Legacy sessions without a stored fork point fall back to creation time.
-- Expand/collapse state and the selected organization mode persist locally across refreshes.
+- Global fork grouping is on by default and persists as a setting. When on, every loaded child is attached to its direct parent regardless of the old project/chats organization modes.
+- Pinning a thread carries its complete loaded descendant branch into Pinned. Nested pinned roots are deduplicated, and that branch is absent from the ordinary tree.
+- Expand/collapse state persists locally across refreshes.
 - Light and dark themes preserve normal sidebar controls and readable tree affordances.
 
 #### Performance Audit
 - `thread/list` receives lineage from the same first-line rollout metadata scan already used for paginated-fork recovery. The 30-second shared cache prevents page-by-page rescans and the decoration performs no per-row RPC.
-- Tree construction is in-memory over the already-loaded sidebar rows: one map build plus sibling sorting. It has cycle protection, so malformed metadata cannot cause recursive rendering or unbounded traversal.
+- Tree construction is in-memory over the already-loaded sidebar rows: one map build plus sibling sorting for the ordinary tree and one only when a pinned branch exists. It has cycle protection, so malformed metadata cannot cause recursive rendering or unbounded traversal.
 - No browser profiler or browser automation was run because this task did not explicitly request browser automation. The focused bridge, normalizer, and tree tests plus frontend build provide static coverage; an interactive follow-up should profile a sidebar containing a large fork family with `pnpm run profile:thread`.
 
 #### Rollback/Cleanup
-- Select `By project` or `Chronological list` from Organize to stop using the tree. For a disposable test hierarchy, archive the child threads; no rollout rewriting is required.
+- Turn off `Group forked sessions` in Settings to return to the prior project/chats and chronological organization modes. For a disposable test hierarchy, archive the child threads; no rollout rewriting is required.

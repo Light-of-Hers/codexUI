@@ -86,4 +86,20 @@ describe('buildForkTree', () => {
       ['parent', 0],
     ])
   })
+
+  it('expands pinned roots with their descendants once and preserves pin order', () => {
+    const nodes = buildForkTree([
+      thread('parent'),
+      thread('child', { forkedFromId: 'parent' }),
+      thread('grandchild', { forkedFromId: 'child' }),
+      thread('other-root'),
+    ], new Set(), ['other-root', 'parent', 'child'])
+
+    expect(nodes.map((node) => [node.thread.id, node.depth])).toEqual([
+      ['other-root', 0],
+      ['parent', 0],
+      ['child', 1],
+      ['grandchild', 2],
+    ])
+  })
 })

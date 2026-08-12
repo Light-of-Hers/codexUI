@@ -1,6 +1,6 @@
 <template>
   <section class="thread-tree-root" :class="{ 'chats-first': showChatsFirst }">
-    <section v-if="pinnedThreads.length > 0" class="pinned-section">
+    <section v-if="pinnedThreadNodes.length > 0" class="pinned-section">
       <SidebarMenuRow
         as="button"
         class="section-toggle-row"
@@ -15,39 +15,70 @@
         <span class="thread-tree-header">{{ t('Pinned') }}</span>
       </SidebarMenuRow>
 
-      <ul v-if="isPinnedSectionExpanded" class="thread-list">
+      <ul v-if="isPinnedSectionExpanded" class="thread-list" :class="{ 'fork-tree-list': forkTreeEnabled }">
         <li
-          v-for="thread in pinnedThreads"
-          :key="thread.id"
+          v-for="node in pinnedThreadNodes"
+          :key="node.thread.id"
           class="thread-row-item"
-          :data-menu-open="isThreadMenuOpen(thread.id) ? 'true' : 'false'"
-          :data-dragging="isDraggingPinnedThread(thread.id) ? 'true' : 'false'"
-          :data-drop-target="isPinnedDropTarget(thread.id) ? 'true' : 'false'"
-          @dragover.prevent="onPinnedDragOver(thread.id)"
-          @dragleave="onPinnedDragLeave(thread.id)"
-          @drop.prevent="onPinnedDrop(thread.id)"
+          :class="{ 'fork-tree-row-item fork-tree-row-item-child': forkTreeEnabled && node.depth > 0 }"
+          :style="forkTreeEnabled ? forkTreeNodeStyle(node.depth) : undefined"
+          :data-menu-open="isThreadMenuOpen(node.thread.id) ? 'true' : 'false'"
+          :data-dragging="isDraggingPinnedThread(node.thread.id) ? 'true' : 'false'"
+          :data-drop-target="isPinnedRoot(node.thread.id) && isPinnedDropTarget(node.thread.id) ? 'true' : 'false'"
+          @dragover.prevent="isPinnedRoot(node.thread.id) && onPinnedDragOver(node.thread.id)"
+          @dragleave="isPinnedRoot(node.thread.id) && onPinnedDragLeave(node.thread.id)"
+          @drop.prevent="isPinnedRoot(node.thread.id) && onPinnedDrop(node.thread.id)"
         >
           <SidebarMenuRow
             class="thread-row"
-            :data-active="thread.id === selectedThreadId"
-            :data-pinned="isPinned(thread.id)"
-            :data-menu-open="isThreadMenuOpen(thread.id) ? 'true' : 'false'"
-            :force-right-hover="isThreadMenuOpen(thread.id)"
-            @click="onSelect(thread.id)"
-            @mouseleave="onThreadRowLeave(thread.id, $event)"
-            @contextmenu="onThreadRowContextMenu($event, thread.id)"
+            :class="{ 'fork-tree-row': forkTreeEnabled }"
+            :data-active="node.thread.id === selectedThreadId"
+            :data-pinned="isPinned(node.thread.id)"
+            :data-menu-open="isThreadMenuOpen(node.thread.id) ? 'true' : 'false'"
+            :force-right-hover="isThreadMenuOpen(node.thread.id)"
+            @click="onSelect(node.thread.id)"
+            @mouseleave="onThreadRowLeave(node.thread.id, $event)"
+            @contextmenu="onThreadRowContextMenu($event, node.thread.id)"
           >
             <template #left>
-              <span class="thread-left-stack">
-                <span v-if="shouldShowThreadIndicator(thread)" class="thread-status-indicator" :data-state="getThreadState(thread)" />
+              <span v-if="forkTreeEnabled" class="fork-tree-left-stack">
+                <button
+                  v-if="node.hasChildren"
+                  class="fork-tree-toggle"
+                  type="button"
+                  :aria-expanded="isForkTreeExpanded(node.thread.id)"
+                  :aria-label="isForkTreeExpanded(node.thread.id) ? t('Collapse fork') : t('Expand fork')"
+                  :title="isForkTreeExpanded(node.thread.id) ? t('Collapse fork') : t('Expand fork')"
+                  @click.stop="toggleForkTreeNode(node.thread.id)"
+                >
+                  <IconTablerChevronDown v-if="isForkTreeExpanded(node.thread.id)" class="thread-icon" />
+                  <IconTablerChevronRight v-else class="thread-icon" />
+                </button>
+                <span v-else class="fork-tree-toggle-spacer" aria-hidden="true" />
+                <span class="thread-left-stack">
+                  <span v-if="shouldShowThreadIndicator(node.thread)" class="thread-status-indicator" :data-state="getThreadState(node.thread)" />
+                  <button
+                    class="thread-delete-button"
+                    type="button"
+                    :data-confirming="isInlineDeleteConfirming(node.thread.id)"
+                    :title="isInlineDeleteConfirming(node.thread.id) ? 'Confirm delete' : t('Delete thread')"
+                    @click.stop="onInlineDeleteClick(node.thread.id)"
+                  >
+                    <span v-if="isInlineDeleteConfirming(node.thread.id)" class="thread-delete-confirm-label">Confirm</span>
+                    <IconTablerTrash v-else class="thread-icon" />
+                  </button>
+                </span>
+              </span>
+              <span v-else class="thread-left-stack">
+                <span v-if="shouldShowThreadIndicator(node.thread)" class="thread-status-indicator" :data-state="getThreadState(node.thread)" />
                 <button
                   class="thread-delete-button"
                   type="button"
-                  :data-confirming="isInlineDeleteConfirming(thread.id)"
-                  :title="isInlineDeleteConfirming(thread.id) ? 'Confirm delete' : t('Delete thread')"
-                  @click.stop="onInlineDeleteClick(thread.id)"
+                  :data-confirming="isInlineDeleteConfirming(node.thread.id)"
+                  :title="isInlineDeleteConfirming(node.thread.id) ? 'Confirm delete' : t('Delete thread')"
+                  @click.stop="onInlineDeleteClick(node.thread.id)"
                 >
-                  <span v-if="isInlineDeleteConfirming(thread.id)" class="thread-delete-confirm-label">Confirm</span>
+                  <span v-if="isInlineDeleteConfirming(node.thread.id)" class="thread-delete-confirm-label">Confirm</span>
                   <IconTablerTrash v-else class="thread-icon" />
                 </button>
               </span>
@@ -55,46 +86,46 @@
             <button
               class="thread-main-button pinned-thread-main-button"
               type="button"
-              draggable="true"
-              :title="t('Drag to reorder pinned thread')"
-              @dragstart="onPinnedDragStart($event, thread.id)"
+              :draggable="isPinnedRoot(node.thread.id)"
+              :title="isPinnedRoot(node.thread.id) ? t('Drag to reorder pinned thread') : undefined"
+              @dragstart="onPinnedDragStart($event, node.thread.id)"
               @dragend="resetPinnedDragState"
-              @click.stop="onSelect(thread.id)"
+              @click.stop="onSelect(node.thread.id)"
             >
               <span class="thread-row-title-wrap">
                 <span class="thread-row-title-line">
-                  <span class="thread-row-title">{{ thread.title }}</span>
-                  <IconTablerGitFork v-if="thread.hasWorktree" class="thread-row-worktree-icon" :title="t('Worktree thread')" />
+                  <span class="thread-row-title">{{ node.thread.title }}</span>
+                  <IconTablerGitFork v-if="node.thread.hasWorktree" class="thread-row-worktree-icon" :title="t('Worktree thread')" />
                   <span
-                    v-if="threadHasAutomation(thread.id)"
+                    v-if="threadHasAutomation(node.thread.id)"
                     class="thread-row-automation-chip"
-                    :title="threadAutomationTooltip(thread.id)"
+                    :title="threadAutomationTooltip(node.thread.id)"
                   >
                     <IconTablerBolt class="thread-row-automation-icon" />
-                    <span v-if="threadAutomationCount(thread.id) > 1" class="thread-row-automation-count">
-                      {{ threadAutomationCount(thread.id) }}
+                    <span v-if="threadAutomationCount(node.thread.id) > 1" class="thread-row-automation-count">
+                      {{ threadAutomationCount(node.thread.id) }}
                     </span>
                   </span>
                   <span
-                    v-if="thread.pendingRequestState"
+                    v-if="node.thread.pendingRequestState"
                     class="thread-row-request-chip"
-                    :data-state="thread.pendingRequestState"
+                    :data-state="node.thread.pendingRequestState"
                   >
-                    {{ threadRequestLabel(thread) }}
+                    {{ threadRequestLabel(node.thread) }}
                   </span>
                 </span>
               </span>
             </button>
             <template #right>
-              <span class="thread-row-time">{{ formatRelativeThread(thread) }}</span>
+              <span class="thread-row-time">{{ formatRelativeThread(node.thread) }}</span>
             </template>
             <template #right-hover>
-              <div :ref="(el) => setThreadMenuWrapRef(thread.id, el)" class="thread-menu-wrap">
+              <div :ref="(el) => setThreadMenuWrapRef(node.thread.id, el)" class="thread-menu-wrap">
                 <button
                   class="thread-menu-trigger"
                   type="button"
                   title="thread_menu"
-                  @click.stop="toggleThreadMenu(thread.id)"
+                  @click.stop="toggleThreadMenu(node.thread.id)"
                 >
                   <IconTablerDots class="thread-icon" />
                 </button>
@@ -117,8 +148,8 @@
           <IconTablerChevronRight v-if="!isProjectsSectionExpanded" class="thread-icon" />
           <IconTablerChevronDown v-else class="thread-icon" />
         </template>
-        <span class="thread-tree-header">{{ t('Projects') }}</span>
-        <template #right>
+        <span class="thread-tree-header">{{ forkTreeEnabled ? t('Threads') : t('Projects') }}</span>
+        <template v-if="!forkTreeEnabled" #right>
           <div ref="organizeMenuWrapRef" class="organize-menu-wrap">
             <button
               class="organize-menu-trigger"
@@ -150,15 +181,6 @@
               >
                 <span>{{ t('Chronological list') }}</span>
                 <span v-if="threadViewMode === 'chronological'">✓</span>
-              </button>
-              <button
-                class="organize-menu-item"
-                :data-active="threadViewMode === 'fork-tree'"
-                type="button"
-                @click="setThreadViewMode('fork-tree')"
-              >
-                <span>{{ t('Fork tree') }}</span>
-                <span v-if="threadViewMode === 'fork-tree'">✓</span>
               </button>
               <button
                 class="organize-menu-item"
@@ -197,7 +219,7 @@
       <template v-if="isProjectsSectionExpanded">
       <p v-if="projectAutomationActionError" class="thread-tree-action-error">{{ projectAutomationActionError }}</p>
 
-      <p v-if="isSearchActive && filteredGroups.length === 0" class="thread-tree-no-results">{{ t('No matching threads') }}</p>
+      <p v-if="isSearchActive && (forkTreeEnabled ? forkTreeNodes.length === 0 : filteredGroups.length === 0)" class="thread-tree-no-results">{{ t('No matching threads') }}</p>
 
       <p v-else-if="isLoading && groups.length === 0" class="thread-tree-loading">{{ t('Loading threads...') }}</p>
 
@@ -281,7 +303,7 @@
       </li>
     </ul>
 
-    <ul v-else-if="isForkTreeView" class="thread-list thread-list-global fork-tree-list">
+    <ul v-else-if="forkTreeEnabled" class="thread-list thread-list-global fork-tree-list">
       <li
         v-for="node in forkTreeNodes"
         :key="node.thread.id"
@@ -601,7 +623,7 @@
       </template>
     </section>
 
-    <section class="chats-section">
+    <section v-if="!forkTreeEnabled" class="chats-section">
       <SidebarMenuRow
         as="button"
         class="section-toggle-row"
@@ -1029,6 +1051,7 @@ const props = defineProps<{
   isThreadListFullyLoaded: boolean
   searchQuery: string
   searchMatchedThreadIds: string[] | null
+  forkTreeEnabled: boolean
 }>()
 
 const { t } = useUiLanguage()
@@ -1083,7 +1106,7 @@ type DragPointerSample = {
 
 type MenuDirection = 'up' | 'down'
 type ChatSortMode = 'created' | 'updated'
-type ThreadViewMode = 'project' | 'chronological' | 'fork-tree'
+type ThreadViewMode = 'project' | 'chronological'
 type AutomationScheduleMode = 'daily' | 'interval' | 'advanced'
 type AutomationIntervalUnit = 'minutes' | 'hours' | 'days'
 type AutomationTargetMode = 'thread' | 'project'
@@ -1271,7 +1294,7 @@ function loadThreadViewMode(): ThreadViewMode {
   if (typeof window === 'undefined') return 'project'
 
   const raw = window.localStorage.getItem(THREAD_VIEW_MODE_STORAGE_KEY)
-  return raw === 'chronological' || raw === 'fork-tree' ? raw : 'project'
+  return raw === 'chronological' ? raw : 'project'
 }
 
 function loadForkTreeCollapsedState(): Record<string, boolean> {
@@ -1397,20 +1420,9 @@ const filteredGroups = computed<UiProjectGroup[]>(() => {
 })
 
 const isChronologicalView = computed(() => threadViewMode.value === 'chronological')
-const isForkTreeView = computed(() => threadViewMode.value === 'fork-tree')
 
 const globalThreads = computed<UiThread[]>(() => {
-  const rows: UiThread[] = []
-
-  for (const group of props.groups) {
-    for (const thread of group.threads) {
-      if (pinnedThreadIdSet.value.has(thread.id)) continue
-      if (!threadMatchesSearch(thread)) continue
-      rows.push(thread)
-    }
-  }
-
-  return rows.sort((first, second) => {
+  return [...unpinnedThreads.value].sort((first, second) => {
     const firstTimestamp = new Date(first.updatedAtIso || first.createdAtIso).getTime()
     const secondTimestamp = new Date(second.updatedAtIso || second.createdAtIso).getTime()
     return secondTimestamp - firstTimestamp
@@ -1548,7 +1560,7 @@ const threadProjectNameById = computed(() => {
 const unpinnedThreadsByProjectName = computed(() => {
   const map = new Map<string, UiThread[]>()
   for (const group of props.groups) {
-    const rows = group.threads.filter((thread) => !pinnedThreadIdSet.value.has(thread.id) && !optimisticallyArchivedThreadIdSet.value.has(thread.id))
+    const rows = group.threads.filter((thread) => !pinnedBranchThreadIdSet.value.has(thread.id) && !optimisticallyArchivedThreadIdSet.value.has(thread.id))
     map.set(group.projectName, rows)
   }
   return map
@@ -1569,12 +1581,40 @@ const openThreadMenuThread = computed(() => {
   return threadId ? (threadById.value.get(threadId) ?? null) : null
 })
 
-const pinnedThreads = computed(() =>
+const pinnedRootThreads = computed(() =>
   pinnedThreadIds.value
     .map((threadId) => threadById.value.get(threadId) ?? hydratedPinnedThreadById.value[threadId] ?? null)
     .filter((thread): thread is UiThread => thread !== null)
     .filter(threadMatchesSearch),
 )
+
+const allKnownThreads = computed(() => {
+  const byId = new Map(threadById.value)
+  for (const thread of Object.values(hydratedPinnedThreadById.value)) {
+    if (!byId.has(thread.id)) byId.set(thread.id, thread)
+  }
+  return Array.from(byId.values())
+})
+
+const pinnedRootThreadIdSet = computed(() => new Set(pinnedRootThreads.value.map((thread) => thread.id)))
+
+const pinnedThreadNodes = computed(() => {
+  if (pinnedRootThreads.value.length === 0) return []
+  if (!props.forkTreeEnabled) {
+    return pinnedRootThreads.value.map((thread) => ({ thread, depth: 0, hasChildren: false }))
+  }
+  return buildForkTree(
+    allKnownThreads.value,
+    new Set(Object.keys(collapsedForkTreeThreadIds.value)),
+    pinnedRootThreads.value.map((thread) => thread.id),
+  )
+})
+
+const pinnedBranchThreadIdSet = computed(() => new Set(pinnedThreadNodes.value.map((node) => node.thread.id)))
+
+const unpinnedThreads = computed(() => props.groups.flatMap((group) =>
+  group.threads.filter((thread) => !pinnedBranchThreadIdSet.value.has(thread.id) && threadMatchesSearch(thread)),
+))
 
 function togglePinnedSection(): void {
   isPinnedSectionExpanded.value = !isPinnedSectionExpanded.value
@@ -1668,6 +1708,10 @@ function isPinned(threadId: string): boolean {
   return pinnedThreadIdSet.value.has(threadId)
 }
 
+function isPinnedRoot(threadId: string): boolean {
+  return pinnedRootThreadIdSet.value.has(threadId)
+}
+
 function togglePin(threadId: string): void {
   if (isPinned(threadId)) {
     pinnedThreadIds.value = pinnedThreadIds.value.filter((id) => id !== threadId)
@@ -1690,7 +1734,7 @@ function isPinnedDropTarget(threadId: string): boolean {
 }
 
 function onPinnedDragStart(event: DragEvent, threadId: string): void {
-  if (isSearchActive.value || pinnedThreads.value.length < 2) {
+  if (isSearchActive.value || pinnedRootThreads.value.length < 2 || !isPinnedRoot(threadId)) {
     event.preventDefault()
     return
   }
