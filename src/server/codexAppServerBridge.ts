@@ -65,8 +65,8 @@ import {
   resolveCodexCursorCommand,
   resolveCodexMoonCommand,
 } from '../commandResolution.js'
-import type { CollaborationModeKind, ReasoningEffort, UiFileChange, UiMessage } from '../types/codex.js'
-import { isAbsoluteLikePath } from '../pathUtils.js'
+import type { CollaborationModeKind, ReasoningEffort, UiFileChange, UiMessage, UiThread } from '../types/codex.js'
+import { isAbsoluteLikePath, toProjectName } from '../pathUtils.js'
 import { searchComposerPaths } from './composerFileSearch.js'
 import { normalizeThreadMessagesV2 } from '../api/normalizers/v2.js'
 
@@ -808,6 +808,42 @@ export async function buildPaginatedForkUserMessageIndex(
   }
   if (!fallbackSessionPath || !isAbsolute(fallbackSessionPath)) return []
   return await readCachedSessionUserMessageIndex(fallbackSessionPath)
+}
+
+type ThreadUserMessageNavigation = {
+  entries: SessionUserMessageIndexEntry[]
+  count: number
+}
+
+const threadUserMessageNavigationPromiseByThreadId = new Map<string, Promise<ThreadUserMessageNavigation>>()
+
+async function readThreadUserMessageNavigation(
+  appServer: RpcExecutor,
+  threadId: string,
+): Promise<ThreadUserMessageNavigation> {
+  const pending = threadUserMessageNavigationPromiseByThreadId.get(threadId)
+  if (pending) return await pending
+
+  const promise = (async () => {
+    const cachedLineage = (await getSessionForkLineage()).find((entry) => entry.threadId === threadId)
+    let sessionPath = cachedLineage?.sessionPath ?? ''
+    if (!sessionPath || !isAbsolute(sessionPath)) {
+      const metaResult = await appServer.rpc('thread/read', { threadId, includeTurns: false })
+      sessionPath = readNonEmptyString(asRecord(asRecord(metaResult)?.thread)?.path)
+    }
+    if (!sessionPath || !isAbsolute(sessionPath)) return { entries: [], count: 0 }
+
+    const entries = await buildPaginatedForkUserMessageIndex(threadId, sessionPath)
+    return {
+      entries,
+      count: entries.filter((entry) => entry.kind !== 'forkBoundary').length,
+    }
+  })().finally(() => {
+    threadUserMessageNavigationPromiseByThreadId.delete(threadId)
+  })
+
+  threadUserMessageNavigationPromiseByThreadId.set(threadId, promise)
+  return await promise
 }
 
 
@@ -7056,6 +7092,52 @@ async function writePinnedThreadIds(threadIds: string[]): Promise<void> {
   await writeFile(statePath, JSON.stringify(payload), 'utf8')
 }
 
+async function readPinnedThreadMetadata(threadIds: string[]): Promise<UiThread[]> {
+  if (threadIds.length === 0) return []
+  const [titleCache, lineageEntries] = await Promise.all([
+    readMergedThreadTitleCache(),
+    getSessionForkLineage(),
+  ])
+  const lineageByThreadId = new Map(lineageEntries.map((entry) => [entry.threadId, entry]))
+  const includedThreadIds = new Set(threadIds)
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const lineage of lineageEntries) {
+      if (lineage.isArchived || includedThreadIds.has(lineage.threadId)) continue
+      const parentThreadId = lineage.isPaginated && lineage.historyBaseThreadId
+        ? lineage.historyBaseThreadId
+        : lineage.forkedFromId
+      if (!parentThreadId || !includedThreadIds.has(parentThreadId)) continue
+      includedThreadIds.add(lineage.threadId)
+      changed = true
+    }
+  }
+
+  return Array.from(includedThreadIds).flatMap((threadId) => {
+    const lineage = lineageByThreadId.get(threadId)
+    if (!lineage || lineage.isArchived) return []
+    const title = titleCache.titles[threadId]?.trim() || 'Untitled thread'
+    const normalizedCwd = lineage.cwd.trim()
+    const comparableCwd = normalizedCwd.replace(/\\/gu, '/').toLowerCase()
+    return [{
+      id: threadId,
+      title,
+      projectName: toProjectName(normalizedCwd),
+      cwd: normalizedCwd,
+      hasWorktree: comparableCwd.includes('/.codex/worktrees/') || comparableCwd.includes('/.git/worktrees/'),
+      createdAtIso: '',
+      updatedAtIso: '',
+      preview: title,
+      forkedFromId: lineage.forkedFromId || undefined,
+      forkPointOrdinal: lineage.forkPointOrdinal,
+      forkPointByteOffset: lineage.forkPointByteOffset,
+      unread: false,
+      inProgress: false,
+    } satisfies UiThread]
+  })
+}
+
 const FIRST_LAUNCH_PLUGINS_CARD_DISMISSED_KEY = 'first-launch-plugins-card-dismissed'
 const THREAD_QUEUE_STATE_KEY = 'thread-queue-state'
 const INTENTIONAL_INTERRUPT_TURN_IDS_KEY = 'intentional-interrupt-turn-ids'
@@ -11268,7 +11350,14 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         return
       }
 
-      if (req.method === 'GET' && url.pathname === '/codex-api/thread-user-message-index') {
+      if (
+        req.method === 'GET'
+        && (
+          url.pathname === '/codex-api/thread-user-message-navigation'
+          || url.pathname === '/codex-api/thread-user-message-index'
+          || url.pathname === '/codex-api/thread-user-message-count'
+        )
+      ) {
         try {
           const threadId = url.searchParams.get('threadId')?.trim() ?? ''
           if (!threadId) {
@@ -11276,59 +11365,16 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
             return
           }
 
-          const metaResult = await appServer.rpc('thread/read', {
-            threadId,
-            includeTurns: false,
-          })
-          const metaRecord = asRecord(metaResult)
-          const threadRecord = asRecord(metaRecord?.thread)
-          const sessionPath = readNonEmptyString(threadRecord?.path)
-          if (!sessionPath || !isAbsolute(sessionPath)) {
-            setJson(res, 200, { entries: [] })
-            return
-          }
-
-          try {
-            const entries = await buildPaginatedForkUserMessageIndex(threadId, sessionPath)
-            setJson(res, 200, { entries })
-          } catch {
-            setJson(res, 200, { entries: [] })
+          const navigation = await readThreadUserMessageNavigation(appServer, threadId)
+          if (url.pathname === '/codex-api/thread-user-message-index') {
+            setJson(res, 200, { entries: navigation.entries })
+          } else if (url.pathname === '/codex-api/thread-user-message-count') {
+            setJson(res, 200, { count: navigation.count })
+          } else {
+            setJson(res, 200, navigation)
           }
         } catch (error) {
-          setJson(res, 500, { error: getErrorMessage(error, 'Failed to load thread user message index') })
-        }
-        return
-      }
-
-            if (req.method === 'GET' && url.pathname === '/codex-api/thread-user-message-count') {
-        try {
-          const threadId = url.searchParams.get('threadId')?.trim() ?? ''
-          if (!threadId) {
-            setJson(res, 400, { error: 'Missing threadId' })
-            return
-          }
-
-          const metaResult = await appServer.rpc('thread/read', {
-            threadId,
-            includeTurns: false,
-          })
-          const metaRecord = asRecord(metaResult)
-          const threadRecord = asRecord(metaRecord?.thread)
-          const sessionPath = readNonEmptyString(threadRecord?.path)
-          if (!sessionPath || !isAbsolute(sessionPath)) {
-            setJson(res, 200, { count: 0 })
-            return
-          }
-
-          try {
-            const entries = await buildPaginatedForkUserMessageIndex(threadId, sessionPath)
-            const count = entries.filter((entry) => entry.kind !== 'forkBoundary').length
-            setJson(res, 200, { count })
-          } catch {
-            setJson(res, 200, { count: 0 })
-          }
-        } catch (error) {
-          setJson(res, 500, { error: getErrorMessage(error, 'Failed to count thread user messages') })
+          setJson(res, 500, { error: getErrorMessage(error, 'Failed to load thread user message navigation') })
         }
         return
       }
@@ -12535,7 +12581,8 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 
       if (req.method === 'GET' && url.pathname === '/codex-api/thread-pins') {
         const threadIds = await readPinnedThreadIds()
-        setJson(res, 200, { data: { threadIds } })
+        const threads = await readPinnedThreadMetadata(threadIds)
+        setJson(res, 200, { data: { threadIds, threads } })
         return
       }
 

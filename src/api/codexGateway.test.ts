@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { clearThreadGoal, forkThread, forkThreadThroughTurn, getAvailableModelIds, getCurrentModelConfig, getThreadGoal, getThreadQueueState, getThreadUserMessageIndex, listDirectoryComposioConnectors, resumeThread, searchComposerFiles, searchFileLinkPaths, searchThreadMessages, setThreadGoal, setThreadQueueState, startThread, startThreadTurn, steerThreadTurn } from './codexGateway'
+import { clearThreadGoal, forkThread, forkThreadThroughTurn, getAvailableModelIds, getCurrentModelConfig, getThreadGoal, getThreadQueueState, getThreadUserMessageIndex, getThreadUserMessageNavigation, listDirectoryComposioConnectors, resumeThread, searchComposerFiles, searchFileLinkPaths, searchThreadMessages, setThreadGoal, setThreadQueueState, startThread, startThreadTurn, steerThreadTurn } from './codexGateway'
 
 function mockRpcFetch(): { requests: Array<{ method: string, params: Record<string, unknown> }> } {
   const requests: Array<{ method: string, params: Record<string, unknown> }> = []
@@ -751,6 +751,21 @@ describe('getThreadUserMessageIndex', () => {
         sourceThreadId: 'parent',
       },
     ])
+  })
+
+  it('loads entries and count from one navigation request', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      entries: [{ turnId: 'turn-1', ordinal: 1, preview: 'Prompt', title: 'Prompt' }],
+      count: 1,
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(getThreadUserMessageNavigation('thread-1')).resolves.toEqual({
+      entries: [{ turnId: 'turn-1', ordinal: 1, preview: 'Prompt', title: 'Prompt', kind: undefined, sourceThreadId: undefined }],
+      count: 1,
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledWith('/codex-api/thread-user-message-navigation?threadId=thread-1')
   })
 })
 

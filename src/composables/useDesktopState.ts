@@ -17,8 +17,7 @@ import {
   getThreadDetail,
   getThreadSummary,
   getFullThreadMessages,
-  getThreadUserMessageCount,
-  getThreadUserMessageIndex,
+  getThreadUserMessageNavigation,
   type ThreadUserMessageIndexEntry,
   getOlderThreadMessages,
   getThreadTurnWindow,
@@ -1803,7 +1802,6 @@ export function useDesktopState() {
   const loadingFullHistoryByThreadId = ref<Record<string, boolean>>({})
   const loadingMessagesByThreadId = ref<Record<string, boolean>>({})
   const userMessageCountByThreadId = ref<Record<string, number>>({})
-  const loadingUserMessageCountByThreadId = ref<Record<string, boolean>>({})
   const userMessageIndexByThreadId = ref<Record<string, ThreadUserMessageIndexEntry[]>>({})
   const loadingUserMessageIndexByThreadId = ref<Record<string, boolean>>({})
   const livePlanMessagesByThreadId = ref<Record<string, UiMessage[]>>({})
@@ -1956,8 +1954,7 @@ export function useDesktopState() {
   let loadThreadsPromise: Promise<void> | null = null
   const loadMessagePromiseByThreadId = new Map<string, Promise<void>>()
   const loadFullHistoryPromiseByThreadId = new Map<string, Promise<void>>()
-  const loadUserMessageCountPromiseByThreadId = new Map<string, Promise<void>>()
-  const loadUserMessageIndexPromiseByThreadId = new Map<string, Promise<void>>()
+  const loadUserMessageNavigationPromiseByThreadId = new Map<string, Promise<void>>()
   let refreshSkillsPromise: Promise<void> | null = null
   let skillsRefreshDesiredCwd: string | null = null
   let skillsRefreshQueuedForceReload = false
@@ -2174,13 +2171,13 @@ export function useDesktopState() {
       }
       knownUserTurnIdsByThreadId.set(threadId, userTurnIds)
       if (!known) {
-        // First time we observe this thread; the initial ensure already ran.
+        // Do not prefetch navigation data until the user opens the panel.
         return
       }
       const hasNew = Array.from(userTurnIds).some((id) => !known.has(id))
       if (!hasNew) return
-      void loadUserMessageIndex(threadId, { force: true }).catch(() => {})
-      void loadUserMessageCount(threadId, { force: true }).catch(() => {})
+      if (!Array.isArray(userMessageIndexByThreadId.value[threadId])) return
+      void loadUserMessageNavigation(threadId, { force: true }).catch(() => {})
     },
   )
   const isLoadingMessages = computed(() => {
@@ -3330,7 +3327,6 @@ export function useDesktopState() {
     loadedFullHistoryByThreadId.value = pruneThreadStateMap(loadedFullHistoryByThreadId.value, activeThreadIds)
     loadingFullHistoryByThreadId.value = pruneThreadStateMap(loadingFullHistoryByThreadId.value, activeThreadIds)
     userMessageCountByThreadId.value = pruneThreadStateMap(userMessageCountByThreadId.value, activeThreadIds)
-    loadingUserMessageCountByThreadId.value = pruneThreadStateMap(loadingUserMessageCountByThreadId.value, activeThreadIds)
     userMessageIndexByThreadId.value = pruneThreadStateMap(userMessageIndexByThreadId.value, activeThreadIds)
     loadingUserMessageIndexByThreadId.value = pruneThreadStateMap(loadingUserMessageIndexByThreadId.value, activeThreadIds)
     liveAgentMessagesByThreadId.value = pruneThreadStateMap(liveAgentMessagesByThreadId.value, activeThreadIds)
@@ -6297,55 +6293,11 @@ export function useDesktopState() {
     await loadPromise
   }
 
-  async function loadUserMessageCount(threadId: string, options: { force?: boolean } = {}): Promise<void> {
-    if (!threadId) return
-    if (options.force !== true && typeof userMessageCountByThreadId.value[threadId] === 'number') return
-
-    const existing = loadUserMessageCountPromiseByThreadId.get(threadId)
-    if (existing) {
-      await existing
-      return
-    }
-
-    loadingUserMessageCountByThreadId.value = {
-      ...loadingUserMessageCountByThreadId.value,
-      [threadId]: true,
-    }
-
-    const loadPromise = (async () => {
-      try {
-        const count = await getThreadUserMessageCount(threadId)
-        userMessageCountByThreadId.value = {
-          ...userMessageCountByThreadId.value,
-          [threadId]: count,
-        }
-      } catch {
-        // Best-effort; leave any previously known count in place.
-      } finally {
-        loadingUserMessageCountByThreadId.value = {
-          ...loadingUserMessageCountByThreadId.value,
-          [threadId]: false,
-        }
-      }
-    })().finally(() => {
-      loadUserMessageCountPromiseByThreadId.delete(threadId)
-    })
-
-    loadUserMessageCountPromiseByThreadId.set(threadId, loadPromise)
-    await loadPromise
-  }
-
-  function ensureUserMessageCountLoaded(threadId: string): void {
-    const normalizedThreadId = threadId.trim()
-    if (!normalizedThreadId) return
-    void loadUserMessageCount(normalizedThreadId).catch(() => {})
-  }
-
-  async function loadUserMessageIndex(threadId: string, options: { force?: boolean } = {}): Promise<void> {
+  async function loadUserMessageNavigation(threadId: string, options: { force?: boolean } = {}): Promise<void> {
     if (!threadId) return
     if (options.force !== true && Array.isArray(userMessageIndexByThreadId.value[threadId])) return
 
-    const existing = loadUserMessageIndexPromiseByThreadId.get(threadId)
+    const existing = loadUserMessageNavigationPromiseByThreadId.get(threadId)
     if (existing) {
       await existing
       return
@@ -6358,10 +6310,14 @@ export function useDesktopState() {
 
     const loadPromise = (async () => {
       try {
-        const entries = await getThreadUserMessageIndex(threadId)
+        const navigation = await getThreadUserMessageNavigation(threadId)
         userMessageIndexByThreadId.value = {
           ...userMessageIndexByThreadId.value,
-          [threadId]: entries,
+          [threadId]: navigation.entries,
+        }
+        userMessageCountByThreadId.value = {
+          ...userMessageCountByThreadId.value,
+          [threadId]: navigation.count,
         }
       } catch {
         // Best-effort; leave any previously known entries in place.
@@ -6372,17 +6328,17 @@ export function useDesktopState() {
         }
       }
     })().finally(() => {
-      loadUserMessageIndexPromiseByThreadId.delete(threadId)
+      loadUserMessageNavigationPromiseByThreadId.delete(threadId)
     })
 
-    loadUserMessageIndexPromiseByThreadId.set(threadId, loadPromise)
+    loadUserMessageNavigationPromiseByThreadId.set(threadId, loadPromise)
     await loadPromise
   }
 
-  function ensureUserMessageIndexLoaded(threadId: string): void {
+  function ensureUserMessageNavigationLoaded(threadId: string): void {
     const normalizedThreadId = threadId.trim()
     if (!normalizedThreadId) return
-    void loadUserMessageIndex(normalizedThreadId).catch(() => {})
+    void loadUserMessageNavigation(normalizedThreadId).catch(() => {})
   }
 
 
@@ -8296,10 +8252,8 @@ export function useDesktopState() {
     ensureThreadMessagesLoaded,
     ensureMessageLoaded,
     loadFullHistoryMessages,
-    loadUserMessageCount,
-    ensureUserMessageCountLoaded,
-    loadUserMessageIndex,
-    ensureUserMessageIndexLoaded,
+    loadUserMessageNavigation,
+    ensureUserMessageNavigationLoaded,
     setThreadTerminalOpen,
     toggleSelectedThreadTerminal,
     archiveThreadById,

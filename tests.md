@@ -8143,3 +8143,32 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - No data cleanup is required; revert the CSS commit to restore the prior inline-code treatment.
+
+### Performance: Startup, pinned threads, and message navigation request budgets
+
+#### Prerequisites
+- App server is running from this repository with several pinned threads, including at least one thread outside the first sidebar page and one fork with a child.
+- A long thread with enough user turns to populate the title-bar message-navigation panel is available.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Start a browser runtime profile on the home route and wait for the startup background work to settle.
+2. Confirm pinned roots and their fork descendants render without issuing one `thread/read` request per pin.
+3. Open the long thread without opening message navigation. Confirm neither `/codex-api/thread-user-message-navigation` nor the legacy index/count endpoints is requested.
+4. Open message navigation once. Confirm exactly one `/codex-api/thread-user-message-navigation` request is issued and both its rows and total count populate.
+5. Close and reopen message navigation. Confirm cached navigation data is reused until a new user turn is observed.
+6. Repeat steps 2-5 in dark theme and confirm pinned rows, fork indentation, the navigation panel, loading state, and count remain readable.
+7. Run `pnpm exec vitest run src/api/codexGateway.test.ts src/composables/useDesktopState.test.ts src/components/sidebar/pinnedThreadUtils.test.ts src/server/threadListRecovery.test.ts src/server/codexAppServerBridge.inlinePayload.test.ts` and `pnpm exec vue-tsc --noEmit`.
+
+#### Expected Results
+- The pin endpoint returns `threadIds` plus lightweight local metadata for the pinned branch; pin rendering does not fan out through `thread/read`.
+- Message-navigation entries and count come from one endpoint and are loaded only when the panel is opened.
+- Initial provider application performs one ancillary-state refresh. The fixed-delay startup refresh does not repeat skills, config, collaboration mode, rate-limit, or provider-model requests.
+- Existing clients can still use the legacy index/count endpoints, which delegate to the same coalesced server operation.
+
+#### Performance Audit
+- The focused test run passes 235 tests and `vue-tsc --noEmit` passes.
+- Final browser profiles must show pinned hydration `thread/read = 0`, no navigation endpoint before the panel opens, and one request after it opens. Startup ancillary endpoints should each execute at most once unless the selected provider changes during initialization.
+
+#### Rollback/Cleanup
+- No data cleanup is required. Unpin disposable sessions and archive any test fork if it is no longer needed.

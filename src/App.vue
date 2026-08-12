@@ -943,10 +943,9 @@
                     :load-thread-turn-window="loadThreadMessageWindow"
                     :ensure-full-history-loaded="loadFullHistoryMessages"
                     :user-message-navigation-total="userMessageNavigationTotal"
-                    :ensure-user-message-navigation-total="ensureUserMessageCountLoaded"
                     :user-message-navigation-index="userMessageNavigationIndex"
                     :is-loading-user-message-navigation-index="isLoadingUserMessageNavigationIndex"
-                    :ensure-user-message-navigation-index="ensureUserMessageIndexLoaded"
+                    :ensure-user-message-navigation="ensureUserMessageNavigationLoaded"
                     @fork-thread="onForkThreadFromMessage"
                     @rollback="onRollback"
                     @implement-plan="onImplementPlan"
@@ -1383,8 +1382,7 @@ const {
   ensureThreadMessagesLoaded,
   ensureMessageLoaded,
   loadFullHistoryMessages,
-  ensureUserMessageCountLoaded,
-  ensureUserMessageIndexLoaded,
+  ensureUserMessageNavigationLoaded,
   loadOlderMessages,
   loadThreadMessageWindow,
   setThreadTerminalOpen,
@@ -2431,7 +2429,6 @@ function scheduleStartupBackgroundRefreshes(): void {
   startupFastBackgroundRefreshTimer = setTimeout(() => {
     startupFastBackgroundRefreshTimer = null
     void Promise.allSettled([
-      refreshAncillaryState({ providerChanged: false, includeProviderModels: false }),
       loadWorkspaceRootOptionsState(),
       refreshThreadTerminalStatus(),
     ])
@@ -4589,7 +4586,6 @@ async function initialize(): Promise<void> {
   if (route.name === 'thread' && routeThreadId.value) {
     primeSelectedThread(routeThreadId.value)
   }
-  void applySelectedProviderState().catch(() => {})
   await refreshAll({
     includeSelectedThreadMessages: false,
     refreshAncillary: false,
@@ -4602,14 +4598,13 @@ async function initialize(): Promise<void> {
   void loadAccountsState({ silent: true })
   await applyLaunchProjectPathFromUrl()
   hasInitialized.value = true
-  void applySelectedProviderState().catch(() => {})
   startPolling()
   scheduleStartupBackgroundRefreshes()
-  await syncThreadSelectionWithRoute()
-  await applySelectedProviderState({ refreshAncillary: false }).catch(() => {})
+  await syncThreadSelectionWithRoute({ applyProvider: false })
+  await applySelectedProviderState().catch(() => {})
 }
 
-async function syncThreadSelectionWithRoute(): Promise<void> {
+async function syncThreadSelectionWithRoute(options: { applyProvider?: boolean } = {}): Promise<void> {
   if (isRouteSyncInProgress.value) {
     hasPendingRouteSync = true
     return
@@ -4623,7 +4618,6 @@ async function syncThreadSelectionWithRoute(): Promise<void> {
       if (route.name === 'home' || route.name === 'skills' || route.name === 'automations') {
         if (selectedThreadId.value !== '') {
           await selectThread('')
-          void applySelectedProviderState().catch(() => {})
         }
         continue
       }
@@ -4633,12 +4627,14 @@ async function syncThreadSelectionWithRoute(): Promise<void> {
         if (!threadId) continue
 
         await selectThread(threadId)
-        void applySelectedProviderState().catch(() => {})
       }
     } while (hasPendingRouteSync)
 
   } finally {
     isRouteSyncInProgress.value = false
+  }
+  if (options.applyProvider !== false) {
+    await applySelectedProviderState().catch(() => {})
   }
 }
 

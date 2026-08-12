@@ -990,7 +990,6 @@ import {
   getProjectAutomationMap,
   getPinnedThreadState,
   getThreadAutomationMap,
-  getThreadSummary,
   persistPinnedThreadIds,
   runThreadAutomationNow,
   upsertProjectAutomation,
@@ -1450,47 +1449,11 @@ watch([threadById, () => props.isThreadListFullyLoaded], ([threadsById]) => {
     canPruneMissing: props.isThreadListFullyLoaded,
   })
   if (filtered.length === pinnedThreadIds.value.length) return
-  const filteredIdSet = new Set(filtered)
-  const nextHydratedPinnedThreads = Object.fromEntries(
-    Object.entries(hydratedPinnedThreadById.value).filter(([threadId]) => filteredIdSet.has(threadId)),
-  )
-  hydratedPinnedThreadById.value = nextHydratedPinnedThreads
   pinnedThreadIds.value = filtered
 })
 
-let pinnedThreadHydrationVersion = 0
-
-async function hydrateMissingPinnedThreads(): Promise<void> {
-  if (props.isLoading) return
-  const missingThreadIds = pinnedThreadIds.value.filter((threadId) => !threadById.value.has(threadId) && !hydratedPinnedThreadById.value[threadId])
-  if (missingThreadIds.length === 0) return
-
-  const version = (pinnedThreadHydrationVersion += 1)
-  const loadedThreads = await Promise.all(
-    missingThreadIds.map(async (threadId) => {
-      try {
-        return await getThreadSummary(threadId)
-      } catch {
-        return null
-      }
-    }),
-  )
-  if (version !== pinnedThreadHydrationVersion) return
-
-  const next = { ...hydratedPinnedThreadById.value }
-  for (const thread of loadedThreads) {
-    if (thread) next[thread.id] = thread
-  }
-  hydratedPinnedThreadById.value = next
-}
-
-watch([pinnedThreadIds, threadById, () => props.isLoading], () => {
-  if (!hasLoadedPinnedThreadState) return
-  void hydrateMissingPinnedThreads()
-})
-
 onMounted(async () => {
-  const { threadIds } = await getPinnedThreadState()
+  const { threadIds, threads } = await getPinnedThreadState()
   const normalized = Array.isArray(threadIds)
     ? threadIds
       .filter((item): item is string => typeof item === 'string')
@@ -1501,6 +1464,10 @@ onMounted(async () => {
   if (normalized.length > 0) {
     pinnedThreadIds.value = normalized
   }
+  hydratedPinnedThreadById.value = Object.fromEntries(
+    threads
+      .map((thread) => [thread.id, thread]),
+  )
   try {
     automationByThreadId.value = await getThreadAutomationMap()
   } catch {
@@ -1512,7 +1479,6 @@ onMounted(async () => {
     automationByProjectName.value = {}
   }
   hasLoadedPinnedThreadState = true
-  void hydrateMissingPinnedThreads()
 })
 
 const deleteThreadHasAutomation = computed(() => threadHasAutomation(deleteThreadDialogThreadId.value))

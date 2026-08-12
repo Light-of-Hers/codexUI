@@ -42,6 +42,7 @@ const gatewayMocks = vi.hoisted(() => ({
   getThreadTitleCache: vi.fn(),
   getThreadUserMessageCount: vi.fn(),
   getThreadUserMessageIndex: vi.fn(),
+  getThreadUserMessageNavigation: vi.fn(),
   getWorkspaceRootsState: vi.fn(),
   generateThreadTitle: vi.fn(),
   interruptThreadTurn: vi.fn(),
@@ -114,6 +115,7 @@ beforeEach(() => {
   gatewayMocks.getThreadTitleCache.mockResolvedValue({ titles: {} })
   gatewayMocks.getThreadUserMessageCount.mockResolvedValue(0)
   gatewayMocks.getThreadUserMessageIndex.mockResolvedValue([])
+  gatewayMocks.getThreadUserMessageNavigation.mockResolvedValue({ entries: [], count: 0 })
   gatewayMocks.getWorkspaceRootsState.mockRejectedValue(new Error('no workspace roots state'))
   gatewayMocks.getArkModelIds.mockResolvedValue([])
   gatewayMocks.getArkModelMetadata.mockResolvedValue([])
@@ -3224,14 +3226,15 @@ describe('optimistic user message', () => {
       { id: 'real-user-1', role: 'user', text: 'hello optimistic', turnId: 'turn-1', turnIndex: 0 },
     ]))
     await state.loadMessages('thread-a', { force: true })
-    await waitForCalls(gatewayMocks.getThreadUserMessageIndex, 1)
-    await waitForCalls(gatewayMocks.getThreadUserMessageCount, 1)
 
     expect(state.messages.value.some((message) => message.id.startsWith('optimistic-user-'))).toBe(false)
     expect(state.messages.value.filter((message) => message.role === 'user' && message.text === 'hello optimistic')).toHaveLength(1)
     expect(state.messages.value.find((message) => message.id === 'real-user-1')).toBeTruthy()
-    expect(gatewayMocks.getThreadUserMessageIndex).toHaveBeenCalledWith('thread-a')
-    expect(gatewayMocks.getThreadUserMessageCount).toHaveBeenCalledWith('thread-a')
+    expect(gatewayMocks.getThreadUserMessageNavigation).not.toHaveBeenCalled()
+
+    state.ensureUserMessageNavigationLoaded('thread-a')
+    await waitForCalls(gatewayMocks.getThreadUserMessageNavigation, 1)
+    expect(gatewayMocks.getThreadUserMessageNavigation).toHaveBeenCalledWith('thread-a')
   })
 
   it('keeps the optimistic message when startThreadTurn fails so the user can still see what they sent', async () => {

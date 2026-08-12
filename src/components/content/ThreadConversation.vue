@@ -1702,10 +1702,9 @@ const props = defineProps<{
   loadThreadTurnWindow?: (threadId: string, turnId: string) => Promise<void>
   ensureFullHistoryLoaded?: (threadId: string) => Promise<void>
   userMessageNavigationTotal?: number | null
-  ensureUserMessageNavigationTotal?: (threadId: string) => void
   userMessageNavigationIndex?: ThreadUserMessageIndexEntry[]
   isLoadingUserMessageNavigationIndex?: boolean
-  ensureUserMessageNavigationIndex?: (threadId: string) => void
+  ensureUserMessageNavigation?: (threadId: string) => void
 }>()
 
 const emit = defineEmits<{
@@ -5367,12 +5366,8 @@ function toggleMessageNavigation(): void {
     // Load the lightweight user-message index that lists every user turn from
     // the session file. This is the authoritative data source for the
     // dropdown and avoids the very expensive full-history payload path.
-    if (threadId && props.ensureUserMessageNavigationIndex) {
-      props.ensureUserMessageNavigationIndex(threadId)
-    }
-    // Total is also handy for the badge before the index resolves.
-    if (threadId && props.ensureUserMessageNavigationTotal) {
-      props.ensureUserMessageNavigationTotal(threadId)
+    if (threadId && props.ensureUserMessageNavigation) {
+      props.ensureUserMessageNavigation(threadId)
     }
   }
 }
@@ -5797,14 +5792,6 @@ watch(
     expandedResponseSourceIds.value = new Set()
     // Apply immediately for cached threads where isLoading never toggles.
     setRenderWindowToLatest()
-    // Warm the user-message index + total so the dropdown can show them the
-    // moment the user opens the panel, without waiting for the full history.
-    if (threadId && props.ensureUserMessageNavigationIndex) {
-      props.ensureUserMessageNavigationIndex(threadId)
-    }
-    if (threadId && props.ensureUserMessageNavigationTotal) {
-      props.ensureUserMessageNavigationTotal(threadId)
-    }
     await scheduleConversationScroll()
   },
   { flush: 'post' },
@@ -5849,14 +5836,6 @@ onMounted(() => {
   window.addEventListener('pointerdown', onWindowPointerDownForFileLinkContextMenu)
   window.addEventListener('blur', onWindowBlurForFileLinkContextMenu)
   window.addEventListener('keydown', onWindowKeydownForFileLinkContextMenu)
-  // Warm the user-message index + total so the dropdown shows them immediately.
-  const threadId = props.activeThreadId
-  if (threadId && props.ensureUserMessageNavigationIndex) {
-    props.ensureUserMessageNavigationIndex(threadId)
-  }
-  if (threadId && props.ensureUserMessageNavigationTotal) {
-    props.ensureUserMessageNavigationTotal(threadId)
-  }
   void renderConversationMermaidDiagrams()
 })
 

@@ -1082,21 +1082,6 @@ export async function getThreadTurnWindow(threadId: string, centerTurnId: string
   }
 }
 
-export async function getThreadUserMessageCount(threadId: string): Promise<number> {
-  try {
-    const params = new URLSearchParams({ threadId })
-    const response = await fetch(`/codex-api/thread-user-message-count?${params.toString()}`)
-    if (!response.ok) {
-      throw new Error(`Thread user message count request failed with ${response.status}`)
-    }
-    const payload = await response.json() as { count?: unknown }
-    const count = typeof payload.count === 'number' ? payload.count : 0
-    return Math.max(0, Math.floor(count))
-  } catch (error) {
-    throw normalizeCodexApiError(error, `Failed to count user messages for thread ${threadId}`, 'thread/read')
-  }
-}
-
 export type ThreadUserMessageIndexEntry = {
   turnId: string
   ordinal: number
@@ -1106,32 +1091,53 @@ export type ThreadUserMessageIndexEntry = {
   sourceThreadId?: string
 }
 
-export async function getThreadUserMessageIndex(threadId: string): Promise<ThreadUserMessageIndexEntry[]> {
+export type ThreadUserMessageNavigation = {
+  entries: ThreadUserMessageIndexEntry[]
+  count: number
+}
+
+function normalizeThreadUserMessageIndexEntries(value: unknown): ThreadUserMessageIndexEntry[] {
+  if (!Array.isArray(value)) return []
+  const entries: ThreadUserMessageIndexEntry[] = []
+  for (const raw of value) {
+    if (!raw || typeof raw !== 'object') continue
+    const record = raw as Record<string, unknown>
+    const turnId = typeof record.turnId === 'string' ? record.turnId : ''
+    const ordinal = typeof record.ordinal === 'number' ? Math.max(0, Math.floor(record.ordinal)) : 0
+    const preview = typeof record.preview === 'string' ? record.preview : ''
+    const title = typeof record.title === 'string' ? record.title : preview
+    const kind = record.kind === 'forkBoundary' ? 'forkBoundary' : undefined
+    const sourceThreadId = typeof record.sourceThreadId === 'string' ? record.sourceThreadId : undefined
+    if (!turnId || (!ordinal && kind !== 'forkBoundary')) continue
+    entries.push({ turnId, ordinal, preview, title, kind, sourceThreadId })
+  }
+  return entries
+}
+
+export async function getThreadUserMessageNavigation(threadId: string): Promise<ThreadUserMessageNavigation> {
   try {
     const params = new URLSearchParams({ threadId })
-    const response = await fetch(`/codex-api/thread-user-message-index?${params.toString()}`)
+    const response = await fetch(`/codex-api/thread-user-message-navigation?${params.toString()}`)
     if (!response.ok) {
-      throw new Error(`Thread user message index request failed with ${response.status}`)
+      throw new Error(`Thread user message navigation request failed with ${response.status}`)
     }
-    const payload = await response.json() as { entries?: unknown }
-    if (!Array.isArray(payload.entries)) return []
-    const entries: ThreadUserMessageIndexEntry[] = []
-    for (const raw of payload.entries) {
-      if (!raw || typeof raw !== 'object') continue
-      const record = raw as Record<string, unknown>
-      const turnId = typeof record.turnId === 'string' ? record.turnId : ''
-      const ordinal = typeof record.ordinal === 'number' ? Math.max(0, Math.floor(record.ordinal)) : 0
-      const preview = typeof record.preview === 'string' ? record.preview : ''
-      const title = typeof record.title === 'string' ? record.title : preview
-      const kind = record.kind === 'forkBoundary' ? 'forkBoundary' : undefined
-      const sourceThreadId = typeof record.sourceThreadId === 'string' ? record.sourceThreadId : undefined
-      if (!turnId || (!ordinal && kind !== 'forkBoundary')) continue
-      entries.push({ turnId, ordinal, preview, title, kind, sourceThreadId })
-    }
-    return entries
+    const payload = await response.json() as { entries?: unknown; count?: unknown }
+    const entries = normalizeThreadUserMessageIndexEntries(payload.entries)
+    const count = typeof payload.count === 'number'
+      ? Math.max(0, Math.floor(payload.count))
+      : entries.filter((entry) => entry.kind !== 'forkBoundary').length
+    return { entries, count }
   } catch (error) {
-    throw normalizeCodexApiError(error, `Failed to load user message index for thread ${threadId}`, 'thread/read')
+    throw normalizeCodexApiError(error, `Failed to load user message navigation for thread ${threadId}`, 'thread/read')
   }
+}
+
+export async function getThreadUserMessageCount(threadId: string): Promise<number> {
+  return (await getThreadUserMessageNavigation(threadId)).count
+}
+
+export async function getThreadUserMessageIndex(threadId: string): Promise<ThreadUserMessageIndexEntry[]> {
+  return (await getThreadUserMessageNavigation(threadId)).entries
 }
 
 export async function getFullThreadMessages(threadId: string): Promise<ThreadTurnPage> {
@@ -4040,7 +4046,7 @@ function getErrorMessageFromPayload(payload: unknown, fallback: string): string 
 }
 
 export type ThreadTitleCache = { titles: Record<string, string>; order: string[] }
-export type ThreadPinnedState = { threadIds: string[] }
+export type ThreadPinnedState = { threadIds: string[]; threads: UiThread[] }
 export type FirstLaunchPluginsCardPreference = { dismissed: boolean }
 
 export async function getThreadTitleCache(): Promise<ThreadTitleCache> {
@@ -4069,11 +4075,13 @@ export async function persistThreadTitle(id: string, title: string): Promise<voi
 export async function getPinnedThreadState(): Promise<ThreadPinnedState> {
   try {
     const response = await fetch('/codex-api/thread-pins')
-    if (!response.ok) return { threadIds: [] }
+    if (!response.ok) return { threadIds: [], threads: [] }
     const envelope = (await response.json()) as { data?: ThreadPinnedState }
-    return envelope.data ?? { threadIds: [] }
+    const threadIds = Array.isArray(envelope.data?.threadIds) ? envelope.data.threadIds : []
+    const threads = Array.isArray(envelope.data?.threads) ? envelope.data.threads : []
+    return { threadIds, threads }
   } catch {
-    return { threadIds: [] }
+    return { threadIds: [], threads: [] }
   }
 }
 
