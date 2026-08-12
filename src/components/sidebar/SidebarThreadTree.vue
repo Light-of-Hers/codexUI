@@ -148,8 +148,8 @@
           <IconTablerChevronRight v-if="!isProjectsSectionExpanded" class="thread-icon" />
           <IconTablerChevronDown v-else class="thread-icon" />
         </template>
-        <span class="thread-tree-header">{{ forkTreeEnabled ? t('Threads') : t('Projects') }}</span>
-        <template v-if="!forkTreeEnabled" #right>
+        <span class="thread-tree-header">{{ t('Projects') }}</span>
+        <template #right>
           <div ref="organizeMenuWrapRef" class="organize-menu-wrap">
             <button
               class="organize-menu-trigger"
@@ -219,7 +219,7 @@
       <template v-if="isProjectsSectionExpanded">
       <p v-if="projectAutomationActionError" class="thread-tree-action-error">{{ projectAutomationActionError }}</p>
 
-      <p v-if="isSearchActive && (forkTreeEnabled ? forkTreeNodes.length === 0 : filteredGroups.length === 0)" class="thread-tree-no-results">{{ t('No matching threads') }}</p>
+      <p v-if="isSearchActive && filteredGroups.length === 0" class="thread-tree-no-results">{{ t('No matching threads') }}</p>
 
       <p v-else-if="isLoading && groups.length === 0" class="thread-tree-loading">{{ t('Loading threads...') }}</p>
 
@@ -294,104 +294,6 @@
                 type="button"
                 title="thread_menu"
                 @click.stop="toggleThreadMenu(thread.id)"
-              >
-                <IconTablerDots class="thread-icon" />
-              </button>
-            </div>
-          </template>
-        </SidebarMenuRow>
-      </li>
-    </ul>
-
-    <ul v-else-if="forkTreeEnabled" class="thread-list thread-list-global fork-tree-list">
-      <li
-        v-for="node in forkTreeNodes"
-        :key="node.thread.id"
-        class="thread-row-item fork-tree-row-item"
-        :class="{ 'fork-tree-row-item-child': node.depth > 0 }"
-        :style="forkTreeNodeStyle(node.depth)"
-        :data-depth="node.depth"
-        :data-menu-open="isThreadMenuOpen(node.thread.id) ? 'true' : 'false'"
-      >
-        <SidebarMenuRow
-          class="thread-row fork-tree-row"
-          :data-active="node.thread.id === selectedThreadId"
-          :data-pinned="isPinned(node.thread.id)"
-          :data-menu-open="isThreadMenuOpen(node.thread.id) ? 'true' : 'false'"
-          :force-right-hover="isThreadMenuOpen(node.thread.id)"
-          @click="onSelect(node.thread.id)"
-          @mouseleave="onThreadRowLeave(node.thread.id, $event)"
-          @contextmenu="onThreadRowContextMenu($event, node.thread.id)"
-        >
-          <template #left>
-            <span class="fork-tree-left-stack">
-              <button
-                v-if="node.hasChildren"
-                class="fork-tree-toggle"
-                type="button"
-                :aria-expanded="isForkTreeExpanded(node.thread.id)"
-                :aria-label="isForkTreeExpanded(node.thread.id) ? t('Collapse fork') : t('Expand fork')"
-                :title="isForkTreeExpanded(node.thread.id) ? t('Collapse fork') : t('Expand fork')"
-                @click.stop="toggleForkTreeNode(node.thread.id)"
-              >
-                <IconTablerChevronDown v-if="isForkTreeExpanded(node.thread.id)" class="thread-icon" />
-                <IconTablerChevronRight v-else class="thread-icon" />
-              </button>
-              <span v-else class="fork-tree-toggle-spacer" aria-hidden="true" />
-              <span class="thread-left-stack">
-                <span
-                  v-if="shouldShowThreadIndicator(node.thread)"
-                  class="thread-status-indicator"
-                  :data-state="getThreadState(node.thread)"
-                />
-                <button
-                  class="thread-delete-button"
-                  type="button"
-                  :data-confirming="isInlineDeleteConfirming(node.thread.id)"
-                  :title="isInlineDeleteConfirming(node.thread.id) ? 'Confirm delete' : t('Delete thread')"
-                  @click.stop="onInlineDeleteClick(node.thread.id)"
-                >
-                  <span v-if="isInlineDeleteConfirming(node.thread.id)" class="thread-delete-confirm-label">Confirm</span>
-                  <IconTablerTrash v-else class="thread-icon" />
-                </button>
-              </span>
-            </span>
-          </template>
-          <button class="thread-main-button" type="button" @click.stop="onSelect(node.thread.id)">
-            <span class="thread-row-title-wrap">
-              <span class="thread-row-title-line">
-                <span class="thread-row-title">{{ node.thread.title }}</span>
-                <IconTablerGitFork v-if="node.thread.hasWorktree" class="thread-row-worktree-icon" :title="t('Worktree thread')" />
-                <span
-                  v-if="threadHasAutomation(node.thread.id)"
-                  class="thread-row-automation-chip"
-                  :title="threadAutomationTooltip(node.thread.id)"
-                >
-                  <IconTablerBolt class="thread-row-automation-icon" />
-                  <span v-if="threadAutomationCount(node.thread.id) > 1" class="thread-row-automation-count">
-                    {{ threadAutomationCount(node.thread.id) }}
-                  </span>
-                </span>
-                <span
-                  v-if="node.thread.pendingRequestState"
-                  class="thread-row-request-chip"
-                  :data-state="node.thread.pendingRequestState"
-                >
-                  {{ threadRequestLabel(node.thread) }}
-                </span>
-              </span>
-            </span>
-          </button>
-          <template #right>
-            <span class="thread-row-time">{{ formatRelativeThread(node.thread) }}</span>
-          </template>
-          <template #right-hover>
-            <div :ref="(el) => setThreadMenuWrapRef(node.thread.id, el)" class="thread-menu-wrap">
-              <button
-                class="thread-menu-trigger"
-                type="button"
-                title="thread_menu"
-                @click.stop="toggleThreadMenu(node.thread.id)"
               >
                 <IconTablerDots class="thread-icon" />
               </button>
@@ -523,77 +425,112 @@
             </template>
           </SidebarMenuRow>
 
-          <ul v-if="hasThreads(group)" class="thread-list">
+          <ul v-if="hasThreads(group)" class="thread-list" :class="{ 'fork-tree-list': forkTreeEnabled }">
             <li
-              v-for="thread in visibleThreads(group)"
-              :key="thread.id"
+              v-for="node in visibleProjectThreadNodes(group)"
+              :key="node.thread.id"
               class="thread-row-item"
-              :data-menu-open="isThreadMenuOpen(thread.id) ? 'true' : 'false'"
+              :class="{ 'fork-tree-row-item fork-tree-row-item-child': forkTreeEnabled && node.depth > 0 }"
+              :style="forkTreeEnabled ? forkTreeNodeStyle(node.depth) : undefined"
+              :data-menu-open="isThreadMenuOpen(node.thread.id) ? 'true' : 'false'"
             >
               <SidebarMenuRow
                 class="thread-row"
-                :data-active="thread.id === selectedThreadId"
-                :data-pinned="isPinned(thread.id)"
-                :data-menu-open="isThreadMenuOpen(thread.id) ? 'true' : 'false'"
-                :force-right-hover="isThreadMenuOpen(thread.id)"
-                @click="onSelect(thread.id)"
-                @mouseleave="onThreadRowLeave(thread.id, $event)"
-                @contextmenu="onThreadRowContextMenu($event, thread.id)"
+                :class="{ 'fork-tree-row': forkTreeEnabled }"
+                :data-active="node.thread.id === selectedThreadId"
+                :data-pinned="isPinned(node.thread.id)"
+                :data-menu-open="isThreadMenuOpen(node.thread.id) ? 'true' : 'false'"
+                :force-right-hover="isThreadMenuOpen(node.thread.id)"
+                @click="onSelect(node.thread.id)"
+                @mouseleave="onThreadRowLeave(node.thread.id, $event)"
+                @contextmenu="onThreadRowContextMenu($event, node.thread.id)"
               >
                 <template #left>
-                  <span class="thread-left-stack">
+                  <span v-if="forkTreeEnabled" class="fork-tree-left-stack">
+                    <button
+                      v-if="node.hasChildren"
+                      class="fork-tree-toggle"
+                      type="button"
+                      :aria-expanded="isForkTreeExpanded(node.thread.id)"
+                      :aria-label="isForkTreeExpanded(node.thread.id) ? t('Collapse fork') : t('Expand fork')"
+                      :title="isForkTreeExpanded(node.thread.id) ? t('Collapse fork') : t('Expand fork')"
+                      @click.stop="toggleForkTreeNode(node.thread.id)"
+                    >
+                      <IconTablerChevronDown v-if="isForkTreeExpanded(node.thread.id)" class="thread-icon" />
+                      <IconTablerChevronRight v-else class="thread-icon" />
+                    </button>
+                    <span v-else class="fork-tree-toggle-spacer" aria-hidden="true" />
+                    <span class="thread-left-stack">
+                      <span
+                        v-if="shouldShowThreadIndicator(node.thread)"
+                        class="thread-status-indicator"
+                        :data-state="getThreadState(node.thread)"
+                      />
+                      <button
+                        class="thread-delete-button"
+                        type="button"
+                        :data-confirming="isInlineDeleteConfirming(node.thread.id)"
+                        :title="isInlineDeleteConfirming(node.thread.id) ? 'Confirm delete' : t('Delete thread')"
+                        @click.stop="onInlineDeleteClick(node.thread.id)"
+                      >
+                        <span v-if="isInlineDeleteConfirming(node.thread.id)" class="thread-delete-confirm-label">Confirm</span>
+                        <IconTablerTrash v-else class="thread-icon" />
+                      </button>
+                    </span>
+                  </span>
+                  <span v-else class="thread-left-stack">
                     <span
-                      v-if="shouldShowThreadIndicator(thread)"
+                      v-if="shouldShowThreadIndicator(node.thread)"
                       class="thread-status-indicator"
-                      :data-state="getThreadState(thread)"
+                      :data-state="getThreadState(node.thread)"
                     />
                     <button
                       class="thread-delete-button"
                       type="button"
-                      :data-confirming="isInlineDeleteConfirming(thread.id)"
-                      :title="isInlineDeleteConfirming(thread.id) ? 'Confirm delete' : t('Delete thread')"
-                      @click.stop="onInlineDeleteClick(thread.id)"
+                      :data-confirming="isInlineDeleteConfirming(node.thread.id)"
+                      :title="isInlineDeleteConfirming(node.thread.id) ? 'Confirm delete' : t('Delete thread')"
+                      @click.stop="onInlineDeleteClick(node.thread.id)"
                     >
-                      <span v-if="isInlineDeleteConfirming(thread.id)" class="thread-delete-confirm-label">Confirm</span>
+                      <span v-if="isInlineDeleteConfirming(node.thread.id)" class="thread-delete-confirm-label">Confirm</span>
                       <IconTablerTrash v-else class="thread-icon" />
                     </button>
                   </span>
                 </template>
-                <button class="thread-main-button" type="button" @click.stop="onSelect(thread.id)">
+                <button class="thread-main-button" type="button" @click.stop="onSelect(node.thread.id)">
                   <span class="thread-row-title-wrap">
                     <span class="thread-row-title-line">
-                      <span class="thread-row-title">{{ thread.title }}</span>
-                      <IconTablerGitFork v-if="thread.hasWorktree" class="thread-row-worktree-icon" :title="t('Worktree thread')" />
+                      <span class="thread-row-title">{{ node.thread.title }}</span>
+                      <IconTablerGitFork v-if="node.thread.hasWorktree" class="thread-row-worktree-icon" :title="t('Worktree thread')" />
                       <span
-                        v-if="threadHasAutomation(thread.id)"
+                        v-if="threadHasAutomation(node.thread.id)"
                         class="thread-row-automation-chip"
-                        :title="threadAutomationTooltip(thread.id)"
+                        :title="threadAutomationTooltip(node.thread.id)"
                       >
                         <IconTablerBolt class="thread-row-automation-icon" />
-                        <span v-if="threadAutomationCount(thread.id) > 1" class="thread-row-automation-count">
-                          {{ threadAutomationCount(thread.id) }}
+                        <span v-if="threadAutomationCount(node.thread.id) > 1" class="thread-row-automation-count">
+                          {{ threadAutomationCount(node.thread.id) }}
                         </span>
                       </span>
                       <span
-                        v-if="thread.pendingRequestState"
+                        v-if="node.thread.pendingRequestState"
                         class="thread-row-request-chip"
-                        :data-state="thread.pendingRequestState"
+                        :data-state="node.thread.pendingRequestState"
                       >
-                        {{ threadRequestLabel(thread) }}
+                        {{ threadRequestLabel(node.thread) }}
                       </span>
                     </span>
                   </span>
                 </button>
                 <template #right>
-                  <span class="thread-row-time">{{ formatRelativeThread(thread) }}</span>
+                  <span class="thread-row-time">{{ formatRelativeThread(node.thread) }}</span>
                 </template>
                 <template #right-hover>
-                  <div :ref="(el) => setThreadMenuWrapRef(thread.id, el)" class="thread-menu-wrap">
+                  <div :ref="(el) => setThreadMenuWrapRef(node.thread.id, el)" class="thread-menu-wrap">
                     <button
                       class="thread-menu-trigger"
                       type="button"
                       title="thread_menu"
-                      @click.stop="toggleThreadMenu(thread.id)"
+                      @click.stop="toggleThreadMenu(node.thread.id)"
                     >
                       <IconTablerDots class="thread-icon" />
                     </button>
@@ -623,7 +560,7 @@
       </template>
     </section>
 
-    <section v-if="!forkTreeEnabled" class="chats-section">
+    <section class="chats-section">
       <SidebarMenuRow
         as="button"
         class="section-toggle-row"
@@ -652,77 +589,112 @@
       </SidebarMenuRow>
 
       <p v-if="isChatsSectionExpanded && chatThreads.length === 0" class="thread-tree-no-results">{{ t('No chats') }}</p>
-      <ul v-else-if="isChatsSectionExpanded" class="thread-list thread-list-global">
+      <ul v-else-if="isChatsSectionExpanded" class="thread-list thread-list-global" :class="{ 'fork-tree-list': forkTreeEnabled }">
         <li
-          v-for="thread in visibleChatThreads"
-          :key="thread.id"
+          v-for="node in visibleChatThreadNodes"
+          :key="node.thread.id"
           class="thread-row-item"
-          :data-menu-open="isThreadMenuOpen(thread.id) ? 'true' : 'false'"
+          :class="{ 'fork-tree-row-item fork-tree-row-item-child': forkTreeEnabled && node.depth > 0 }"
+          :style="forkTreeEnabled ? forkTreeNodeStyle(node.depth) : undefined"
+          :data-menu-open="isThreadMenuOpen(node.thread.id) ? 'true' : 'false'"
         >
           <SidebarMenuRow
             class="thread-row"
-            :data-active="thread.id === selectedThreadId"
-            :data-pinned="isPinned(thread.id)"
-            :data-menu-open="isThreadMenuOpen(thread.id) ? 'true' : 'false'"
-            :force-right-hover="isThreadMenuOpen(thread.id)"
-            @click="onSelect(thread.id)"
-            @mouseleave="onThreadRowLeave(thread.id, $event)"
-            @contextmenu="onThreadRowContextMenu($event, thread.id)"
+            :class="{ 'fork-tree-row': forkTreeEnabled }"
+            :data-active="node.thread.id === selectedThreadId"
+            :data-pinned="isPinned(node.thread.id)"
+            :data-menu-open="isThreadMenuOpen(node.thread.id) ? 'true' : 'false'"
+            :force-right-hover="isThreadMenuOpen(node.thread.id)"
+            @click="onSelect(node.thread.id)"
+            @mouseleave="onThreadRowLeave(node.thread.id, $event)"
+            @contextmenu="onThreadRowContextMenu($event, node.thread.id)"
           >
             <template #left>
-              <span class="thread-left-stack">
+              <span v-if="forkTreeEnabled" class="fork-tree-left-stack">
+                <button
+                  v-if="node.hasChildren"
+                  class="fork-tree-toggle"
+                  type="button"
+                  :aria-expanded="isForkTreeExpanded(node.thread.id)"
+                  :aria-label="isForkTreeExpanded(node.thread.id) ? t('Collapse fork') : t('Expand fork')"
+                  :title="isForkTreeExpanded(node.thread.id) ? t('Collapse fork') : t('Expand fork')"
+                  @click.stop="toggleForkTreeNode(node.thread.id)"
+                >
+                  <IconTablerChevronDown v-if="isForkTreeExpanded(node.thread.id)" class="thread-icon" />
+                  <IconTablerChevronRight v-else class="thread-icon" />
+                </button>
+                <span v-else class="fork-tree-toggle-spacer" aria-hidden="true" />
+                <span class="thread-left-stack">
+                  <span
+                    v-if="shouldShowThreadIndicator(node.thread)"
+                    class="thread-status-indicator"
+                    :data-state="getThreadState(node.thread)"
+                  />
+                  <button
+                    class="thread-delete-button"
+                    type="button"
+                    :data-confirming="isInlineDeleteConfirming(node.thread.id)"
+                    :title="isInlineDeleteConfirming(node.thread.id) ? 'Confirm delete' : t('Delete thread')"
+                    @click.stop="onInlineDeleteClick(node.thread.id)"
+                  >
+                    <span v-if="isInlineDeleteConfirming(node.thread.id)" class="thread-delete-confirm-label">Confirm</span>
+                    <IconTablerTrash v-else class="thread-icon" />
+                  </button>
+                </span>
+              </span>
+              <span v-else class="thread-left-stack">
                 <span
-                  v-if="shouldShowThreadIndicator(thread)"
+                  v-if="shouldShowThreadIndicator(node.thread)"
                   class="thread-status-indicator"
-                  :data-state="getThreadState(thread)"
+                  :data-state="getThreadState(node.thread)"
                 />
                 <button
                   class="thread-delete-button"
                   type="button"
-                  :data-confirming="isInlineDeleteConfirming(thread.id)"
-                  :title="isInlineDeleteConfirming(thread.id) ? 'Confirm delete' : t('Delete thread')"
-                  @click.stop="onInlineDeleteClick(thread.id)"
+                  :data-confirming="isInlineDeleteConfirming(node.thread.id)"
+                  :title="isInlineDeleteConfirming(node.thread.id) ? 'Confirm delete' : t('Delete thread')"
+                  @click.stop="onInlineDeleteClick(node.thread.id)"
                 >
-                  <span v-if="isInlineDeleteConfirming(thread.id)" class="thread-delete-confirm-label">Confirm</span>
+                  <span v-if="isInlineDeleteConfirming(node.thread.id)" class="thread-delete-confirm-label">Confirm</span>
                   <IconTablerTrash v-else class="thread-icon" />
                 </button>
               </span>
             </template>
-            <button class="thread-main-button" type="button" @click.stop="onSelect(thread.id)">
+            <button class="thread-main-button" type="button" @click.stop="onSelect(node.thread.id)">
               <span class="thread-row-title-wrap">
                 <span class="thread-row-title-line">
-                  <span class="thread-row-title">{{ thread.title }}</span>
-                  <IconTablerGitFork v-if="thread.hasWorktree" class="thread-row-worktree-icon" :title="t('Worktree thread')" />
+                  <span class="thread-row-title">{{ node.thread.title }}</span>
+                  <IconTablerGitFork v-if="node.thread.hasWorktree" class="thread-row-worktree-icon" :title="t('Worktree thread')" />
                   <span
-                    v-if="threadHasAutomation(thread.id)"
+                    v-if="threadHasAutomation(node.thread.id)"
                     class="thread-row-automation-chip"
-                    :title="threadAutomationTooltip(thread.id)"
+                    :title="threadAutomationTooltip(node.thread.id)"
                   >
                     <IconTablerBolt class="thread-row-automation-icon" />
-                    <span v-if="threadAutomationCount(thread.id) > 1" class="thread-row-automation-count">
-                      {{ threadAutomationCount(thread.id) }}
+                    <span v-if="threadAutomationCount(node.thread.id) > 1" class="thread-row-automation-count">
+                      {{ threadAutomationCount(node.thread.id) }}
                     </span>
                   </span>
                   <span
-                    v-if="thread.pendingRequestState"
+                    v-if="node.thread.pendingRequestState"
                     class="thread-row-request-chip"
-                    :data-state="thread.pendingRequestState"
+                    :data-state="node.thread.pendingRequestState"
                   >
-                    {{ threadRequestLabel(thread) }}
+                    {{ threadRequestLabel(node.thread) }}
                   </span>
                 </span>
               </span>
             </button>
             <template #right>
-              <span class="thread-row-time">{{ formatRelativeThread(thread) }}</span>
+              <span class="thread-row-time">{{ formatRelativeThread(node.thread) }}</span>
             </template>
             <template #right-hover>
-              <div :ref="(el) => setThreadMenuWrapRef(thread.id, el)" class="thread-menu-wrap">
+              <div :ref="(el) => setThreadMenuWrapRef(node.thread.id, el)" class="thread-menu-wrap">
                 <button
                   class="thread-menu-trigger"
                   type="button"
                   title="thread_menu"
-                  @click.stop="toggleThreadMenu(thread.id)"
+                  @click.stop="toggleThreadMenu(node.thread.id)"
                 >
                   <IconTablerDots class="thread-icon" />
                 </button>
@@ -1429,11 +1401,6 @@ const globalThreads = computed<UiThread[]>(() => {
   })
 })
 
-const forkTreeNodes = computed(() => buildForkTree(
-  globalThreads.value,
-  new Set(Object.keys(collapsedForkTreeThreadIds.value)),
-))
-
 const chatThreads = computed(() => {
   const rows = globalThreads.value.filter((thread) => isProjectlessChatPath(thread.cwd))
   const timestampKey = chatSortMode.value === 'created' ? 'createdAtIso' : 'updatedAtIso'
@@ -1449,6 +1416,8 @@ const visibleChatThreads = computed(() => {
   if (isSearchActive.value) return chatThreads.value
   return isChatsListExpanded.value ? chatThreads.value : chatThreads.value.slice(0, 10)
 })
+
+const visibleChatThreadNodes = computed(() => forkTreeNodesForThreads(visibleChatThreads.value))
 
 const hasHiddenChatThreads = computed(() => {
   if (isSearchActive.value) return false
@@ -3133,6 +3102,20 @@ function visibleThreads(group: UiProjectGroup): UiThread[] {
 
   const rows = projectThreads(group)
   return isExpanded(group.projectName) ? rows : rows.slice(0, 10)
+}
+
+function forkTreeNodesForThreads(threads: UiThread[]) {
+  if (!props.forkTreeEnabled) {
+    return threads.map((thread) => ({ thread, depth: 0, hasChildren: false }))
+  }
+  return buildForkTree(
+    threads,
+    new Set(Object.keys(collapsedForkTreeThreadIds.value)),
+  )
+}
+
+function visibleProjectThreadNodes(group: UiProjectGroup) {
+  return forkTreeNodesForThreads(visibleThreads(group))
 }
 
 function hasHiddenThreads(group: UiProjectGroup): boolean {

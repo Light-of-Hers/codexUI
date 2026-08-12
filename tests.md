@@ -7956,14 +7956,14 @@ Markdown files opened through the local editor expose a preview button that rend
 7. Fork the selected parent once more and confirm the optimistic child immediately appears beneath that parent before the background list refresh completes.
 8. Archive the direct child, refresh the active list, and confirm its visible child is attached under the nearest active ancestor at the archived child's original fork point.
 9. Delete a disposable intermediate paginated child whose grandchild retains a history base for the active ancestor; refresh and confirm that grandchild remains attached to that ancestor.
-10. Turn `Group forked sessions` off and confirm the existing project/chats and chronological organization modes return. Turn it on again and confirm the tree is restored.
+10. Confirm `Projects` and `Chats` remain visible with `Group forked sessions` on, with each section arranging its own fork branches. Turn the setting off and confirm the chronological rows return; turn it on again and confirm the tree is restored inside those sections.
 11. Switch to dark theme and repeat steps 1-10; confirm branch lines, chevrons, active rows, and hover states retain readable contrast.
 12. Run `pnpm exec vitest run src/components/sidebar/forkTree.test.ts src/api/normalizers/v2.test.ts src/server/threadListRecovery.test.ts` and `pnpm exec vue-tsc --noEmit --pretty false`.
 
 #### Expected Results
 - The visible fork topology uses each session's direct `forked_from_id` while its parent is active. If an intermediate parent is archived, descendants fold into the closest active ancestor using that archived parent's fork point. If the parent was deleted, the same reattachment is possible when the child retains an inherited `history_base` for that ancestor; otherwise missing provenance remains a root row.
 - Siblings with known paginated fork points sort by ordinal and byte offset, then by creation time for deterministic ties. Legacy sessions without a stored fork point fall back to creation time.
-- Global fork grouping is on by default and persists as a setting. When on, every loaded child is attached to its direct parent regardless of the old project/chats organization modes.
+- Global fork grouping is on by default and persists as a setting. When on, it retains the `Projects` and `Chats` sections while attaching each loaded child to its direct parent within its applicable section.
 - Pinning a thread carries its complete loaded descendant branch into Pinned. Nested pinned roots are deduplicated, and that branch is absent from the ordinary tree.
 - Expand/collapse state persists locally across refreshes.
 - Light and dark themes preserve normal sidebar controls and readable tree affordances.
