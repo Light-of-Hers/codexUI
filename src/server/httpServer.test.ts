@@ -167,6 +167,44 @@ describe('local browse file mutations', () => {
     expect(await response.json()).toEqual({ ok: true })
     expect(existsSync(dirPath)).toBe(false)
   })
+
+  it('rejects create payloads larger than the shared JSON limit', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'codexui-http-server-create-limit-'))
+    const baseUrl = await startServer()
+    const response = await fetch(`${baseUrl}/codex-local-browse${encodeURI(tempDir)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'x'.repeat(1024 * 1024) }),
+    })
+
+    expect(response.status).toBe(413)
+    expect(await response.json()).toEqual({ error: 'Request body too large.' })
+  })
+})
+
+describe('local editor and preview', () => {
+  it('uses the same text route contract for preview and save', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'codexui-http-server-edit-'))
+    const filePath = join(tempDir, 'note.md')
+    await writeFile(filePath, '# Old\n', 'utf8')
+    const baseUrl = await startServer()
+
+    const previewResponse = await fetch(`${baseUrl}/codex-local-preview${encodeURI(filePath)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: '# Preview',
+    })
+    expect(previewResponse.status).toBe(200)
+    expect(await previewResponse.text()).toContain('Preview')
+
+    const saveResponse = await fetch(`${baseUrl}/codex-local-edit${encodeURI(filePath)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'text/plain' },
+      body: '# Saved\n',
+    })
+    expect(saveResponse.status).toBe(200)
+    expect(await saveResponse.json()).toEqual({ ok: true })
+  })
 })
 
 describe('local browse Git file diff', () => {
