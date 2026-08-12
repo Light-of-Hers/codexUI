@@ -4,6 +4,7 @@ import {
   normalizeThreadMessagesV2,
   readActiveTurnIdFromResponse,
   readThreadInProgressFromResponse,
+  readTerminalTurnIdsFromResponse,
 } from './v2'
 import type { ThreadListResponse, ThreadReadResponse } from '../appServerDtos'
 
@@ -140,6 +141,30 @@ describe('thread active turn normalization', () => {
 
     expect(readThreadInProgressFromResponse(payload)).toBe(true)
     expect(readActiveTurnIdFromResponse(payload)).toBe('turn-active')
+  })
+
+  it('reports terminal turn ids separately from the running-state fallback', () => {
+    const payload = {
+      thread: {
+        id: 'thread-1',
+        preview: 'Running session',
+        modelProvider: 'openai',
+        createdAt: 1,
+        updatedAt: 2,
+        path: null,
+        cwd: '/tmp/project',
+        cliVersion: 'test',
+        source: 'appServer',
+        gitInfo: null,
+        turns: [
+          { id: 'turn-complete', status: 'completed', error: null, items: [] },
+          { id: 'turn-active', status: 'inProgress', error: null, items: [] },
+          { id: 'turn-failed', status: 'failed', error: null, items: [] },
+        ],
+      },
+    } as ThreadReadResponse
+
+    expect(readTerminalTurnIdsFromResponse(payload)).toEqual(['turn-complete', 'turn-failed'])
   })
 })
 

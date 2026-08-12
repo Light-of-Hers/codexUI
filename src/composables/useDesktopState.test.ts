@@ -2125,6 +2125,25 @@ describe('active turn state reconciliation', () => {
     }
   }
 
+  function persistedCommandTurnDetail(turnId: string) {
+    return {
+      messages: [{
+        id: 'command-1',
+        role: 'assistant' as const,
+        text: 'pnpm test',
+        messageType: 'commandExecution',
+        turnId,
+        turnIndex: 0,
+        itemIndex: 1,
+      }],
+      inProgress: false,
+      activeTurnId: '',
+      terminalTurnIds: [],
+      hasMoreOlder: false,
+      turnIndexByTurnId: { [turnId]: 0 },
+    }
+  }
+
   async function createThreadHarness() {
     installTestWindow()
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true })) as never)
@@ -2306,6 +2325,20 @@ describe('active turn state reconciliation', () => {
     gatewayMocks.startThreadTurn.mockResolvedValue('turn-new')
 
     await state.sendMessageToSelectedThread('start a slow task')
+
+    expect(state.selectedThread.value?.inProgress).toBe(true)
+    expect(state.projectGroups.value[0]?.threads[0]?.inProgress).toBe(true)
+    expect(state.selectedLiveOverlay.value?.activityLabel).toBe('Thinking')
+  })
+
+  it('keeps a turn running when a refresh has persisted its completed command', async () => {
+    const state = await createThreadHarness()
+    gatewayMocks.getThreadDetail
+      .mockResolvedValueOnce(staleThreadDetail())
+      .mockResolvedValueOnce(persistedCommandTurnDetail('turn-new'))
+    gatewayMocks.startThreadTurn.mockResolvedValue('turn-new')
+
+    await state.sendMessageToSelectedThread('start a task with several commands')
 
     expect(state.selectedThread.value?.inProgress).toBe(true)
     expect(state.projectGroups.value[0]?.threads[0]?.inProgress).toBe(true)
@@ -2603,6 +2636,31 @@ describe('live turn rendering', () => {
     const commandMessages = state.messages.value.filter((message) => message.messageType === 'commandExecution')
     expect(commandMessages).toHaveLength(1)
     expect(commandMessages[0].commandExecution?.aggregatedOutput).toBe('running\n')
+  })
+
+  it('clears a cached active turn when a detail refresh explicitly marks that turn terminal', async () => {
+    const { state, notify } = await createLiveStateHarness()
+    gatewayMocks.resumeThread.mockResolvedValue({
+      model: '',
+      modelProvider: '',
+      reasoningEffort: '',
+      messages: [],
+      inProgress: false,
+      activeTurnId: '',
+      terminalTurnIds: ['turn-1'],
+      hasMoreOlder: false,
+      turnIndexByTurnId: { 'turn-1': 0 },
+    })
+
+    notify(notification('turn/started', {
+      threadId: 'thread-a',
+      turn: { id: 'turn-1', threadId: 'thread-a', startedAt: '2026-05-23T00:00:00.000Z' },
+    }))
+    expect(state.selectedThreadInProgress.value).toBe(true)
+
+    await state.loadMessages('thread-a', { force: true, silent: true })
+
+    expect(state.selectedThreadInProgress.value).toBe(false)
   })
 
   it('preserves live text and command event order within one turn', async () => {

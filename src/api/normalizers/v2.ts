@@ -771,6 +771,11 @@ function isInProgressStatus(value: unknown): boolean {
   return type === 'inProgress' || type === 'in_progress' || type === 'running' || type === 'active'
 }
 
+function isTerminalStatus(value: unknown): boolean {
+  const type = typeof value === 'string' ? value : readString(asRecord(value)?.type)
+  return type === 'completed' || type === 'interrupted' || type === 'failed'
+}
+
 function readStatusTurnId(value: unknown): string {
   const record = asRecord(value)
   if (!record) return ''
@@ -898,4 +903,12 @@ export function readActiveTurnIdFromResponse(payload: ThreadReadResponse): strin
     }
   }
   return ''
+}
+
+export function readTerminalTurnIdsFromResponse(payload: ThreadReadResponse): string[] {
+  const turns = Array.isArray(payload.thread.turns) ? payload.thread.turns : []
+  return turns.flatMap((turn) => {
+    const turnId = typeof turn?.id === 'string' ? turn.id.trim() : ''
+    return turnId && isTerminalStatus(turn.status) ? [turnId] : []
+  })
 }

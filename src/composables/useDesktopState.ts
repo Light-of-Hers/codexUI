@@ -3500,14 +3500,13 @@ export function useDesktopState() {
     return !activeTurnId || !turnId || turnId === activeTurnId
   }
 
-  function hasPersistedAssistantResultForTurn(messages: UiMessage[] | undefined, turnId: string): boolean {
-    if (!turnId || !messages) return false
-    return messages.some((message) => message.turnId === turnId && message.role === 'assistant')
-  }
-
   function applyThreadDetailActiveTurnState(
     threadId: string,
-    detail: { messages?: UiMessage[]; inProgress: boolean; activeTurnId: string; turnIndexByTurnId: Record<string, number> },
+    detail: {
+      inProgress: boolean
+      activeTurnId: string
+      terminalTurnIds?: string[]
+    },
   ): { activeTurnId: string; inProgress: boolean } {
     if (!threadId) return { activeTurnId: '', inProgress: false }
 
@@ -3529,18 +3528,26 @@ export function useDesktopState() {
     }
 
     const cachedTurnId = activeTurnIdByThreadId.value[threadId]?.trim() ?? ''
-    const detailHasCachedTurn = Boolean(cachedTurnId && detail.turnIndexByTurnId[cachedTurnId] !== undefined)
-    if (cachedTurnId && !detailHasCachedTurn) {
-      // thread/read can briefly lag behind turn/start. Preserve the local active
-      // turn until a later read includes that turn as completed or interrupted.
+    if (cachedTurnId) {
+      if (detail.terminalTurnIds?.includes(cachedTurnId)) {
+        clearActiveTurnForThread(threadId)
+        return { activeTurnId: '', inProgress: false }
+      }
+
+      // A thread/read snapshot can include output from the active turn while its
+      // running marker is still propagating. Only a terminal status for this exact
+      // turn is authoritative enough to clear the local running state.
       setActiveTurnForThread(threadId, cachedTurnId)
       return { activeTurnId: cachedTurnId, inProgress: true }
     }
-    if (cachedTurnId && detailHasCachedTurn && !hasPersistedAssistantResultForTurn(detail.messages, cachedTurnId)) {
-      // thread/read may include the freshly submitted user turn before the app-server
-      // reports activeTurnId/inProgress. A user-only persisted turn is not terminal.
-      setActiveTurnForThread(threadId, cachedTurnId)
-      return { activeTurnId: cachedTurnId, inProgress: true }
+
+    if (inProgressById.value[threadId] === true) {
+      // Some status notifications lack a turn id. Preserve their live state until
+      // a terminal notification arrives instead of treating an incomplete refresh
+      // as proof that the thread became idle.
+      ensureActiveTurnActivity(threadId)
+      setThreadInProgress(threadId, true)
+      return { activeTurnId: '', inProgress: true }
     }
 
     clearActiveTurnForThread(threadId)
@@ -6327,15 +6334,14 @@ export function useDesktopState() {
           markThreadResumed(threadId)
         }
 
-        const { messages: nextMessages, inProgress, activeTurnId, turnIndexByTurnId } = detail
+        const { messages: nextMessages, inProgress, activeTurnId, terminalTurnIds, turnIndexByTurnId } = detail
         markThreadMessagesPersisted(threadId, nextMessages)
         replaceTurnIndexLookupForThread(threadId, turnIndexByTurnId)
         rebindLiveFileChangeTurnIndices(threadId)
         const appliedTurnState = applyThreadDetailActiveTurnState(threadId, {
-          messages: nextMessages,
           inProgress,
           activeTurnId,
-          turnIndexByTurnId,
+          terminalTurnIds,
         })
         const previousPersisted = persistedMessagesByThreadId.value[threadId] ?? []
         const mergedMessages = mergeMessages(previousPersisted, nextMessages, {
