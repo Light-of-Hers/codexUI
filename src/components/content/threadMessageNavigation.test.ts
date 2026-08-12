@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { UiMessage } from '../../types/codex'
-import { buildUserMessageNavigationItems } from './threadMessageNavigation'
+import {
+  buildUserMessageNavigationItems,
+  mergeSessionUserMessageNavigationItems,
+} from './threadMessageNavigation'
 
 function message(overrides: Partial<UiMessage>): UiMessage {
   return {
@@ -53,5 +56,26 @@ describe('buildUserMessageNavigationItems', () => {
 
     expect(items[0].preview).toBe('Files: report.md · 1 image')
     expect(items[0].title).toBe('Files: report.md · 1 image')
+  })
+
+  it('appends a freshly persisted loaded turn missing from a stale session index', () => {
+    const loadedItems = buildUserMessageNavigationItems([
+      message({ id: 'user-1', turnId: 'turn-1', text: 'Older prompt' }),
+      message({ id: 'user-2', turnId: 'turn-2', text: 'Newest prompt' }),
+    ])
+
+    const items = mergeSessionUserMessageNavigationItems([
+      { turnId: 'turn-1', ordinal: 1, preview: 'Older prompt', title: 'Older prompt' },
+    ], loadedItems)
+
+    expect(items.map((item) => ({
+      id: item.id,
+      turnId: item.turnId,
+      ordinal: item.ordinal,
+      preview: item.preview,
+    }))).toEqual([
+      { id: 'user-1', turnId: 'turn-1', ordinal: 1, preview: 'Older prompt' },
+      { id: 'user-2', turnId: 'turn-2', ordinal: 2, preview: 'Newest prompt' },
+    ])
   })
 })

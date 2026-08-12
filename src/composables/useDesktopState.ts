@@ -3,6 +3,7 @@ import {
   archiveThread,
   clearThreadGoal,
   forkThread,
+  forkThreadThroughTurn,
   getAvailableCollaborationModes,
   getAccountRateLimits,
   renameThread,
@@ -2139,16 +2140,20 @@ export function useDesktopState() {
   })
 
   // Keep the user-message index + count in sync as new user turns arrive.
-  // We track the set of user turnIds we have already indexed; whenever a new
-  // one shows up (a fresh prompt was sent), force-refresh both the index and
-  // the total so the dropdown reflects it without a page reload.
+  // The identity includes turnId because a temporary sent-message card is
+  // replaced by its persisted counterpart without changing the message count.
   const knownUserTurnIdsByThreadId = new Map<string, Set<string>>()
   watch(
     () => {
       const threadId = selectedThreadId.value
-      if (!threadId) return { threadId: '', count: 0 }
+      if (!threadId) return { threadId: '', userMessageIdentity: '' }
       const userMessages = messages.value.filter((message) => message.role === 'user')
-      return { threadId, count: userMessages.length }
+      return {
+        threadId,
+        userMessageIdentity: userMessages
+          .map((message) => `${message.id}\u0000${message.turnId?.trim() ?? ''}`)
+          .join('\u0001'),
+      }
     },
     ({ threadId }) => {
       if (!threadId) {
@@ -6762,14 +6767,10 @@ export function useDesktopState() {
     }
   }
 
-  async function forkThreadFromTurn(threadId: string, turnIndex: number): Promise<string> {
+  async function forkThreadFromTurn(threadId: string, turnId: string, turnIndex: number): Promise<string> {
     const normalizedThreadId = threadId.trim()
-    if (!normalizedThreadId || !Number.isInteger(turnIndex) || turnIndex < 0) return ''
-
-    if (inProgressById.value[normalizedThreadId] === true) {
-      error.value = 'Finish the current turn before forking from a response.'
-      return ''
-    }
+    const normalizedTurnId = turnId.trim()
+    if (!normalizedThreadId || !normalizedTurnId || !Number.isInteger(turnIndex) || turnIndex < 0) return ''
 
     if (loadedMessagesByThreadId.value[normalizedThreadId] !== true) {
       try {
@@ -6781,21 +6782,15 @@ export function useDesktopState() {
     }
 
     const sourceMessages = persistedMessagesByThreadId.value[normalizedThreadId] ?? []
-    let lastTurnIndex = -1
-    for (const message of sourceMessages) {
-      if (typeof message.turnIndex === 'number' && Number.isFinite(message.turnIndex)) {
-        lastTurnIndex = Math.max(lastTurnIndex, message.turnIndex)
-      }
-    }
-
-    if (lastTurnIndex >= 0 && turnIndex > lastTurnIndex) return ''
+    const sourceHasTurn = sourceMessages.some((message) => message.turnId?.trim() === normalizedTurnId)
+    if (!sourceHasTurn) return ''
 
     const sourceThread = flattenThreads(sourceGroups.value).find((row) => row.id === normalizedThreadId) ?? null
     const sourceProvider = readSelectedProvider(selectedProviderByContext.value, normalizedThreadId)
 
     try {
       error.value = ''
-      const forked = await forkThread(normalizedThreadId)
+      const forked = await forkThreadThroughTurn(normalizedThreadId, normalizedTurnId)
       const forkedThreadId = forked.threadId.trim()
       if (!forkedThreadId) return ''
 
@@ -6808,11 +6803,6 @@ export function useDesktopState() {
         forked.modelProvider || sourceProvider,
         forked.reasoningEffort,
       )
-      setPersistedMessagesForThread(forkedThreadId, forked.messages)
-      loadedMessagesByThreadId.value = {
-        ...loadedMessagesByThreadId.value,
-        [forkedThreadId]: true,
-      }
       markThreadResumed(forkedThreadId)
       clearLivePlansForThread(forkedThreadId)
       setLiveAgentMessagesForThread(forkedThreadId, [])
@@ -6826,14 +6816,9 @@ export function useDesktopState() {
       setTurnErrorForThread(forkedThreadId, null)
       setThreadInProgress(forkedThreadId, false)
 
-      const turnsToRollback = lastTurnIndex - turnIndex
-      if (turnsToRollback > 0) {
-        const rolledBackMessages = await rollbackThread(forkedThreadId, turnsToRollback)
-        setPersistedMessagesForThread(forkedThreadId, rolledBackMessages)
-      }
-
       await renameThreadById(forkedThreadId, forkedThreadTitle)
       setSelectedThreadId(forkedThreadId)
+      await loadMessages(forkedThreadId)
       void loadThreads().catch(() => {})
       return forkedThreadId
     } catch (unknownError) {

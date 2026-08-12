@@ -1089,7 +1089,11 @@ import { useUiLanguage } from '../../composables/useUiLanguage'
 import { getHighlightLanguageForPath, normalizeHighlightLanguage } from '../../utils/codeLanguage.js'
 import { groupConsecutiveRunnableItemsByLatestId } from './threadConversationGrouping'
 import { resolveAutoFollowAfterScroll, resolveLatestRenderWindow } from './threadConversationScroll'
-import { buildUserMessageNavigationItems, type UserMessageNavigationItem } from './threadMessageNavigation'
+import {
+  buildUserMessageNavigationItems,
+  mergeSessionUserMessageNavigationItems,
+  type UserMessageNavigationItem,
+} from './threadMessageNavigation'
 import { observeMermaidTheme, renderMermaidDiagrams } from './mermaidRenderer'
 
 import IconTablerArrowUp from '../icons/IconTablerArrowUp.vue'
@@ -1705,7 +1709,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  forkThread: [payload: { threadId: string; turnIndex: number }]
+  forkThread: [payload: { threadId: string; turnId: string; turnIndex: number }]
   rollback: [payload: { turnId: string }]
   implementPlan: [payload: { turnId: string }]
   respondServerRequest: [payload: UiServerRequestReply]
@@ -1717,34 +1721,14 @@ const loadedUserMessageNavigationItems = computed(() =>
 )
 const isMessageNavigationLoading = computed(() => props.isMessageNavigationLoading === true)
 
-// When the session-derived index is available, use it as the authoritative
-// source: it covers every turn without waiting on the (potentially very
-// large) full-history payload. Otherwise fall back to whatever messages the
-// main view already has loaded, applying the tail-alignment offset so
-// ordinals stay stable once the full history streams in.
+// The session-derived index covers complete history. Merge in any freshly
+// persisted rendered turn until its asynchronous index refresh finishes.
 const userMessageNavigationItems = computed<UserMessageNavigationItem[]>(() => {
   const sessionEntries = props.userMessageNavigationIndex ?? []
   const loadedItems = loadedUserMessageNavigationItems.value
 
   if (sessionEntries.length > 0) {
-    // Build a turnId -> loaded UiMessage id map so clicks can still jump to
-    // the exact rendered message when it happens to be loaded already.
-    const idByTurnId = new Map<string, string>()
-    for (const item of loadedItems) {
-      if (item.turnId && item.id && !idByTurnId.has(item.turnId)) {
-        idByTurnId.set(item.turnId, item.id)
-      }
-    }
-    return sessionEntries.map((entry) => ({
-      id: idByTurnId.get(entry.turnId) ?? '',
-      turnId: entry.turnId,
-      ordinal: entry.ordinal,
-      messageIndex: -1,
-      preview: entry.preview,
-      title: entry.title,
-      kind: entry.kind,
-      sourceThreadId: entry.sourceThreadId,
-    }))
+    return mergeSessionUserMessageNavigationItems(sessionEntries, loadedItems)
   }
 
   const totalProp = props.userMessageNavigationTotal
@@ -2550,33 +2534,40 @@ function isMessageInInheritedForkHistory(message: UiMessage): boolean {
   return inheritedForkHistoryMessageIds.value.has(message.id)
 }
 
-const forkableTurnIndexByAnchorId = computed<Record<string, number>>(() => {
-  const groupedTurns = new Map<string, { anchorMessageId: string; turnIndex: number }>()
+const forkableTurnByAnchorId = computed<Record<string, { turnId: string; turnIndex: number }>>(() => {
+  const groupedTurns = new Map<string, { anchorMessageId: string; turnId: string; turnIndex: number }>()
 
   for (const message of visibleMessages.value) {
+    const turnId = message.turnId?.trim() ?? ''
     if (
       !isCopyableAssistantMessage(message)
       || typeof message.turnIndex !== 'number'
+      || !turnId
       || isMessageInInheritedForkHistory(message)
     ) continue
 
-    const responseKey = `turn:${message.turnIndex}`
+    const responseKey = `turn:${turnId}`
     const existing = groupedTurns.get(responseKey)
     if (existing) {
       existing.anchorMessageId = message.id
+      existing.turnId = turnId
       existing.turnIndex = message.turnIndex
       continue
     }
 
     groupedTurns.set(responseKey, {
       anchorMessageId: message.id,
+      turnId,
       turnIndex: message.turnIndex,
     })
   }
 
-  const next: Record<string, number> = {}
+  const next: Record<string, { turnId: string; turnIndex: number }> = {}
   for (const groupedTurn of groupedTurns.values()) {
-    next[groupedTurn.anchorMessageId] = groupedTurn.turnIndex
+    next[groupedTurn.anchorMessageId] = {
+      turnId: groupedTurn.turnId,
+      turnIndex: groupedTurn.turnIndex,
+    }
   }
   return next
 })
@@ -2607,7 +2598,7 @@ function toggleResponseSource(messageId: string): void {
 }
 
 function showForkResponseButton(message: UiMessage): boolean {
-  return typeof forkableTurnIndexByAnchorId.value[message.id] === 'number'
+  return Boolean(forkableTurnByAnchorId.value[message.id]?.turnId)
 }
 
 function mergeFileChangeDiff(first: string, second: string): string {
@@ -3130,12 +3121,13 @@ async function copyCommandCodeBox(event: MouseEvent): Promise<void> {
 }
 
 function forkResponse(anchorMessageId: string): void {
-  const turnIndex = forkableTurnIndexByAnchorId.value[anchorMessageId]
-  if (typeof turnIndex !== 'number') return
+  const targetTurn = forkableTurnByAnchorId.value[anchorMessageId]
+  if (!targetTurn?.turnId || typeof targetTurn.turnIndex !== 'number') return
   if (!props.activeThreadId) return
   emit('forkThread', {
     threadId: props.activeThreadId,
-    turnIndex,
+    turnId: targetTurn.turnId,
+    turnIndex: targetTurn.turnIndex,
   })
 }
 

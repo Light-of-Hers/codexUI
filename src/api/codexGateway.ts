@@ -2003,6 +2003,7 @@ export async function startThread(cwd?: string, model?: string, modelProvider?: 
   try {
     const params: Record<string, unknown> = {
       persistExtendedHistory: true,
+      historyMode: 'paginated',
     }
     if (typeof cwd === 'string' && cwd.trim().length > 0) {
       params.cwd = cwd.trim()
@@ -2048,6 +2049,7 @@ export async function forkThread(
       const payload = await callRpc<ThreadForkResponse & ThreadReadResponse & { thread?: { id?: string; cwd?: string } }>('thread/fork', {
         threadId,
         persistExtendedHistory: true,
+        excludeTurns: true,
       })
       const forkedThreadId = normalizeThreadIdFromPayload(payload)
       if (!forkedThreadId) {
@@ -2059,7 +2061,7 @@ export async function forkThread(
         model: normalizeThreadModelFromPayload(payload),
         modelProvider: normalizeThreadModelProviderFromPayload(payload),
         reasoningEffort: normalizeThreadReasoningEffortFromPayload(payload),
-        messages: normalizeThreadMessagesV2(payload, readThreadTurnStartIndex(payload)),
+        messages: [],
       }
     } catch (error) {
       throw normalizeCodexApiError(error, `Failed to fork thread ${threadId}`, 'thread/fork')
@@ -2097,6 +2099,40 @@ export async function forkThread(
     }
   } catch (error) {
     throw normalizeCodexApiError(error, `Failed to fork thread ${threadId}`, 'thread/fork')
+  }
+}
+
+export async function forkThreadThroughTurn(threadId: string, lastTurnId: string): Promise<ForkedThread> {
+  const normalizedThreadId = threadId.trim()
+  const normalizedLastTurnId = lastTurnId.trim()
+  if (!normalizedThreadId) {
+    throw new Error('thread/fork requires threadId')
+  }
+  if (!normalizedLastTurnId) {
+    throw new Error('thread/fork requires lastTurnId')
+  }
+
+  try {
+    const payload = await callRpc<ThreadForkResponse & ThreadReadResponse & { thread?: { id?: string; cwd?: string } }>('thread/fork', {
+      threadId: normalizedThreadId,
+      lastTurnId: normalizedLastTurnId,
+      persistExtendedHistory: true,
+      excludeTurns: true,
+    })
+    const forkedThreadId = normalizeThreadIdFromPayload(payload)
+    if (!forkedThreadId) {
+      throw new Error('thread/fork did not return a thread id')
+    }
+    return {
+      threadId: forkedThreadId,
+      cwd: normalizeThreadCwdFromPayload(payload),
+      model: normalizeThreadModelFromPayload(payload),
+      modelProvider: normalizeThreadModelProviderFromPayload(payload),
+      reasoningEffort: normalizeThreadReasoningEffortFromPayload(payload),
+      messages: [],
+    }
+  } catch (error) {
+    throw normalizeCodexApiError(error, `Failed to fork thread ${normalizedThreadId}`, 'thread/fork')
   }
 }
 

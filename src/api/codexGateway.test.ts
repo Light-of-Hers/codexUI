@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { clearThreadGoal, forkThread, getAvailableModelIds, getCurrentModelConfig, getThreadGoal, getThreadQueueState, getThreadUserMessageIndex, listDirectoryComposioConnectors, resumeThread, searchComposerFiles, searchFileLinkPaths, searchThreadMessages, setThreadGoal, setThreadQueueState, startThread, startThreadTurn, steerThreadTurn } from './codexGateway'
+import { clearThreadGoal, forkThread, forkThreadThroughTurn, getAvailableModelIds, getCurrentModelConfig, getThreadGoal, getThreadQueueState, getThreadUserMessageIndex, listDirectoryComposioConnectors, resumeThread, searchComposerFiles, searchFileLinkPaths, searchThreadMessages, setThreadGoal, setThreadQueueState, startThread, startThreadTurn, steerThreadTurn } from './codexGateway'
 
 function mockRpcFetch(): { requests: Array<{ method: string, params: Record<string, unknown> }> } {
   const requests: Array<{ method: string, params: Record<string, unknown> }> = []
@@ -224,7 +224,7 @@ describe('thread history persistence payloads', () => {
     vi.unstubAllGlobals()
   })
 
-  it('opts thread start, resume, and fork into extended history persistence', async () => {
+  it('starts paginated history and pages fork responses instead of copying turns', async () => {
     const { requests } = mockRpcFetchWithResponder((request) => {
       if (request.method === 'thread/start') return emptyThreadResult('thread-started')
       if (request.method === 'thread/resume') return emptyThreadResult('thread-1')
@@ -246,10 +246,32 @@ describe('thread history persistence payloads', () => {
     expect(requests.filter((request) => (
       request.method === 'thread/start' || request.method === 'thread/resume' || request.method === 'thread/fork'
     )).every((request) => request.params.persistExtendedHistory === true)).toBe(true)
+    expect(requests[0]?.params.historyMode).toBe('paginated')
+    expect(requests[3]?.params.excludeTurns).toBe(true)
     expect(requests[2]).toEqual({
       method: 'thread/read',
       params: { threadId: 'thread-1', includeTurns: true },
     })
+  })
+
+  it('forks a thread through a specific turn without rollback', async () => {
+    const { requests } = mockRpcFetchWithResponder((request) => {
+      if (request.method === 'thread/fork') return emptyThreadResult('thread-forked')
+      return {}
+    })
+
+    const forkedThread = await forkThreadThroughTurn('thread-1', 'turn-2')
+
+    expect(forkedThread.threadId).toBe('thread-forked')
+    expect(requests).toEqual([{
+      method: 'thread/fork',
+      params: {
+        threadId: 'thread-1',
+        lastTurnId: 'turn-2',
+        persistExtendedHistory: true,
+        excludeTurns: true,
+      },
+    }])
   })
 
   it('recovers missing resume model settings from the persisted thread before resuming', async () => {

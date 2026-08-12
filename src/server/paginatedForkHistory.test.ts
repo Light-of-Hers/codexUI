@@ -71,16 +71,21 @@ async function writeRollout(
     )
   }
   await writeFile(
-    join(directory, `rollout-2026-08-12T00-00-00-${threadId}.jsonl`),
+    rolloutPath(codexHome, threadId),
     rows.map((row) => JSON.stringify(row)).join('\n'),
     'utf8',
   )
 }
 
-function threadResult(threadId: string, turnIds: string[]): unknown {
+function rolloutPath(codexHome: string, threadId: string): string {
+  return join(codexHome, 'sessions', '2026', '08', '12', `rollout-2026-08-12T00-00-00-${threadId}.jsonl`)
+}
+
+function threadResult(threadId: string, turnIds: string[], sessionPath = ''): unknown {
   return {
     thread: {
       id: threadId,
+      ...(sessionPath ? { path: sessionPath } : {}),
       turns: turnIds.map((id) => ({
         id,
         status: 'completed',
@@ -241,6 +246,129 @@ describe('paginated fork history reconstruction', () => {
       )
 
       expect(turnIds(merged)).toEqual([
+        'parent-one',
+        'codexui-fork-boundary:child:parent',
+        'child-one',
+      ])
+    } finally {
+      await rm(codexHome, { recursive: true, force: true })
+    }
+  })
+
+  it('marks the copied prefix of a legacy fork in both message and user-message history', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'codexui-legacy-fork-history-'))
+    process.env.CODEX_HOME = codexHome
+    await writeRollout(codexHome, 'parent', [
+      { id: 'parent-one', startOrdinal: 10, endOrdinal: 12, userText: 'first parent prompt' },
+      { id: 'parent-two', startOrdinal: 20, endOrdinal: 22, userText: 'second parent prompt' },
+    ])
+    await writeRollout(codexHome, 'child', [
+      { id: 'parent-one', startOrdinal: 10, endOrdinal: 12, userText: 'first parent prompt' },
+      { id: 'child-one', startOrdinal: 30, endOrdinal: 32, userText: 'child prompt' },
+    ], { parentThreadId: 'parent' })
+
+    try {
+      const merged = await mergePaginatedForkHistoryIntoThreadResult(
+        threadResult('child', ['parent-one', 'child-one']),
+        async () => threadResult('parent', ['parent-one', 'parent-two']),
+      )
+      const navigation = await buildPaginatedForkUserMessageIndex('child')
+
+      expect(turnIds(merged)).toEqual([
+        'parent-one',
+        'codexui-fork-boundary:child:parent',
+        'child-one',
+      ])
+      expect(navigation.map((entry) => [entry.turnId, entry.ordinal, entry.kind])).toEqual([
+        ['parent-one', 1, undefined],
+        ['codexui-fork-boundary:child:parent', 1, 'forkBoundary'],
+        ['child-one', 2, undefined],
+      ])
+    } finally {
+      await rm(codexHome, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps inherited legacy markers ahead of a nested child fork point', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'codexui-legacy-fork-history-'))
+    process.env.CODEX_HOME = codexHome
+    await writeRollout(codexHome, 'root', [
+      { id: 'root-one', startOrdinal: 10, endOrdinal: 12, userText: 'root prompt' },
+      { id: 'root-two', startOrdinal: 20, endOrdinal: 22, userText: 'later root prompt' },
+    ])
+    await writeRollout(codexHome, 'parent', [
+      { id: 'root-one', startOrdinal: 10, endOrdinal: 12, userText: 'root prompt' },
+      { id: 'parent-one', startOrdinal: 30, endOrdinal: 32, userText: 'parent prompt' },
+    ], { parentThreadId: 'root' })
+    await writeRollout(codexHome, 'child', [
+      { id: 'root-one', startOrdinal: 10, endOrdinal: 12, userText: 'root prompt' },
+      { id: 'parent-one', startOrdinal: 30, endOrdinal: 32, userText: 'parent prompt' },
+      { id: 'child-one', startOrdinal: 40, endOrdinal: 42, userText: 'child prompt' },
+    ], { parentThreadId: 'parent' })
+
+    try {
+      const results = new Map<string, unknown>([
+        ['root', threadResult('root', ['root-one', 'root-two'])],
+        ['parent', threadResult('parent', ['root-one', 'parent-one'])],
+      ])
+      const merged = await mergePaginatedForkHistoryIntoThreadResult(
+        threadResult('child', ['root-one', 'parent-one', 'child-one']),
+        async (threadId) => results.get(threadId) ?? threadResult(threadId, []),
+      )
+      const navigation = await buildPaginatedForkUserMessageIndex('child')
+
+      expect(turnIds(merged)).toEqual([
+        'root-one',
+        'codexui-fork-boundary:parent:root',
+        'parent-one',
+        'codexui-fork-boundary:child:parent',
+        'child-one',
+      ])
+      expect(navigation.map((entry) => entry.turnId)).toEqual([
+        'root-one',
+        'codexui-fork-boundary:parent:root',
+        'parent-one',
+        'codexui-fork-boundary:child:parent',
+        'child-one',
+      ])
+    } finally {
+      await rm(codexHome, { recursive: true, force: true })
+    }
+  })
+
+  it('uses current thread metadata when the lineage scan cache predates a newly forked session', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'codexui-paginated-history-'))
+    process.env.CODEX_HOME = codexHome
+    await writeRollout(codexHome, 'parent', [
+      { id: 'parent-one', startOrdinal: 10, endOrdinal: 12, userText: 'parent prompt' },
+    ])
+
+    try {
+      // Populate the global scan before the child session exists.
+      await buildPaginatedForkUserMessageIndex('parent')
+      await writeRollout(codexHome, 'child', [
+        { id: 'child-one', startOrdinal: 30, endOrdinal: 32, userText: 'child prompt' },
+      ], {
+        parentThreadId: 'parent',
+        historyBaseThreadId: 'parent',
+        historyBaseOrdinal: 20,
+      })
+
+      const childSessionPath = rolloutPath(codexHome, 'child')
+      const merged = await mergePaginatedForkHistoryIntoThreadResult(
+        threadResult('child', ['parent-one', 'child-one'], childSessionPath),
+        async () => {
+          throw new Error('the inherited prefix is already materialized')
+        },
+      )
+      const navigation = await buildPaginatedForkUserMessageIndex('child', childSessionPath)
+
+      expect(turnIds(merged)).toEqual([
+        'parent-one',
+        'codexui-fork-boundary:child:parent',
+        'child-one',
+      ])
+      expect(navigation.map((entry) => entry.turnId)).toEqual([
         'parent-one',
         'codexui-fork-boundary:child:parent',
         'child-one',

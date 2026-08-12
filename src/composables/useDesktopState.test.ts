@@ -23,6 +23,7 @@ const gatewayMocks = vi.hoisted(() => ({
   archiveThread: vi.fn(),
   clearThreadGoal: vi.fn(),
   forkThread: vi.fn(),
+  forkThreadThroughTurn: vi.fn(),
   getAccountRateLimits: vi.fn(),
   getAvailableCollaborationModes: vi.fn(),
   getAvailableModelIds: vi.fn(),
@@ -39,6 +40,8 @@ const gatewayMocks = vi.hoisted(() => ({
   getThreadGroupsPage: vi.fn(),
   getThreadQueueState: vi.fn(),
   getThreadTitleCache: vi.fn(),
+  getThreadUserMessageCount: vi.fn(),
+  getThreadUserMessageIndex: vi.fn(),
   getWorkspaceRootsState: vi.fn(),
   generateThreadTitle: vi.fn(),
   interruptThreadTurn: vi.fn(),
@@ -109,6 +112,8 @@ beforeEach(() => {
   gatewayMocks.getThreadSummary.mockResolvedValue(thread('thread-a', '/tmp/project'))
   gatewayMocks.getThreadQueueState.mockResolvedValue({})
   gatewayMocks.getThreadTitleCache.mockResolvedValue({ titles: {} })
+  gatewayMocks.getThreadUserMessageCount.mockResolvedValue(0)
+  gatewayMocks.getThreadUserMessageIndex.mockResolvedValue([])
   gatewayMocks.getWorkspaceRootsState.mockRejectedValue(new Error('no workspace roots state'))
   gatewayMocks.getArkModelIds.mockResolvedValue([])
   gatewayMocks.getArkModelMetadata.mockResolvedValue([])
@@ -709,6 +714,61 @@ describe('session fork', () => {
 
     await expect(state.forkThreadById('thread-a')).resolves.toBe('thread-forked')
     expect(gatewayMocks.forkThread).toHaveBeenCalledWith('thread-a')
+    expect(state.selectedThreadId.value).toBe('thread-forked')
+  })
+
+  it('forks from a response through lastTurnId without rolling back the fork', async () => {
+    installTestWindow()
+    gatewayMocks.getThreadGroupsPage
+      .mockResolvedValueOnce({
+        groups: [{ projectName: 'project', threads: [thread('thread-a', '/tmp/project')] }],
+        nextCursor: null,
+      })
+      .mockResolvedValueOnce({
+        groups: [{
+          projectName: 'project',
+          threads: [thread('thread-a', '/tmp/project'), thread('thread-forked', '/tmp/project')],
+        }],
+        nextCursor: null,
+      })
+    gatewayMocks.getThreadDetail.mockResolvedValue({
+      messages: [{
+        id: 'agent-1',
+        role: 'assistant',
+        text: 'Done.',
+        messageType: 'agentMessage',
+        turnId: 'turn-1',
+        turnIndex: 0,
+      }],
+      inProgress: true,
+      activeTurnId: 'turn-active',
+      hasMoreOlder: false,
+      turnIndexByTurnId: { 'turn-1': 0, 'turn-active': 1 },
+    })
+    gatewayMocks.forkThreadThroughTurn.mockResolvedValue({
+      threadId: 'thread-forked',
+      cwd: '/tmp/project',
+      model: 'gpt-5.5-extra-high',
+      modelProvider: 'cursor',
+      reasoningEffort: 'high',
+      messages: [{
+        id: 'agent-1',
+        role: 'assistant',
+        text: 'Done.',
+        messageType: 'agentMessage',
+        turnId: 'turn-1',
+        turnIndex: 0,
+      }],
+    })
+
+    const state = useDesktopState()
+    await state.refreshAll({ includeSelectedThreadMessages: false, refreshAncillary: false })
+    await state.loadMessages('thread-a')
+
+    await expect(state.forkThreadFromTurn('thread-a', 'turn-1', 0)).resolves.toBe('thread-forked')
+
+    expect(gatewayMocks.forkThreadThroughTurn).toHaveBeenCalledWith('thread-a', 'turn-1')
+    expect(gatewayMocks.rollbackThread).not.toHaveBeenCalled()
     expect(state.selectedThreadId.value).toBe('thread-forked')
   })
 })
@@ -2879,7 +2939,7 @@ describe('findAdjacentThreadId', () => {
 })
 
 describe('optimistic user message', () => {
-  function resumedDetail(messages: Array<{ id: string; role: 'user' | 'assistant' | 'system'; text: string; turnIndex?: number }> = []) {
+  function resumedDetail(messages: Array<{ id: string; role: 'user' | 'assistant' | 'system'; text: string; turnId?: string; turnIndex?: number }> = []) {
     return {
       model: 'gpt-5.5',
       modelProvider: 'codex',
@@ -2892,7 +2952,7 @@ describe('optimistic user message', () => {
     }
   }
 
-  function detailWith(messages: Array<{ id: string; role: 'user' | 'assistant' | 'system'; text: string; turnIndex?: number }>) {
+  function detailWith(messages: Array<{ id: string; role: 'user' | 'assistant' | 'system'; text: string; turnId?: string; turnIndex?: number }>) {
     return {
       messages,
       inProgress: false,
@@ -2933,18 +2993,23 @@ describe('optimistic user message', () => {
     const state = useDesktopState()
     state.primeSelectedThread('thread-a')
     await state.loadMessages('thread-a')
+    await flushMicrotasks()
 
     await state.sendMessageToSelectedThread('hello optimistic')
     expect(state.messages.value.some((message) => message.id.startsWith('optimistic-user-'))).toBe(true)
 
     gatewayMocks.resumeThread.mockResolvedValue(resumedDetail([
-      { id: 'real-user-1', role: 'user', text: 'hello optimistic', turnIndex: 0 },
+      { id: 'real-user-1', role: 'user', text: 'hello optimistic', turnId: 'turn-1', turnIndex: 0 },
     ]))
     await state.loadMessages('thread-a', { force: true })
+    await waitForCalls(gatewayMocks.getThreadUserMessageIndex, 1)
+    await waitForCalls(gatewayMocks.getThreadUserMessageCount, 1)
 
     expect(state.messages.value.some((message) => message.id.startsWith('optimistic-user-'))).toBe(false)
     expect(state.messages.value.filter((message) => message.role === 'user' && message.text === 'hello optimistic')).toHaveLength(1)
     expect(state.messages.value.find((message) => message.id === 'real-user-1')).toBeTruthy()
+    expect(gatewayMocks.getThreadUserMessageIndex).toHaveBeenCalledWith('thread-a')
+    expect(gatewayMocks.getThreadUserMessageCount).toHaveBeenCalledWith('thread-a')
   })
 
   it('keeps the optimistic message when startThreadTurn fails so the user can still see what they sent', async () => {

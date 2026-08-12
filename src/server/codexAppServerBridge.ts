@@ -729,11 +729,16 @@ async function mergePaginatedForkUserMessageIndex(
 ): Promise<SessionUserMessageIndexEntry[]> {
   const lineage = lineageByThreadId.get(threadId)
   if (!lineage) return []
-  if (!lineage.isPaginated || !lineage.historyBaseThreadId || visitedThreadIds.has(threadId)) {
+  if (!lineage.forkedFromId || visitedThreadIds.has(threadId)) {
     return await readCachedSessionUserMessageIndex(lineage.sessionPath)
   }
 
-  const sourceLineage = lineageByThreadId.get(lineage.historyBaseThreadId)
+  const sourceThreadId = lineage.isPaginated
+    ? lineage.historyBaseThreadId
+    : lineage.forkedFromId
+  if (!sourceThreadId) return await readCachedSessionUserMessageIndex(lineage.sessionPath)
+
+  const sourceLineage = lineageByThreadId.get(sourceThreadId)
   if (!sourceLineage) return await readCachedSessionUserMessageIndex(lineage.sessionPath)
 
   const nextVisitedThreadIds = new Set(visitedThreadIds)
@@ -743,17 +748,25 @@ async function mergePaginatedForkUserMessageIndex(
     lineageByThreadId,
     nextVisitedThreadIds,
   )
-  const inheritedEntries = await filterUserMessageIndexToHistoryBase(
-    sourceEntries,
-    sourceLineage,
-    lineage.historyBaseOrdinal,
-    lineage.historyBaseByteOffset,
-  )
   const localEntries = await readCachedSessionUserMessageIndex(lineage.sessionPath)
+  const inheritedEntries = lineage.isPaginated
+    ? await filterUserMessageIndexToHistoryBase(
+        sourceEntries,
+        sourceLineage,
+        lineage.historyBaseOrdinal,
+        lineage.historyBaseByteOffset,
+      )
+    : takeForkPrefixUserMessageEntries(
+        sourceEntries,
+        sharedUserMessageEntryPrefixLength(localEntries, sourceEntries),
+      )
+  const localSuffix = lineage.isPaginated
+    ? localEntries
+    : localEntries.slice(sharedUserMessageEntryPrefixLength(localEntries, sourceEntries))
   return resequenceUserMessageIndex([
     ...inheritedEntries,
     makeForkBoundaryUserMessageIndexEntry(threadId, sourceLineage.threadId),
-    ...localEntries,
+    ...localSuffix,
   ])
 }
 
@@ -761,13 +774,20 @@ export async function buildPaginatedForkUserMessageIndex(
   threadId: string,
   fallbackSessionPath = '',
 ): Promise<SessionUserMessageIndexEntry[]> {
+  let currentLineage: SessionForkLineage | null = null
   if (fallbackSessionPath && isAbsolute(fallbackSessionPath)) {
-    const currentLineage = await readSessionForkLineage(fallbackSessionPath, false)
-    if (!currentLineage?.isPaginated) return await readCachedSessionUserMessageIndex(fallbackSessionPath)
+    currentLineage = await readSessionForkLineage(
+      fallbackSessionPath,
+      isArchivedSessionPath(fallbackSessionPath),
+    )
+    if (!currentLineage?.forkedFromId) return await readCachedSessionUserMessageIndex(fallbackSessionPath)
   }
   const lineageByThreadId = new Map(
     (await getSessionForkLineage()).map((entry) => [entry.threadId, entry]),
   )
+  // A fork may appear after the 30-second global scan cache was populated.
+  // The `thread/read` path is the freshest authoritative metadata for itself.
+  if (currentLineage) lineageByThreadId.set(currentLineage.threadId, currentLineage)
   if (lineageByThreadId.has(threadId)) {
     return await mergePaginatedForkUserMessageIndex(threadId, lineageByThreadId)
   }
@@ -1895,11 +1915,72 @@ function hasTurnPrefix(turns: unknown[], prefix: unknown[]): boolean {
   ))
 }
 
+function sharedConcreteTurnPrefixLength(childTurns: unknown[], sourceTurns: unknown[]): number {
+  const childConcreteTurns = childTurns.filter((turn) => !isForkBoundaryTurn(turn))
+  const sourceConcreteTurns = sourceTurns.filter((turn) => !isForkBoundaryTurn(turn))
+  let prefixLength = 0
+  const maxLength = Math.min(childConcreteTurns.length, sourceConcreteTurns.length)
+  while (prefixLength < maxLength) {
+    const childTurnId = readNonEmptyString(asRecord(childConcreteTurns[prefixLength])?.id)
+    const sourceTurnId = readNonEmptyString(asRecord(sourceConcreteTurns[prefixLength])?.id)
+    if (!childTurnId || childTurnId !== sourceTurnId) break
+    prefixLength += 1
+  }
+  return prefixLength
+}
+
+function takeForkPrefixTurns(turns: unknown[], concreteTurnCount: number): unknown[] {
+  const prefix: unknown[] = []
+  let includedConcreteTurns = 0
+  for (const turn of turns) {
+    if (isForkBoundaryTurn(turn)) {
+      if (includedConcreteTurns < concreteTurnCount) prefix.push(turn)
+      continue
+    }
+    if (includedConcreteTurns >= concreteTurnCount) break
+    prefix.push(turn)
+    includedConcreteTurns += 1
+  }
+  return prefix
+}
+
+function sharedUserMessageEntryPrefixLength(
+  childEntries: SessionUserMessageIndexEntry[],
+  sourceEntries: SessionUserMessageIndexEntry[],
+): number {
+  const childConcreteEntries = childEntries.filter((entry) => entry.kind !== 'forkBoundary')
+  const sourceConcreteEntries = sourceEntries.filter((entry) => entry.kind !== 'forkBoundary')
+  let prefixLength = 0
+  const maxLength = Math.min(childConcreteEntries.length, sourceConcreteEntries.length)
+  while (prefixLength < maxLength) {
+    if (childConcreteEntries[prefixLength]?.turnId !== sourceConcreteEntries[prefixLength]?.turnId) break
+    prefixLength += 1
+  }
+  return prefixLength
+}
+
+function takeForkPrefixUserMessageEntries(
+  entries: SessionUserMessageIndexEntry[],
+  concreteEntryCount: number,
+): SessionUserMessageIndexEntry[] {
+  const prefix: SessionUserMessageIndexEntry[] = []
+  let includedConcreteEntries = 0
+  for (const entry of entries) {
+    if (entry.kind === 'forkBoundary') {
+      if (includedConcreteEntries < concreteEntryCount) prefix.push(entry)
+      continue
+    }
+    if (includedConcreteEntries >= concreteEntryCount) break
+    prefix.push(entry)
+    includedConcreteEntries += 1
+  }
+  return prefix
+}
+
 /**
- * Paginated forks keep their inherited history in a referenced rollout rather
- * than copying its turns into the child JSONL. Reconstruct that prefix for the
- * compatibility `thread/read` surface and leave a synthetic, non-persistent
- * turn at the exact fork boundary for UI rendering.
+ * Reconstruct history for both paginated and legacy forks on the compatibility
+ * `thread/read` surface, with a synthetic, non-persistent turn at the exact
+ * fork boundary for UI rendering.
  */
 export async function mergePaginatedForkHistoryIntoThreadResult(
   result: unknown,
@@ -1913,41 +1994,53 @@ export async function mergePaginatedForkHistoryIntoThreadResult(
   const threadId = readNonEmptyString(thread?.id)
   if (!record || !thread || !turns || !threadId || visitedThreadIds.has(threadId)) return result
 
+  let currentLineage: SessionForkLineage | null = null
   const currentSessionPath = readNonEmptyString(thread.path)
   if (currentSessionPath && isAbsolute(currentSessionPath)) {
-    const currentLineage = await readSessionForkLineage(currentSessionPath, false).catch(() => null)
-    if (!currentLineage?.isPaginated) return result
+    currentLineage = await readSessionForkLineage(
+      currentSessionPath,
+      isArchivedSessionPath(currentSessionPath),
+    ).catch(() => null)
+    if (!currentLineage?.forkedFromId) return result
   }
 
-  const lineages = lineageByThreadId ?? new Map(
-    (await getSessionForkLineage()).map((entry) => [entry.threadId, entry]),
+  const lineages = new Map(
+    lineageByThreadId ?? (await getSessionForkLineage()).map((entry) => [entry.threadId, entry]),
   )
+  // Do not let an older global scan hide the currently opened fork.
+  if (currentLineage) lineages.set(currentLineage.threadId, currentLineage)
   const lineage = lineages.get(threadId)
-  const sourceThreadId = lineage?.historyBaseThreadId
-  if (!lineage?.isPaginated || !sourceThreadId) return result
+  if (!lineage?.forkedFromId) return result
+  const sourceThreadId = lineage.isPaginated
+    ? lineage.historyBaseThreadId
+    : lineage.forkedFromId
+  if (!sourceThreadId) return result
 
   const sourceLineage = lineages.get(sourceThreadId)
-  if (!sourceLineage) return result
+  if (lineage.isPaginated && !sourceLineage) return result
 
-  const localTurnEnds = await readCachedSessionTurnEnds(lineage.sessionPath).catch(() => new Map<string, SessionTurnEnd>())
-  const firstLocalTurnIndex = turns.findIndex((turn) => {
-    const turnId = readNonEmptyString(asRecord(turn)?.id)
-    return turnId.length > 0 && localTurnEnds.has(turnId)
-  })
   const boundaryTurn = makeForkBoundaryTurn(threadId, sourceThreadId)
 
-  // Newer app-server builds can materialize the inherited prefix themselves.
-  // Recognize that shape from locally persisted turn ids so the common path
-  // only inserts the visual separator and does not issue ancestor reads.
-  if (firstLocalTurnIndex > 0) {
-    const hasBoundaryAtForkPoint = isForkBoundaryTurn(turns[firstLocalTurnIndex - 1])
-    if (hasBoundaryAtForkPoint) return result
-    return {
-      ...record,
-      thread: {
-        ...thread,
-        turns: [...turns.slice(0, firstLocalTurnIndex), boundaryTurn, ...turns.slice(firstLocalTurnIndex)],
-      },
+  if (turns.some((turn) => readNonEmptyString(asRecord(turn)?.id) === boundaryTurn.id)) return result
+
+  if (lineage.isPaginated) {
+    const localTurnEnds = await readCachedSessionTurnEnds(lineage.sessionPath).catch(() => new Map<string, SessionTurnEnd>())
+    const firstLocalTurnIndex = turns.findIndex((turn) => {
+      const turnId = readNonEmptyString(asRecord(turn)?.id)
+      return turnId.length > 0 && localTurnEnds.has(turnId)
+    })
+
+    // Newer app-server builds can materialize the inherited prefix themselves.
+    // Recognize that shape from locally persisted turn ids so the common path
+    // only inserts the visual separator and does not issue ancestor reads.
+    if (firstLocalTurnIndex > 0) {
+      return {
+        ...record,
+        thread: {
+          ...thread,
+          turns: [...turns.slice(0, firstLocalTurnIndex), boundaryTurn, ...turns.slice(firstLocalTurnIndex)],
+        },
+      }
     }
   }
 
@@ -1968,6 +2061,24 @@ export async function mergePaginatedForkHistoryIntoThreadResult(
   const sourceTurns = Array.isArray(asRecord(asRecord(mergedSourceResult)?.thread)?.turns)
     ? asRecord(asRecord(mergedSourceResult)?.thread)?.turns as unknown[]
     : []
+  if (!lineage.isPaginated) {
+    const rawSourceTurns = Array.isArray(asRecord(asRecord(sourceResult)?.thread)?.turns)
+      ? asRecord(asRecord(sourceResult)?.thread)?.turns as unknown[]
+      : []
+    const sharedPrefixLength = sharedConcreteTurnPrefixLength(turns, rawSourceTurns)
+    return {
+      ...record,
+      thread: {
+        ...thread,
+        turns: [
+          ...takeForkPrefixTurns(sourceTurns, sharedPrefixLength),
+          boundaryTurn,
+          ...turns.filter((turn) => !isForkBoundaryTurn(turn)).slice(sharedPrefixLength),
+        ],
+      },
+    }
+  }
+  if (!sourceLineage) return result
   const inheritedTurns = await filterTurnsToHistoryBase(
     sourceTurns,
     sourceLineage,
@@ -5156,6 +5267,10 @@ async function readSessionForkLineage(
   }
 
   return null
+}
+
+function isArchivedSessionPath(sessionPath: string): boolean {
+  return sessionPath.split(/[\\/]+/u).includes('archived_sessions')
 }
 
 async function scanSessionForkLineage(): Promise<SessionForkLineage[]> {

@@ -8004,3 +8004,30 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - Archive any disposable test fork. No rollout file is modified by history reconstruction, so no session-data cleanup is required.
+
+### Fix: Response Fork Uses Native Turn Boundary
+
+#### Prerequisites
+- App server is running from this repository and can access local Codex rollouts.
+- A thread has at least two completed assistant responses and, ideally, a later active or paginated-history turn.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. In light theme, open the source thread and click the `Fork` button next to an earlier completed assistant response.
+2. Confirm the UI navigates to a new fork whose final visible turn is the clicked response.
+3. Confirm the source thread can still be running a later turn; the earlier completed response can still be forked.
+4. Confirm the fork appears in the sidebar after the follow-up refresh and stays there after a page refresh.
+5. Repeat steps 1-4 in dark theme and confirm the response toolbar and sidebar row remain readable.
+6. Run `pnpm exec vitest run src/api/codexGateway.test.ts src/composables/useDesktopState.test.ts`.
+
+#### Expected Results
+- Response-level fork sends `thread/fork` with `lastTurnId` for the selected turn instead of creating a full fork and calling deprecated `thread/rollback`.
+- Paginated source threads do not hit the rollback limitation, and unrelated active later turns do not block forking an already completed response.
+- Light and dark themes preserve the existing fork button and navigation styling.
+
+#### Performance Audit
+- The response fork path uses one lifecycle RPC (`thread/fork`) instead of the previous `thread/fork` plus conditional `thread/rollback`, reducing requests and removing a second thread snapshot rewrite.
+- The frontend still performs only local cache updates plus the existing sidebar refresh. No polling loop, full-history scan, or extra browser payload is introduced.
+
+#### Rollback/Cleanup
+- Archive the disposable fork created for verification. No source thread or rollout rewriting is required.

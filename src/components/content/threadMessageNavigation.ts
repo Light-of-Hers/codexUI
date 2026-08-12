@@ -11,6 +11,15 @@ export type UserMessageNavigationItem = {
   sourceThreadId?: string
 }
 
+export type SessionUserMessageNavigationEntry = {
+  turnId: string
+  ordinal: number
+  preview: string
+  title: string
+  kind?: 'forkBoundary'
+  sourceThreadId?: string
+}
+
 const DEFAULT_PREVIEW_LENGTH = 88
 
 function normalizeWhitespace(value: string): string {
@@ -70,4 +79,52 @@ export function buildUserMessageNavigationItems(
   })
 
   return items
+}
+
+/**
+ * Session metadata supplies the complete history, while the rendered messages
+ * can contain a newly persisted turn before that metadata index has refreshed.
+ */
+export function mergeSessionUserMessageNavigationItems(
+  sessionEntries: readonly SessionUserMessageNavigationEntry[],
+  loadedItems: readonly UserMessageNavigationItem[],
+): UserMessageNavigationItem[] {
+  const idByTurnId = new Map<string, string>()
+  for (const item of loadedItems) {
+    const turnId = item.turnId.trim()
+    if (turnId && item.id && !idByTurnId.has(turnId)) {
+      idByTurnId.set(turnId, item.id)
+    }
+  }
+
+  const knownTurnIds = new Set<string>()
+  let latestOrdinal = 0
+  const indexedItems = sessionEntries.map((entry) => {
+    const turnId = entry.turnId.trim()
+    if (turnId) knownTurnIds.add(turnId)
+    if (entry.kind !== 'forkBoundary') {
+      latestOrdinal = Math.max(latestOrdinal, entry.ordinal)
+    }
+    return {
+      id: idByTurnId.get(turnId) ?? '',
+      turnId,
+      ordinal: entry.ordinal,
+      messageIndex: -1,
+      preview: entry.preview,
+      title: entry.title,
+      kind: entry.kind,
+      sourceThreadId: entry.sourceThreadId,
+    }
+  })
+
+  const newlyLoadedItems: UserMessageNavigationItem[] = []
+  for (const item of loadedItems) {
+    const turnId = item.turnId.trim()
+    if (!turnId || knownTurnIds.has(turnId)) continue
+    knownTurnIds.add(turnId)
+    latestOrdinal += 1
+    newlyLoadedItems.push({ ...item, turnId, ordinal: latestOrdinal })
+  }
+
+  return [...indexedItems, ...newlyLoadedItems]
 }
