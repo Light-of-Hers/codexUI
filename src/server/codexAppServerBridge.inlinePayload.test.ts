@@ -1280,6 +1280,48 @@ describe('thread session skill recovery', () => {
     ])
   })
 
+  it('resolves shadowed static tuple maps to their lexical block', () => {
+    const result = {
+      thread: {
+        id: 'thread-static-command-map-shadowing',
+        path: '/tmp/session.jsonl',
+        turns: [{
+          id: 'turn-1',
+          items: [
+            { id: 'user-1', type: 'userMessage', content: [{ type: 'text', text: 'inspect', text_elements: [] }] },
+            { id: 'agent-before', type: 'agentMessage', text: 'Running scoped checks.' },
+            { id: 'native-inner', type: 'commandExecution', command: '/bin/bash -lc "pnpm test:unit"', cwd: '/tmp/project', status: 'completed', aggregatedOutput: '', exitCode: 0 },
+            { id: 'native-outer', type: 'commandExecution', command: '/bin/bash -lc "git status --short"', cwd: '/tmp/project', status: 'completed', aggregatedOutput: '', exitCode: 0 },
+            { id: 'agent-after', type: 'agentMessage', text: 'Done.' },
+          ],
+        }],
+      },
+    }
+    const input = [
+      'const calls = [["git status --short"]];',
+      '{',
+      '  const calls = [["pnpm test:unit"]];',
+      '  await Promise.all(calls.map(([cmd]) => tools.exec_command({ cmd, workdir: "/tmp/project" })));',
+      '}',
+      'await Promise.all(calls.map(([cmd]) => tools.exec_command({ cmd, workdir: "/tmp/project" })));',
+    ].join('\n')
+    const sessionLog = [
+      JSON.stringify({ type: 'turn_context', payload: { turn_id: 'turn-1' } }),
+      JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Running scoped checks.' }] } }),
+      JSON.stringify({ type: 'response_item', payload: { type: 'custom_tool_call', name: 'exec', status: 'completed', call_id: 'scoped', input } }),
+      JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Done.' }] } }),
+    ].join('\n')
+
+    const merged = mergeRecoveredTurnItemsIntoThreadResult(result, (_threadId, turns) => turns, sessionLog) as typeof result
+    expect(merged.thread.turns[0].items.map((item) => item.id)).toEqual([
+      'user-1',
+      'agent-before',
+      'native-inner',
+      'native-outer',
+      'agent-after',
+    ])
+  })
+
   it('matches shell-wrapped native commands before appending unmatched history', () => {
     const result = {
       thread: {

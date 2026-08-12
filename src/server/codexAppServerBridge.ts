@@ -69,6 +69,7 @@ import type { CollaborationModeKind, ReasoningEffort, UiFileChange, UiMessage, U
 import { isAbsoluteLikePath, toProjectName } from '../pathUtils.js'
 import { searchComposerPaths } from './composerFileSearch.js'
 import { normalizeThreadMessagesV2 } from '../api/normalizers/v2.js'
+import { BoundedLruCache } from './boundedLruCache.js'
 
 type JsonRpcCall = {
   jsonrpc: '2.0'
@@ -349,6 +350,7 @@ type SessionRolloutRow = {
 type SessionRolloutSnapshot = {
   size: number
   mtimeMs: number
+  accessedAtMs: number
   raw: string
   rows: SessionRolloutRow[]
   modelState: SessionRecoveredModelState
@@ -360,6 +362,7 @@ type SessionRolloutSnapshot = {
 
 const SESSION_ROLLOUT_SNAPSHOT_CACHE_LIMIT = 64
 const SESSION_ROLLOUT_SNAPSHOT_BYTE_LIMIT = 64 * 1024 * 1024
+const SESSION_ROLLOUT_SNAPSHOT_IDLE_MS = 30 * 60 * 1000
 const sessionRolloutSnapshotCache = new Map<string, SessionRolloutSnapshot>()
 const sessionRolloutSnapshotPromiseByPath = new Map<string, Promise<SessionRolloutSnapshot>>()
 let sessionRolloutSnapshotBytes = 0
@@ -383,6 +386,12 @@ function parseSessionRolloutRows(sessionLogRaw: string): SessionRolloutRow[] {
 }
 
 function pruneSessionRolloutSnapshotCache(): void {
+  const idleCutoff = Date.now() - SESSION_ROLLOUT_SNAPSHOT_IDLE_MS
+  for (const [sessionPath, snapshot] of sessionRolloutSnapshotCache) {
+    if (snapshot.accessedAtMs > idleCutoff) break
+    sessionRolloutSnapshotCache.delete(sessionPath)
+    sessionRolloutSnapshotBytes = Math.max(0, sessionRolloutSnapshotBytes - snapshot.size)
+  }
   while (
     sessionRolloutSnapshotCache.size > SESSION_ROLLOUT_SNAPSHOT_CACHE_LIMIT
     || sessionRolloutSnapshotBytes > SESSION_ROLLOUT_SNAPSHOT_BYTE_LIMIT
@@ -402,7 +411,14 @@ async function readSessionRolloutSnapshot(sessionPath: string): Promise<SessionR
   const promise = (async () => {
     const sessionStat = await stat(sessionPath)
     const cached = sessionRolloutSnapshotCache.get(sessionPath)
-    if (cached && cached.size === sessionStat.size && cached.mtimeMs === sessionStat.mtimeMs) {
+    const now = Date.now()
+    if (
+      cached
+      && now - cached.accessedAtMs <= SESSION_ROLLOUT_SNAPSHOT_IDLE_MS
+      && cached.size === sessionStat.size
+      && cached.mtimeMs === sessionStat.mtimeMs
+    ) {
+      cached.accessedAtMs = now
       sessionRolloutSnapshotCache.delete(sessionPath)
       sessionRolloutSnapshotCache.set(sessionPath, cached)
       return cached
@@ -413,6 +429,7 @@ async function readSessionRolloutSnapshot(sessionPath: string): Promise<SessionR
     const snapshot: SessionRolloutSnapshot = {
       size: sessionStat.size,
       mtimeMs: sessionStat.mtimeMs,
+      accessedAtMs: now,
       raw,
       rows,
       modelState: buildSessionModelStateFromRows(rows),
@@ -4146,16 +4163,76 @@ function readJavaScriptStaticTuple(tupleSource: string): Array<string | null> | 
 type StaticTupleDeclaration = {
   name: string
   startIndex: number
-  endIndex: number
+  scopeStartIndex: number
+  scopeEndIndex: number
+  scopeDepth: number
   tuples: Array<Array<string | null>>
+}
+
+type JavaScriptLexicalScan = {
+  ignoredRanges: Array<{ startIndex: number, endIndex: number }>
+  scopes: Array<{ startIndex: number, endIndex: number, depth: number }>
+}
+
+function scanJavaScriptLexicalRanges(input: string): JavaScriptLexicalScan {
+  const ignoredRanges: JavaScriptLexicalScan['ignoredRanges'] = []
+  const rootScope = { startIndex: 0, endIndex: input.length, depth: 0 }
+  const scopes: JavaScriptLexicalScan['scopes'] = [rootScope]
+  const stack = [rootScope]
+
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index]!
+    if (char === '"' || char === "'" || char === '`') {
+      const literal = readJavaScriptStringLiteral(input, index)
+      if (!literal) {
+        ignoredRanges.push({ startIndex: index, endIndex: input.length })
+        break
+      }
+      ignoredRanges.push({ startIndex: index, endIndex: literal.nextIndex })
+      index = literal.nextIndex - 1
+      continue
+    }
+    if (char === '/' && input[index + 1] === '/') {
+      const newlineIndex = input.indexOf('\n', index + 2)
+      const endIndex = newlineIndex < 0 ? input.length : newlineIndex
+      ignoredRanges.push({ startIndex: index, endIndex })
+      index = endIndex - 1
+      continue
+    }
+    if (char === '/' && input[index + 1] === '*') {
+      const commentEnd = input.indexOf('*/', index + 2)
+      const endIndex = commentEnd < 0 ? input.length : commentEnd + 2
+      ignoredRanges.push({ startIndex: index, endIndex })
+      index = endIndex - 1
+      continue
+    }
+    if (char === '{') {
+      const scope = { startIndex: index + 1, endIndex: input.length, depth: stack.length }
+      scopes.push(scope)
+      stack.push(scope)
+      continue
+    }
+    if (char === '}' && stack.length > 1) {
+      const scope = stack.pop()
+      if (scope) scope.endIndex = index
+    }
+  }
+
+  return { ignoredRanges, scopes }
+}
+
+function isJavaScriptCodeIndex(scan: JavaScriptLexicalScan, index: number): boolean {
+  return !scan.ignoredRanges.some((range) => index >= range.startIndex && index < range.endIndex)
 }
 
 function findStaticJavaScriptTupleDeclarations(input: string): StaticTupleDeclaration[] {
   const declarations: StaticTupleDeclaration[] = []
+  const lexicalScan = scanJavaScriptLexicalRanges(input)
   const declarationPattern = /\b(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*/gu
   let match: RegExpExecArray | null
 
   while ((match = declarationPattern.exec(input)) !== null) {
+    if (!isJavaScriptCodeIndex(lexicalScan, match.index)) continue
     const arrayStart = skipJavaScriptWhitespace(input, declarationPattern.lastIndex)
     const arrayLiteral = readJavaScriptDelimitedLiteral(input, arrayStart, '[', ']')
     if (!arrayLiteral) continue
@@ -4165,13 +4242,18 @@ function findStaticJavaScriptTupleDeclarations(input: string): StaticTupleDeclar
       .map((entry) => readJavaScriptStaticTuple(entry))
       .filter((tuple): tuple is Array<string | null> => Boolean(tuple))
     if (tuples.length !== tupleEntries.length) continue
-    declarations.push({ name: match[1]!, startIndex: match.index, endIndex: input.length, tuples })
-  }
-
-  for (let index = 0; index < declarations.length; index += 1) {
-    const declaration = declarations[index]!
-    const nextSameName = declarations.slice(index + 1).find((candidate) => candidate.name === declaration.name)
-    if (nextSameName) declaration.endIndex = nextSameName.startIndex
+    const scope = lexicalScan.scopes
+      .filter((candidate) => match!.index >= candidate.startIndex && match!.index < candidate.endIndex)
+      .sort((left, right) => right.depth - left.depth)[0]
+    if (!scope) continue
+    declarations.push({
+      name: match[1]!,
+      startIndex: match.index,
+      scopeStartIndex: scope.startIndex,
+      scopeEndIndex: scope.endIndex,
+      scopeDepth: scope.depth,
+      tuples,
+    })
   }
 
   return declarations
@@ -4183,17 +4265,26 @@ function escapedRegExp(value: string): string {
 
 function buildStaticMappedExecRecoveredCommands(input: string): Array<{ startIndex: number, commands: Array<{ command: string, cwd: string | null }> }> {
   const declarations = findStaticJavaScriptTupleDeclarations(input)
+  const lexicalScan = scanJavaScriptLexicalRanges(input)
   const recovered: Array<{ startIndex: number, commands: Array<{ command: string, cwd: string | null }> }> = []
 
-  for (const declaration of declarations) {
+  for (const name of new Set(declarations.map((declaration) => declaration.name))) {
     const mapPattern = new RegExp(
-      `\\b${escapedRegExp(declaration.name)}\\s*\\.map\\s*\\(\\s*(?:async\\s*)?\\(\\s*\\[([^\\]]+)\\]\\s*\\)\\s*=>\\s*tools\\.exec_command\\s*\\(\\s*`,
+      `\\b${escapedRegExp(name)}\\s*\\.map\\s*\\(\\s*(?:async\\s*)?\\(\\s*\\[([^\\]]+)\\]\\s*\\)\\s*=>\\s*tools\\.exec_command\\s*\\(\\s*`,
       'gu',
     )
     let mapMatch: RegExpExecArray | null
     while ((mapMatch = mapPattern.exec(input)) !== null) {
-      if (mapMatch.index < declaration.startIndex) continue
-      if (mapMatch.index >= declaration.endIndex) break
+      if (!isJavaScriptCodeIndex(lexicalScan, mapMatch.index)) continue
+      const declaration = declarations
+        .filter((candidate) => (
+          candidate.name === name
+          && candidate.startIndex < mapMatch!.index
+          && mapMatch!.index >= candidate.scopeStartIndex
+          && mapMatch!.index < candidate.scopeEndIndex
+        ))
+        .sort((left, right) => right.scopeDepth - left.scopeDepth || right.startIndex - left.startIndex)[0]
+      if (!declaration) continue
       const tupleNames = mapMatch[1]!
         .split(',')
         .map((name) => name.trim())
@@ -8041,6 +8132,12 @@ async function fetchConnectorLogo(rawUrl: string): Promise<{ contentType: string
 
 const STREAM_EVENT_BUFFER_LIMIT = 400
 const APP_SERVER_THREAD_CACHE_LIMIT = 128
+const APP_SERVER_THREAD_CACHE_IDLE_MS = 30 * 60 * 1000
+const APP_SERVER_STREAM_CACHE_BYTE_LIMIT = 24 * 1024 * 1024
+const APP_SERVER_SNAPSHOT_CACHE_BYTE_LIMIT = 32 * 1024 * 1024
+const APP_SERVER_TURN_PAGE_CACHE_BYTE_LIMIT = 32 * 1024 * 1024
+const APP_SERVER_CAPTURED_ITEM_CACHE_BYTE_LIMIT = 24 * 1024 * 1024
+const APP_SERVER_LIVE_STATE_CACHE_BYTE_LIMIT = 24 * 1024 * 1024
 
 type StreamEventFrame = {
   method: string
@@ -8054,6 +8151,14 @@ type CapturedItem = {
   turnId: string
   data: Record<string, unknown>
   completed: boolean
+}
+
+function estimateCacheWeight(value: unknown): number {
+  try {
+    return Buffer.byteLength(JSON.stringify(value), 'utf8')
+  } catch {
+    return 1024
+  }
 }
 
 function extractThreadIdFromParams(params: unknown): string {
@@ -8177,12 +8282,32 @@ class AppServerProcess {
   private readonly pending = new Map<number, { resolve: (value: unknown) => void; reject: (reason?: unknown) => void }>()
   private readonly notificationListeners = new Set<(value: { method: string; params: unknown }) => void>()
   private readonly pendingServerRequests = new Map<number, PendingServerRequest>()
-  private readonly streamEventsByThreadId = new Map<string, StreamEventFrame[]>()
-  private readonly lastThreadReadSnapshotByThreadId = new Map<string, unknown>()
-  private readonly threadTurnPageReadCacheByThreadId = new Map<string, { result: unknown; expiresAt: number }>()
+  private readonly streamEventsByThreadId = new BoundedLruCache<{ frames: StreamEventFrame[]; weight: number }>({
+    maxEntries: APP_SERVER_THREAD_CACHE_LIMIT,
+    maxWeight: APP_SERVER_STREAM_CACHE_BYTE_LIMIT,
+    maxIdleMs: APP_SERVER_THREAD_CACHE_IDLE_MS,
+  })
+  private readonly lastThreadReadSnapshotByThreadId = new BoundedLruCache<unknown>({
+    maxEntries: APP_SERVER_THREAD_CACHE_LIMIT,
+    maxWeight: APP_SERVER_SNAPSHOT_CACHE_BYTE_LIMIT,
+    maxIdleMs: APP_SERVER_THREAD_CACHE_IDLE_MS,
+  })
+  private readonly threadTurnPageReadCacheByThreadId = new BoundedLruCache<{ result: unknown; expiresAt: number }>({
+    maxEntries: APP_SERVER_THREAD_CACHE_LIMIT,
+    maxWeight: APP_SERVER_TURN_PAGE_CACHE_BYTE_LIMIT,
+    maxIdleMs: APP_SERVER_THREAD_CACHE_IDLE_MS,
+  })
   private readonly threadTurnPageReadPromiseByThreadId = new Map<string, Promise<unknown>>()
-  private readonly capturedItemsByThreadId = new Map<string, Map<string, CapturedItem>>()
-  private readonly liveStateCache = new Map<string, { data: unknown; turnCount: number; sessionSize: number }>()
+  private readonly capturedItemsByThreadId = new BoundedLruCache<{ items: Map<string, CapturedItem>; weight: number }>({
+    maxEntries: APP_SERVER_THREAD_CACHE_LIMIT,
+    maxWeight: APP_SERVER_CAPTURED_ITEM_CACHE_BYTE_LIMIT,
+    maxIdleMs: APP_SERVER_THREAD_CACHE_IDLE_MS,
+  })
+  private readonly liveStateCache = new BoundedLruCache<{ data: unknown; turnCount: number; sessionSize: number }>({
+    maxEntries: APP_SERVER_THREAD_CACHE_LIMIT,
+    maxWeight: APP_SERVER_LIVE_STATE_CACHE_BYTE_LIMIT,
+    maxIdleMs: APP_SERVER_THREAD_CACHE_IDLE_MS,
+  })
   private readonly activeTurnIdByThreadId = new Map<string, string>()
   private chatgptAuthRefreshPromise: Promise<ChatgptAuthTokensRefreshResponse> | null = null
   private freeModeState: FreeModeState = createDefaultFreeModeState()
@@ -8190,26 +8315,8 @@ class AppServerProcess {
   private activeTurnCount = 0
   private recentStderrErrorTimes: number[] = []
 
-  private touchThreadCacheKey<T>(cache: Map<string, T>, threadId: string): T | undefined {
-    const value = cache.get(threadId)
-    if (value === undefined) return undefined
-    cache.delete(threadId)
-    cache.set(threadId, value)
-    return value
-  }
-
-  private setBoundedThreadCache<T>(cache: Map<string, T>, threadId: string, value: T): void {
-    cache.delete(threadId)
-    cache.set(threadId, value)
-    while (cache.size > APP_SERVER_THREAD_CACHE_LIMIT) {
-      const oldestThreadId = cache.keys().next().value
-      if (!oldestThreadId) break
-      cache.delete(oldestThreadId)
-    }
-  }
-
   private clearThreadCaches(threadId = ''): void {
-    const caches: Array<Map<string, unknown>> = [
+    const caches: Array<{ delete: (key: string) => unknown; clear: () => void }> = [
       this.streamEventsByThreadId,
       this.lastThreadReadSnapshotByThreadId,
       this.threadTurnPageReadCacheByThreadId,
@@ -8414,31 +8521,32 @@ class AppServerProcess {
       atIso: new Date().toISOString(),
     }
     let buffer = this.streamEventsByThreadId.get(threadId)
-    if (!buffer) {
-      buffer = []
-      this.setBoundedThreadCache(this.streamEventsByThreadId, threadId, buffer)
-    } else {
-      this.touchThreadCacheKey(this.streamEventsByThreadId, threadId)
+    if (!buffer) buffer = { frames: [], weight: 0 }
+    buffer.frames.push(frame)
+    buffer.weight += estimateCacheWeight(frame)
+    if (buffer.frames.length > STREAM_EVENT_BUFFER_LIMIT) {
+      const removed = buffer.frames.splice(0, buffer.frames.length - STREAM_EVENT_BUFFER_LIMIT)
+      buffer.weight = Math.max(
+        0,
+        buffer.weight - removed.reduce((total, entry) => total + estimateCacheWeight(entry), 0),
+      )
     }
-    buffer.push(frame)
-    if (buffer.length > STREAM_EVENT_BUFFER_LIMIT) {
-      buffer.splice(0, buffer.length - STREAM_EVENT_BUFFER_LIMIT)
-    }
+    this.streamEventsByThreadId.set(threadId, buffer, buffer.weight)
   }
 
   getStreamEvents(threadId: string, limit: number): StreamEventFrame[] {
-    const buffer = this.touchThreadCacheKey(this.streamEventsByThreadId, threadId)
-    if (!buffer || buffer.length === 0) return []
-    return buffer.slice(-limit)
+    const buffer = this.streamEventsByThreadId.get(threadId)
+    if (!buffer || buffer.frames.length === 0) return []
+    return buffer.frames.slice(-limit)
   }
 
   storeThreadReadSnapshot(threadId: string, snapshot: unknown): void {
-    this.setBoundedThreadCache(this.lastThreadReadSnapshotByThreadId, threadId, snapshot)
+    this.lastThreadReadSnapshotByThreadId.set(threadId, snapshot, estimateCacheWeight(snapshot))
     this.threadTurnPageReadCacheByThreadId.delete(threadId)
   }
 
   getLastThreadReadSnapshot(threadId: string): unknown | null {
-    return this.touchThreadCacheKey(this.lastThreadReadSnapshotByThreadId, threadId) ?? null
+    return this.lastThreadReadSnapshotByThreadId.get(threadId) ?? null
   }
 
   private async readPaginatedThreadTurns(threadId: string): Promise<unknown[]> {
@@ -8522,10 +8630,11 @@ class AppServerProcess {
       if (!isPaginatedThreadReadError(error)) throw error
       return await this.readPaginatedThreadForTurnPage(threadId, error)
     }).then((result) => {
-      this.setBoundedThreadCache(this.threadTurnPageReadCacheByThreadId, threadId, {
+      const cachedValue = {
         result,
         expiresAt: Date.now() + THREAD_TURN_PAGE_READ_CACHE_TTL_MS,
-      })
+      }
+      this.threadTurnPageReadCacheByThreadId.set(threadId, cachedValue, estimateCacheWeight(result))
       return result
     }).finally(() => {
       this.threadTurnPageReadPromiseByThreadId.delete(threadId)
@@ -8536,11 +8645,11 @@ class AppServerProcess {
   }
 
   cacheLiveState(threadId: string, data: unknown, turnCount: number, sessionSize: number): void {
-    this.setBoundedThreadCache(this.liveStateCache, threadId, { data, turnCount, sessionSize })
+    this.liveStateCache.set(threadId, { data, turnCount, sessionSize }, estimateCacheWeight(data))
   }
 
   getCachedLiveState(threadId: string, turnCount: number, sessionSize: number): unknown | null {
-    const cached = this.touchThreadCacheKey(this.liveStateCache, threadId)
+    const cached = this.liveStateCache.get(threadId)
     if (!cached) return null
     if (cached.turnCount !== turnCount || cached.sessionSize !== sessionSize) return null
     return cached.data
@@ -8571,31 +8680,32 @@ class AppServerProcess {
       (typeof params.turn_id === 'string' ? params.turn_id : '')
     if (!turnId) return
 
-    let threadItems = this.capturedItemsByThreadId.get(threadId)
-    if (!threadItems) {
-      threadItems = new Map()
-      this.setBoundedThreadCache(this.capturedItemsByThreadId, threadId, threadItems)
-    } else {
-      this.touchThreadCacheKey(this.capturedItemsByThreadId, threadId)
-    }
+    let capturedState = this.capturedItemsByThreadId.get(threadId)
+    if (!capturedState) capturedState = { items: new Map(), weight: 0 }
+    const threadItems = capturedState.items
 
     const isCompleted = notification.method === 'item/completed'
     const existing = threadItems.get(itemId)
 
     if (existing && existing.completed && !isCompleted) return
 
-    threadItems.set(itemId, {
+    const capturedItem: CapturedItem = {
       id: itemId,
       type: itemType,
       turnId,
       data: item as Record<string, unknown>,
       completed: isCompleted,
-    })
+    }
+    capturedState.weight = Math.max(0, capturedState.weight - (existing ? estimateCacheWeight(existing) : 0))
+      + estimateCacheWeight(capturedItem)
+    threadItems.set(itemId, capturedItem)
+    this.capturedItemsByThreadId.set(threadId, capturedState, capturedState.weight)
   }
 
   mergeItemsIntoTurns(threadId: string, turns: unknown[]): unknown[] {
-    const capturedMap = this.touchThreadCacheKey(this.capturedItemsByThreadId, threadId)
-    if (!capturedMap || capturedMap.size === 0) return turns
+    const capturedState = this.capturedItemsByThreadId.get(threadId)
+    if (!capturedState || capturedState.items.size === 0) return turns
+    const capturedMap = capturedState.items
 
     const itemsByTurnId = new Map<string, CapturedItem[]>()
     for (const captured of capturedMap.values()) {
@@ -9735,9 +9845,14 @@ class AppServerRuntime {
 
 class AppServerRuntimePool {
   private static readonly THREAD_RUNTIME_CACHE_LIMIT = 512
+  private static readonly THREAD_RUNTIME_CACHE_IDLE_MS = 30 * 60 * 1000
   private readonly runtimesBySignature = new Map<string, AppServerRuntime>()
   private readonly notificationListeners = new Set<(notification: BridgeNotification) => void>()
-  private readonly runtimeByThreadId = new Map<string, AppServerRuntime>()
+  private readonly runtimeByThreadId = new BoundedLruCache<AppServerRuntime>({
+    maxEntries: AppServerRuntimePool.THREAD_RUNTIME_CACHE_LIMIT,
+    maxWeight: AppServerRuntimePool.THREAD_RUNTIME_CACHE_LIMIT,
+    maxIdleMs: AppServerRuntimePool.THREAD_RUNTIME_CACHE_IDLE_MS,
+  })
   private activeState: FreeModeState = readActiveFreeModeStateSync()
 
   private emitNotification(notification: BridgeNotification): void {
@@ -9795,13 +9910,7 @@ class AppServerRuntimePool {
   recordThreadRuntime(threadId: string, runtime: AppServerRuntime): void {
     const normalizedThreadId = threadId.trim()
     if (!normalizedThreadId) return
-    this.runtimeByThreadId.delete(normalizedThreadId)
     this.runtimeByThreadId.set(normalizedThreadId, runtime)
-    while (this.runtimeByThreadId.size > AppServerRuntimePool.THREAD_RUNTIME_CACHE_LIMIT) {
-      const oldestThreadId = this.runtimeByThreadId.keys().next().value
-      if (!oldestThreadId) break
-      this.runtimeByThreadId.delete(oldestThreadId)
-    }
   }
 
   releaseThreadState(threadId: string): void {
@@ -9818,8 +9927,6 @@ class AppServerRuntimePool {
     if (!normalizedThreadId) return null
     const recordedRuntime = this.runtimeByThreadId.get(normalizedThreadId)
     if (recordedRuntime && recordedRuntime !== excludedRuntime) {
-      this.runtimeByThreadId.delete(normalizedThreadId)
-      this.runtimeByThreadId.set(normalizedThreadId, recordedRuntime)
       return recordedRuntime
     }
     for (const runtime of this.runtimesBySignature.values()) {

@@ -81,6 +81,7 @@ import type {
   UiToolCallData,
 } from '../types/codex'
 import { getPathParent, isProjectlessChatPath, normalizePathForUi, toProjectName } from '../pathUtils.js'
+import { reconcileListedActiveTurn } from './threadRuntimeReconciliation'
 
 function flattenThreads(groups: UiProjectGroup[]): UiThread[] {
   return groups.flatMap((group) => group.threads)
@@ -3510,7 +3511,6 @@ export function useDesktopState() {
     if (activeTurnIdByThreadId.value[threadId]) {
       activeTurnIdByThreadId.value = omitKey(activeTurnIdByThreadId.value, threadId)
       turnStateGenerationByThreadId.set(threadId, (turnStateGenerationByThreadId.get(threadId) ?? 0) + 1)
-      turnStateGenerationByThreadId.set(threadId, (turnStateGenerationByThreadId.get(threadId) ?? 0) + 1)
     }
     if (activeTurnProviderIdByThreadId.value[threadId]) {
       activeTurnProviderIdByThreadId.value = omitKey(activeTurnProviderIdByThreadId.value, threadId)
@@ -6083,22 +6083,21 @@ export function useDesktopState() {
     for (const thread of listedThreads) {
       if (thread.inProgress !== true) continue
       const activeTurnId = thread.activeTurnId?.trim() ?? ''
-      // A list request can have started before turn/completed reached the
-      // client. Do not let its stale positive status revive that same turn.
-      if (isKnownTerminalTurn(thread.id, activeTurnId) || (!activeTurnId && terminalTurnIdForThread(thread.id))) {
-        continue
-      }
-      ensureActiveTurnActivity(thread.id)
-      // A changed list id is authoritative only when no live turn event landed
-      // while this list request was in flight. This lets a fresh list replace
-      // an older cached id without allowing a stale response to clobber a new
-      // turn/started notification.
       const cachedActiveTurnId = nextActiveTurnIds[thread.id]?.trim() ?? ''
-      const generationAtStart = turnStateGenerationAtRequestStart?.get(thread.id) ?? 0
+      const generationAtStart = turnStateGenerationAtRequestStart?.get(thread.id) ?? null
       const currentGeneration = turnStateGenerationByThreadId.get(thread.id) ?? 0
-      const canApplyListedTurnId = !cachedActiveTurnId
-        || (turnStateGenerationAtRequestStart !== null && generationAtStart === currentGeneration)
-      if (activeTurnId && activeTurnId !== cachedActiveTurnId && canApplyListedTurnId) {
+      const reconciliation = reconcileListedActiveTurn({
+        listedInProgress: true,
+        listedActiveTurnId: activeTurnId,
+        cachedActiveTurnId,
+        terminalTurnId: terminalTurnIdForThread(thread.id),
+        requestGeneration: generationAtStart,
+        currentGeneration,
+      })
+      if (!reconciliation.inProgress) continue
+
+      ensureActiveTurnActivity(thread.id)
+      if (reconciliation.acceptListedTurnId) {
         nextActiveTurnIds = {
           ...nextActiveTurnIds,
           [thread.id]: activeTurnId,
