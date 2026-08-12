@@ -1884,6 +1884,9 @@ export function useDesktopState() {
   const turnErrorByThreadId = ref<Record<string, TurnErrorState>>({})
   const threadNoticeByThreadId = ref<Record<string, ThreadNoticeState>>({})
   const activeTurnIdByThreadId = ref<Record<string, string>>({})
+  // Non-reactive generation counters let a thread/list response distinguish
+  // state that already existed when the request started from newer live events.
+  const turnStateGenerationByThreadId = new Map<string, number>()
   // A terminal notification is more specific than a later list snapshot. Keep
   // it until a different turn explicitly starts so an in-flight thread/list
   // response cannot resurrect the completed turn as running.
@@ -2891,6 +2894,7 @@ export function useDesktopState() {
     resumedThreadById.value = {}
     resumedThreadProviderIdByThreadId.value = {}
     activeTurnIdByThreadId.value = {}
+    turnStateGenerationByThreadId.clear()
     activeTurnProviderIdByThreadId.value = {}
   }
 
@@ -3340,6 +3344,9 @@ export function useDesktopState() {
     turnErrorByThreadId.value = pruneThreadStateMap(turnErrorByThreadId.value, activeThreadIds)
     threadNoticeByThreadId.value = pruneThreadStateMap(threadNoticeByThreadId.value, activeThreadIds)
     activeTurnIdByThreadId.value = pruneThreadStateMap(activeTurnIdByThreadId.value, activeThreadIds)
+    for (const threadId of turnStateGenerationByThreadId.keys()) {
+      if (!activeThreadIds.has(threadId)) turnStateGenerationByThreadId.delete(threadId)
+    }
     terminalTurnIdByThreadId.value = pruneThreadStateMap(terminalTurnIdByThreadId.value, activeThreadIds)
     activeTurnProviderIdByThreadId.value = pruneThreadStateMap(activeTurnProviderIdByThreadId.value, activeThreadIds)
     interruptBlockedUntilPersistedByThreadId.value = pruneThreadStateMap(
@@ -3505,6 +3512,7 @@ export function useDesktopState() {
         ...activeTurnIdByThreadId.value,
         [threadId]: normalizedTurnId,
       }
+      turnStateGenerationByThreadId.set(threadId, (turnStateGenerationByThreadId.get(threadId) ?? 0) + 1)
     }
     maybeUnblockInterruptForActiveTurn(threadId, normalizedTurnId)
     ensureActiveTurnActivity(threadId)
@@ -3515,6 +3523,8 @@ export function useDesktopState() {
     if (!threadId) return
     if (activeTurnIdByThreadId.value[threadId]) {
       activeTurnIdByThreadId.value = omitKey(activeTurnIdByThreadId.value, threadId)
+      turnStateGenerationByThreadId.set(threadId, (turnStateGenerationByThreadId.get(threadId) ?? 0) + 1)
+      turnStateGenerationByThreadId.set(threadId, (turnStateGenerationByThreadId.get(threadId) ?? 0) + 1)
     }
     if (activeTurnProviderIdByThreadId.value[threadId]) {
       activeTurnProviderIdByThreadId.value = omitKey(activeTurnProviderIdByThreadId.value, threadId)
@@ -5355,7 +5365,7 @@ export function useDesktopState() {
       changed = true
       return {
         ...message,
-        commandExecution: { ...command, status: 'completed' as const },
+        commandExecution: { ...command, status: 'unknown' as const },
       }
     })
 
@@ -5982,7 +5992,11 @@ export function useDesktopState() {
     return orderGroupsByWorkspaceProjectOrder(filteredGroups, rootsState, duplicateLeafNames)
   }
 
-  function applyThreadGroups(groups: UiProjectGroup[], rootsState: WorkspaceRootsState | null): void {
+  function applyThreadGroups(
+    groups: UiProjectGroup[],
+    rootsState: WorkspaceRootsState | null,
+    turnStateGenerationAtRequestStart: ReadonlyMap<string, number> | null = null,
+  ): void {
     const visibleGroups = filterGroupsByWorkspaceRoots(groups, rootsState)
     const hasWorkspaceRootsState = Boolean(
       rootsState && (rootsState.order.length > 0 || rootsState.projectOrder.length > 0 || (rootsState.remoteProjects ?? []).length > 0),
@@ -6020,14 +6034,21 @@ export function useDesktopState() {
         continue
       }
       ensureActiveTurnActivity(thread.id)
-      // Notifications are more granular than thread/list. Let the list fill a
-      // missing turn id during startup or a switch, but never replace a newer
-      // id already observed from the live event stream.
-      if (activeTurnId && !nextActiveTurnIds[thread.id]) {
+      // A changed list id is authoritative only when no live turn event landed
+      // while this list request was in flight. This lets a fresh list replace
+      // an older cached id without allowing a stale response to clobber a new
+      // turn/started notification.
+      const cachedActiveTurnId = nextActiveTurnIds[thread.id]?.trim() ?? ''
+      const generationAtStart = turnStateGenerationAtRequestStart?.get(thread.id) ?? 0
+      const currentGeneration = turnStateGenerationByThreadId.get(thread.id) ?? 0
+      const canApplyListedTurnId = !cachedActiveTurnId
+        || (turnStateGenerationAtRequestStart !== null && generationAtStart === currentGeneration)
+      if (activeTurnId && activeTurnId !== cachedActiveTurnId && canApplyListedTurnId) {
         nextActiveTurnIds = {
           ...nextActiveTurnIds,
           [thread.id]: activeTurnId,
         }
+        turnStateGenerationByThreadId.set(thread.id, currentGeneration + 1)
       }
       if (nextInProgressById[thread.id] !== true) {
         nextInProgressById = {
@@ -6181,6 +6202,7 @@ export function useDesktopState() {
   async function loadRemainingThreadPages(rootsState: WorkspaceRootsState | null): Promise<void> {
     if (isLoadingRemainingThreadPages || !threadListNextCursor || hasActiveInProgressThreads()) return
     isLoadingRemainingThreadPages = true
+    const turnStateGenerationAtRequestStart = new Map(turnStateGenerationByThreadId)
 
     try {
       const page = await getThreadGroupsPage(threadListNextCursor, getBackgroundThreadListLimit())
@@ -6188,7 +6210,7 @@ export function useDesktopState() {
       hasLoadedAllThreadPages = page.nextCursor === null
       isThreadListFullyLoaded.value = hasLoadedAllThreadPages
       loadedThreadListGroups = mergeThreadGroupPages(loadedThreadListGroups, page.groups)
-      applyThreadGroups(loadedThreadListGroups, rootsState)
+      applyThreadGroups(loadedThreadListGroups, rootsState, turnStateGenerationAtRequestStart)
     } catch {
       // Keep the first page usable; a later refresh can retry remaining pages.
     } finally {
@@ -6206,6 +6228,7 @@ export function useDesktopState() {
     }
 
     loadThreadsPromise = (async () => {
+    const turnStateGenerationAtRequestStart = new Map(turnStateGenerationByThreadId)
     if (!hasLoadedThreads.value) {
       isLoadingThreads.value = true
     }
@@ -6228,7 +6251,7 @@ export function useDesktopState() {
       isThreadListFullyLoaded.value = hasLoadedAllThreadPages
       await hydrateWorkspaceRootsStateIfNeeded(groups, rootsState)
 
-      applyThreadGroups(loadedThreadListGroups, rootsState)
+      applyThreadGroups(loadedThreadListGroups, rootsState, turnStateGenerationAtRequestStart)
       hasLoadedThreads.value = true
       if (!hasLoadedAllThreadPages) {
         scheduleRemainingThreadPages(rootsState)
@@ -8085,6 +8108,7 @@ export function useDesktopState() {
     turnErrorByThreadId.value = {}
     threadNoticeByThreadId.value = {}
     activeTurnIdByThreadId.value = {}
+    turnStateGenerationByThreadId.clear()
     terminalTurnIdByThreadId.value = {}
     activeTurnProviderIdByThreadId.value = {}
     interruptBlockedUntilPersistedByThreadId.value = {}

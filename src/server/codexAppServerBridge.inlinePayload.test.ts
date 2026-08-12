@@ -433,7 +433,7 @@ describe('session model state recovery', () => {
     })
   })
 
-  it('reconciles an interrupted app-server snapshot from an active rollout turn', async () => {
+  it('does not reconcile an interrupted snapshot from rollout state alone', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'codexui-stale-thread-status-'))
     const sessionPath = join(tempDir, 'session.jsonl')
     await writeFile(sessionPath, [
@@ -442,17 +442,27 @@ describe('session model state recovery', () => {
     ].join('\n'), 'utf8')
 
     try {
-      const result = await mergeSessionModelStateIntoThreadResult({
+      const source = {
         thread: {
           id: 'thread-1',
           path: sessionPath,
           status: { type: 'notLoaded' },
           turns: [{ id: 'turn-2', status: 'interrupted' }],
         },
-      }) as { thread: { status: { type: string; turnId: string }; turns: Array<{ id: string; status: string }> } }
+      }
+      const result = await mergeSessionModelStateIntoThreadResult(source) as {
+        thread: { codexUiRolloutTurnState: string; status: { type: string }; turns: Array<{ id: string; status: string }> }
+      }
 
-      expect(result.thread.status).toEqual({ type: 'inProgress', turnId: 'turn-2' })
-      expect(result.thread.turns).toEqual([{ id: 'turn-2', status: 'inProgress' }])
+      expect(result.thread.codexUiRolloutTurnState).toBe('active')
+      expect(result.thread.status).toEqual({ type: 'notLoaded' })
+      expect(result.thread.turns).toEqual([{ id: 'turn-2', status: 'interrupted' }])
+
+      const liveResult = await mergeSessionModelStateIntoThreadResult(source, {
+        hasActiveTurn: (threadId, turnId) => threadId === 'thread-1' && turnId === 'turn-2',
+      }) as { thread: { status: { type: string; turnId: string }; turns: Array<{ id: string; status: string }> } }
+      expect(liveResult.thread.status).toEqual({ type: 'inProgress', turnId: 'turn-2' })
+      expect(liveResult.thread.turns).toEqual([{ id: 'turn-2', status: 'inProgress' }])
     } finally {
       await rm(tempDir, { recursive: true, force: true })
     }
@@ -1228,6 +1238,44 @@ describe('thread session skill recovery', () => {
       'native-first',
       'native-second',
       'native-third',
+      'agent-after',
+    ])
+  })
+
+  it('keeps same-name static tuple maps within their declaration range', () => {
+    const result = {
+      thread: {
+        id: 'thread-static-command-map-scope',
+        path: '/tmp/session.jsonl',
+        turns: [{
+          id: 'turn-1',
+          items: [
+            { id: 'user-1', type: 'userMessage', content: [{ type: 'text', text: 'inspect', text_elements: [] }] },
+            { id: 'agent-before', type: 'agentMessage', text: 'First block.' },
+            { id: 'agent-between', type: 'agentMessage', text: 'Second block.' },
+            { id: 'agent-after', type: 'agentMessage', text: 'Done.' },
+            { id: 'native-first', type: 'commandExecution', command: '/bin/bash -lc "git status --short"', cwd: '/tmp/project', status: 'completed', aggregatedOutput: '', exitCode: 0 },
+            { id: 'native-second', type: 'commandExecution', command: '/bin/bash -lc "pnpm test:unit"', cwd: '/tmp/project', status: 'completed', aggregatedOutput: '', exitCode: 0 },
+          ],
+        }],
+      },
+    }
+    const sessionLog = [
+      JSON.stringify({ type: 'turn_context', payload: { turn_id: 'turn-1' } }),
+      JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'First block.' }] } }),
+      JSON.stringify({ type: 'response_item', payload: { type: 'custom_tool_call', name: 'exec', status: 'completed', call_id: 'first', input: 'const calls = [["git status --short"]]; await Promise.all(calls.map(([cmd]) => tools.exec_command({ cmd, workdir: "/tmp/project" })));' } }),
+      JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Second block.' }] } }),
+      JSON.stringify({ type: 'response_item', payload: { type: 'custom_tool_call', name: 'exec', status: 'completed', call_id: 'second', input: 'const calls = [["pnpm test:unit"]]; await Promise.all(calls.map(([cmd]) => tools.exec_command({ cmd, workdir: "/tmp/project" })));' } }),
+      JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Done.' }] } }),
+    ].join('\n')
+
+    const merged = mergeRecoveredTurnItemsIntoThreadResult(result, (_threadId, turns) => turns, sessionLog) as typeof result
+    expect(merged.thread.turns[0].items.map((item) => item.id)).toEqual([
+      'user-1',
+      'agent-before',
+      'native-first',
+      'agent-between',
+      'native-second',
       'agent-after',
     ])
   })
@@ -2889,7 +2937,7 @@ describe('backend queue scheduling', () => {
     processor.dispose()
   })
 
-  it('forwards a running state instead of duplicating a rollout-active interrupted turn', async () => {
+  it('auto-continues a rollout-active interrupted snapshot without live runtime evidence', async () => {
     vi.useFakeTimers()
     const sessionDir = await mkdtemp(join(tmpdir(), 'codexui-rollout-active-turn-'))
     const sessionPath = join(sessionDir, 'session.jsonl')
@@ -2917,6 +2965,8 @@ describe('backend queue scheduling', () => {
             },
           }
         }
+        if (method === 'thread/resume') return { thread: { id: 'thread-1' } }
+        if (method === 'turn/start') return { turn: { id: 'turn-2' } }
         throw new Error(`Unexpected RPC: ${method}`)
       },
     } as never, undefined, undefined, (notification) => {
@@ -2933,10 +2983,10 @@ describe('backend queue scheduling', () => {
       await vi.waitFor(() => {
         expect(forwarded).toEqual([{
           method: 'thread/status/changed',
-          params: { threadId: 'thread-1', status: { type: 'running', turnId: 'turn-1' } },
+          params: { threadId: 'thread-1', status: { type: 'running' } },
         }])
       })
-      expect(calls).toEqual(['thread/read'])
+      expect(calls).toEqual(['thread/read', 'thread/resume', 'turn/start'])
     } finally {
       processor.dispose()
       await rm(sessionDir, { recursive: true, force: true })
@@ -3935,6 +3985,9 @@ process.stdin.on('data', (chunk) => {
     vi.stubEnv('CODEXUI_CODEX_COMMAND', cursorCommand)
     vi.stubEnv('CODEXUI_CODEX_CURSOR_COMMAND', cursorCommand)
     vi.stubEnv('CODEXUI_CODEX_MOON_COMMAND', moonCommand)
+    const payloadDir = join(tempDir, 'cursor-tool-payloads', 'thread-1')
+    await mkdir(payloadDir, { recursive: true })
+    await writeFile(join(payloadDir, 'tool.json'), '{}', 'utf8')
 
     const middleware = createCodexBridgeMiddleware()
 
@@ -3959,6 +4012,41 @@ process.stdin.on('data', (chunk) => {
       expect(log).toContain('cursor:thread/read\n')
       expect(log).toContain('cursor:thread/archive\n')
       expect(log).not.toContain('moon:thread/archive\n')
+      expect(log.match(/cursor:thread\/read\n/gu)).toHaveLength(1)
+      expect(existsSync(payloadDir)).toBe(false)
+    } finally {
+      middleware.dispose()
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('preserves Cursor payload sidecars when archive fails', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-archive-sidecar-failure-'))
+    const commandLogPath = join(tempDir, 'commands.log')
+    const cursorCommand = join(tempDir, 'codex-cursor')
+    await writeThreadRoutingCommand(cursorCommand, 'cursor', commandLogPath, false)
+    await writeFile(join(tempDir, 'webui-free-mode.json'), JSON.stringify({
+      enabled: true,
+      apiKey: null,
+      model: 'gpt-5.5-extra-high',
+      provider: 'cursor',
+    }), 'utf8')
+    const payloadDir = join(tempDir, 'cursor-tool-payloads', 'thread-1')
+    const payloadPath = join(payloadDir, 'tool.json')
+    await mkdir(payloadDir, { recursive: true })
+    await writeFile(payloadPath, '{"type":"cursor_tool_call"}', 'utf8')
+    vi.stubEnv('CODEX_HOME', tempDir)
+    vi.stubEnv('CODEXUI_CODEX_COMMAND', cursorCommand)
+    vi.stubEnv('CODEXUI_CODEX_CURSOR_COMMAND', cursorCommand)
+
+    const middleware = createCodexBridgeMiddleware()
+    try {
+      const response = await invokeBridgeJson(middleware, '/codex-api/rpc', {
+        method: 'thread/archive',
+        params: { threadId: 'thread-1' },
+      })
+      expect(response.statusCode).toBe(502)
+      expect(existsSync(payloadPath)).toBe(true)
     } finally {
       middleware.dispose()
       await rm(tempDir, { recursive: true, force: true })

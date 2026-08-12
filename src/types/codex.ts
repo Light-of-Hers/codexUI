@@ -100,7 +100,7 @@ export type UiThreadAutomation = {
 export type CommandExecutionData = {
   command: string
   cwd: string | null
-  status: 'inProgress' | 'completed' | 'failed' | 'declined' | 'interrupted'
+  status: 'inProgress' | 'completed' | 'failed' | 'declined' | 'interrupted' | 'unknown'
   aggregatedOutput: string
   exitCode: number | null
 }

@@ -803,7 +803,14 @@ async function readThreadUserMessageNavigation(
 }
 
 
-export async function mergeSessionModelStateIntoThreadResult(result: unknown): Promise<unknown> {
+type RuntimeTurnStateReader = {
+  hasActiveTurn(threadId: string, turnId: string): boolean
+}
+
+export async function mergeSessionModelStateIntoThreadResult(
+  result: unknown,
+  runtimeTurnState: RuntimeTurnStateReader | null = null,
+): Promise<unknown> {
   const record = asRecord(result)
   const thread = asRecord(record?.thread)
   const sessionPath = readNonEmptyString(thread?.path)
@@ -836,17 +843,21 @@ export async function mergeSessionModelStateIntoThreadResult(result: unknown): P
     nextThread.codexUiRolloutTurnState = modelState.rolloutTurnState
   }
 
+  const threadId = readNonEmptyString(nextThread.id)
+  const trustedActiveTurnId = modelState.activeTurnId
+    && runtimeTurnState?.hasActiveTurn?.(threadId, modelState.activeTurnId)
+    ? modelState.activeTurnId
+    : ''
   return reconcileStaleThreadStatusFromSession({
     ...nextRecord,
     thread: nextThread,
-  }, modelState.activeTurnId ?? '')
+  }, trustedActiveTurnId)
 }
 
 /**
- * Prefer the local rollout when it proves an app-server interrupted-turn
- * snapshot is stale. This can happen while an interrupted turn is being
- * restored, and otherwise causes a session switch to flash idle before the
- * next activity notification arrives.
+ * Prefer a live runtime turn when it proves an app-server interrupted-turn
+ * snapshot is stale. A rollout alone is insufficient evidence because a
+ * crashed process can leave its final task_started record unterminated.
  */
 export function reconcileStaleThreadStatusFromSession(result: unknown, activeTurnId: string): unknown {
   const record = asRecord(result)
@@ -4135,6 +4146,7 @@ function readJavaScriptStaticTuple(tupleSource: string): Array<string | null> | 
 type StaticTupleDeclaration = {
   name: string
   startIndex: number
+  endIndex: number
   tuples: Array<Array<string | null>>
 }
 
@@ -4153,7 +4165,13 @@ function findStaticJavaScriptTupleDeclarations(input: string): StaticTupleDeclar
       .map((entry) => readJavaScriptStaticTuple(entry))
       .filter((tuple): tuple is Array<string | null> => Boolean(tuple))
     if (tuples.length !== tupleEntries.length) continue
-    declarations.push({ name: match[1]!, startIndex: match.index, tuples })
+    declarations.push({ name: match[1]!, startIndex: match.index, endIndex: input.length, tuples })
+  }
+
+  for (let index = 0; index < declarations.length; index += 1) {
+    const declaration = declarations[index]!
+    const nextSameName = declarations.slice(index + 1).find((candidate) => candidate.name === declaration.name)
+    if (nextSameName) declaration.endIndex = nextSameName.startIndex
   }
 
   return declarations
@@ -4175,6 +4193,7 @@ function buildStaticMappedExecRecoveredCommands(input: string): Array<{ startInd
     let mapMatch: RegExpExecArray | null
     while ((mapMatch = mapPattern.exec(input)) !== null) {
       if (mapMatch.index < declaration.startIndex) continue
+      if (mapMatch.index >= declaration.endIndex) break
       const tupleNames = mapMatch[1]!
         .split(',')
         .map((name) => name.trim())
@@ -7379,6 +7398,14 @@ function extractThreadIdFromNotificationParams(params: unknown): string {
   return ''
 }
 
+function extractTurnIdFromNotificationParams(params: unknown): string {
+  const record = asRecord(params)
+  if (!record) return ''
+  const directTurnId = readNonEmptyString(record.turnId) || readNonEmptyString(record.turn_id)
+  if (directTurnId) return directTurnId
+  return readNonEmptyString(asRecord(record.turn)?.id)
+}
+
 function isTurnCompletedNotification(notification: { method: string; params: unknown }): boolean {
   return notification.method === 'turn/completed'
 }
@@ -8156,6 +8183,7 @@ class AppServerProcess {
   private readonly threadTurnPageReadPromiseByThreadId = new Map<string, Promise<unknown>>()
   private readonly capturedItemsByThreadId = new Map<string, Map<string, CapturedItem>>()
   private readonly liveStateCache = new Map<string, { data: unknown; turnCount: number; sessionSize: number }>()
+  private readonly activeTurnIdByThreadId = new Map<string, string>()
   private chatgptAuthRefreshPromise: Promise<ChatgptAuthTokensRefreshResponse> | null = null
   private freeModeState: FreeModeState = createDefaultFreeModeState()
   private unhealthy = false
@@ -8188,6 +8216,7 @@ class AppServerProcess {
       this.threadTurnPageReadPromiseByThreadId,
       this.capturedItemsByThreadId,
       this.liveStateCache,
+      this.activeTurnIdByThreadId,
     ]
     if (threadId) {
       for (const cache of caches) cache.delete(threadId)
@@ -8199,6 +8228,10 @@ class AppServerProcess {
   releaseThreadState(threadId: string): void {
     const normalizedThreadId = threadId.trim()
     if (normalizedThreadId) this.clearThreadCaches(normalizedThreadId)
+  }
+
+  hasActiveTurn(threadId: string, turnId: string): boolean {
+    return Boolean(threadId && turnId && this.activeTurnIdByThreadId.get(threadId) === turnId)
   }
 
   getFreeModeState(): FreeModeState {
@@ -8275,6 +8308,7 @@ class AppServerProcess {
       this.pending.clear()
       this.pendingServerRequests.clear()
       this.clearThreadCaches()
+      this.activeTurnCount = 0
       this.process = null
       this.initialized = false
       this.initializePromise = null
@@ -8344,9 +8378,25 @@ class AppServerProcess {
     }
     if (sanitizedNotification.method === 'turn/started') {
       this.activeTurnCount += 1
+      const turnId = extractTurnIdFromNotificationParams(sanitizedNotification.params)
+      if (nThreadId && turnId) this.activeTurnIdByThreadId.set(nThreadId, turnId)
     } else if (sanitizedNotification.method === 'turn/completed') {
       this.activeTurnCount = Math.max(0, this.activeTurnCount - 1)
+      const turnId = extractTurnIdFromNotificationParams(sanitizedNotification.params)
+      if (nThreadId && (!turnId || this.activeTurnIdByThreadId.get(nThreadId) === turnId)) {
+        this.activeTurnIdByThreadId.delete(nThreadId)
+      }
       this.trySelfHeal()
+    } else if (sanitizedNotification.method === 'thread/status/changed' && nThreadId) {
+      const params = asRecord(sanitizedNotification.params)
+      const status = asRecord(params?.status)
+      const statusType = readProtocolToken(status?.type ?? params?.status)
+      const turnId = extractTurnIdFromNotificationParams(sanitizedNotification.params)
+      if (isRunningProtocolToken(statusType) && turnId) {
+        this.activeTurnIdByThreadId.set(nThreadId, turnId)
+      } else if (statusType === 'idle' || statusType === 'interrupted' || isTerminalProtocolToken(statusType)) {
+        this.activeTurnIdByThreadId.delete(nThreadId)
+      }
     }
     for (const listener of this.notificationListeners) {
       listener(sanitizedNotification)
@@ -9242,7 +9292,7 @@ export class BackendQueueProcessor {
       return false
     }
 
-    const enrichedReadResponse = await mergeSessionModelStateIntoThreadResult(response)
+    const enrichedReadResponse = await mergeSessionModelStateIntoThreadResult(response, this.appServer)
     const reconciledThread = asRecord(asRecord(enrichedReadResponse)?.thread)
     const reconciledStatus = asRecord(reconciledThread?.status)
     if (isRunningProtocolToken(readProtocolToken(reconciledStatus?.type))) {
@@ -9291,7 +9341,7 @@ export class BackendQueueProcessor {
       }
       const continuationAppServer = this.resolveAppServerForRpc('thread/resume', resumeParams)
       const resumeResult = await continuationAppServer.rpc('thread/resume', resumeParams)
-      const enrichedResumeResult = await mergeSessionModelStateIntoThreadResult(resumeResult)
+      const enrichedResumeResult = await mergeSessionModelStateIntoThreadResult(resumeResult, this.appServer)
       const resumedModelState = readThreadResultModelState(enrichedResumeResult)
       const turnStartParams: Record<string, unknown> = {
         threadId: snapshot.threadId,
@@ -9395,7 +9445,7 @@ export class BackendQueueProcessor {
 
   private async readQueuedTurnRecoveryState(threadId: string): Promise<SessionRecoveredModelState | null> {
     const rawResponse = await this.appServer.rpc('thread/read', { threadId, includeTurns: true })
-    const response = asRecord(await mergeSessionModelStateIntoThreadResult(rawResponse))
+    const response = asRecord(await mergeSessionModelStateIntoThreadResult(rawResponse, this.appServer))
     const thread = asRecord(response?.thread)
     if (!thread) return null
 
@@ -10263,7 +10313,7 @@ async function readPreparedThreadReadResult(appServer: AppServerProcess, threadI
     appServer,
     recoveredThreadReadResult,
   )
-  const enrichedThreadReadResult = await mergeSessionModelStateIntoThreadResult(inheritedThreadReadResult)
+  const enrichedThreadReadResult = await mergeSessionModelStateIntoThreadResult(inheritedThreadReadResult, appServer)
   const record = asRecord(enrichedThreadReadResult)
   const thread = asRecord(record?.thread)
   if (!record || !thread) {
@@ -10948,14 +10998,6 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 	          return
 	        }
 
-        if (body.method === 'thread/archive') {
-          const paramsRecord = asRecord(body.params)
-          const threadId = readNonEmptyString(paramsRecord?.threadId)
-          if (threadId) {
-            await deleteCursorToolPayloadsForThread(threadId).catch(() => undefined)
-          }
-        }
-
 	        if (body.method === 'account/rateLimits/read' && !(await hasUsableCodexAuth())) {
 	          setJson(res, 200, { result: null })
 	          return
@@ -10971,15 +11013,17 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           // Archives mutate the rollout on disk. Use the persisted model
           // selection to identify its writer: a generic runtime can read the
           // global thread store but cannot archive a rollout it does not own.
-          let threadOwningRuntime: AppServerRuntime | null = null
-          if (threadId) {
+          let threadOwningRuntime: AppServerRuntime | null = threadId
+            ? findRuntimeWithThreadState(runtimePool, threadId)
+            : null
+          if (threadId && !threadOwningRuntime) {
             try {
               const threadReadResult = await effectiveRpcAppServer.rpc('thread/read', {
                 threadId,
                 includeTurns: false,
               })
               const modelState = readThreadResultModelState(
-                await mergeSessionModelStateIntoThreadResult(threadReadResult),
+                await mergeSessionModelStateIntoThreadResult(threadReadResult, effectiveRpcAppServer),
               )
               const provider = modelState.modelProvider.trim().toLowerCase()
               if (modelState.model && shouldUseProviderRuntime(provider)) {
@@ -10991,7 +11035,6 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
               // A missing or unreadable rollout can still be associated with
               // an in-memory runtime from a preceding thread/read.
             }
-            threadOwningRuntime ??= findRuntimeWithThreadState(runtimePool, threadId)
           }
           if (threadOwningRuntime && threadOwningRuntime !== effectiveRpcRuntime) {
             effectiveRpcRuntime = threadOwningRuntime
@@ -11123,7 +11166,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 	            const threadId = typeof params?.threadId === 'string' ? params.threadId.trim() : ''
 	            const snapshot = threadId ? effectiveRpcAppServer.getLastThreadReadSnapshot(threadId) : null
 	            if (snapshot) {
-	              setJson(res, 200, { result: await mergeSessionModelStateIntoThreadResult(snapshot) })
+	              setJson(res, 200, { result: await mergeSessionModelStateIntoThreadResult(snapshot, effectiveRpcAppServer) })
 	              return
 	            }
 	          }
@@ -11162,8 +11205,8 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         if (THREAD_METHODS_WITH_THREAD_SNAPSHOT.has(body.method)) {
           const explicitModelResult = mergeExplicitModelStateIntoThreadResult(skillMergedResult, rpcParams)
           result = explicitModelResult === skillMergedResult
-            ? await mergeSessionModelStateIntoThreadResult(skillMergedResult)
-            : await mergeSessionModelStateIntoThreadResult(explicitModelResult)
+            ? await mergeSessionModelStateIntoThreadResult(skillMergedResult, effectiveRpcAppServer)
+            : await mergeSessionModelStateIntoThreadResult(explicitModelResult, effectiveRpcAppServer)
         }
 
         if (THREAD_METHODS_WITH_THREAD_SNAPSHOT.has(body.method)) {
@@ -11185,7 +11228,10 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         }
         if (body.method === 'thread/archive') {
           const archivedThreadId = readNonEmptyString(asRecord(rpcParams)?.threadId)
-          if (archivedThreadId) runtimePool.releaseThreadState(archivedThreadId)
+          if (archivedThreadId) {
+            await deleteCursorToolPayloadsForThread(archivedThreadId).catch(() => undefined)
+            runtimePool.releaseThreadState(archivedThreadId)
+          }
         }
         if (body.method === 'thread/list') {
           result = await recoverUnlistedPaginatedForksInThreadList(result, rpcParams, effectiveRpcAppServer)
@@ -11352,7 +11398,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
             appServer,
             recoveredThreadReadResult,
           )
-          const enrichedThreadReadResult = await mergeSessionModelStateIntoThreadResult(inheritedThreadReadResult)
+          const enrichedThreadReadResult = await mergeSessionModelStateIntoThreadResult(inheritedThreadReadResult, appServer)
           const sanitized = await sanitizeThreadTurnsInlinePayloads('thread/read', enrichedThreadReadResult)
           const result = await mergeSessionSkillInputsIntoThreadResult(sanitized)
 

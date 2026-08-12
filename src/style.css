@@ -1587,6 +1587,10 @@
   @apply text-emerald-300;
 }
 
+:root.dark .cmd-status-neutral .cmd-status {
+  @apply text-zinc-400;
+}
+
 :root.dark .cmd-status-error .cmd-status {
   @apply text-rose-300;
 }

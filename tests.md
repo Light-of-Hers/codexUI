@@ -8199,3 +8199,33 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - Archive or remove disposable threads created for the cache exercise. No rollout content is rewritten by snapshot caching.
+
+### Reliability: Turn reconciliation, archive sidecars, and recovered commands
+
+#### Prerequisites
+- App server is running from this repository with one disposable active thread and one thread containing Cursor command payload sidecars.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Start a turn, then refresh the sidebar with a newer active turn id. Confirm completion of the newer id clears the running state.
+2. While a sidebar refresh is pending, start another turn and then release the older list response. Confirm the live turn id remains authoritative.
+3. Restart the app server after leaving a rollout whose final record is `task_started`. Confirm the interrupted snapshot is recovered instead of being presented as a live turn solely because of the incomplete rollout tail.
+4. Force an archive RPC failure and confirm the thread's `cursor-tool-payloads` directory remains. Retry successfully and confirm the directory is removed only after success.
+5. Open a recovered transcript containing two same-name static tuple command maps. Confirm each native command is placed in its own assistant-message interval exactly once.
+6. Complete a turn after suppressing an individual command completion event. Confirm the command card stops spinning and shows neutral `Finished`, not a fabricated successful exit.
+7. Repeat the command-card check in light and dark themes and confirm the neutral status remains readable.
+8. Run `pnpm exec vitest run src/composables/useDesktopState.test.ts src/server/codexAppServerBridge.inlinePayload.test.ts` and `pnpm exec vue-tsc --noEmit`.
+
+#### Expected Results
+- List snapshots can repair an old cached turn id but cannot overwrite a live event received while the request was in flight.
+- An unterminated rollout is marked active for diagnostics but only live app-server evidence can rewrite an interrupted snapshot to running.
+- Archive sidecar deletion is atomic with archive success, and known runtime ownership avoids an extra archive pre-read.
+- Static command recovery respects same-name declaration ranges and orphan command status remains semantically neutral.
+
+#### Performance Audit
+- The focused test run passes 202 tests and `vue-tsc --noEmit` passes.
+- Archive requests use the already recorded owning runtime without a redundant `thread/read`; a metadata read remains as the cold-cache fallback.
+- Turn generation bookkeeping is non-reactive and pruned with thread state, so it adds no render dependency or unbounded retention.
+
+#### Rollback/Cleanup
+- Archive the disposable thread after verification. Failed archive attempts intentionally preserve their sidecar directory for a safe retry.

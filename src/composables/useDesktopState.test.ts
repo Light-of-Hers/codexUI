@@ -2700,7 +2700,7 @@ describe('live turn rendering', () => {
     const commandMessages = state.messages.value.filter((message) => message.messageType === 'commandExecution')
     expect(commandMessages).toHaveLength(1)
     expect(commandMessages[0].commandExecution?.aggregatedOutput).toBe('running\n')
-    expect(commandMessages[0].commandExecution?.status).toBe('completed')
+    expect(commandMessages[0].commandExecution?.status).toBe('unknown')
   })
 
   it('does not let a later thread list revive a completed turn', async () => {
@@ -2734,6 +2734,69 @@ describe('live turn rendering', () => {
       turn: { id: 'turn-new', threadId: 'thread-a', startedAt: '2026-05-23T00:00:02.000Z' },
     }))
     expect(state.selectedThreadInProgress.value).toBe(true)
+  })
+
+  it('replaces an older live turn id with a newer authoritative list id', async () => {
+    const { state, notify } = await createLiveStateHarness()
+
+    notify(notification('turn/started', {
+      threadId: 'thread-a',
+      turn: { id: 'turn-old', threadId: 'thread-a' },
+    }))
+    gatewayMocks.getThreadGroupsPage.mockResolvedValueOnce({
+      groups: [{
+        projectName: 'project',
+        threads: [{ ...thread('thread-a', '/tmp/project'), inProgress: true, activeTurnId: 'turn-new' }],
+      }],
+      nextCursor: null,
+    })
+
+    await state.refreshAll({ includeSelectedThreadMessages: false, refreshAncillary: false })
+    notify(notification('turn/completed', {
+      threadId: 'thread-a',
+      turn: { id: 'turn-new', threadId: 'thread-a', status: 'completed' },
+    }))
+
+    expect(state.selectedThreadInProgress.value).toBe(false)
+  })
+
+  it('does not let an in-flight list response replace a newer live turn id', async () => {
+    const { state, notify } = await createLiveStateHarness()
+    let resolvePage!: (value: {
+      groups: UiProjectGroup[]
+      nextCursor: string | null
+    }) => void
+    const pagePromise = new Promise<{ groups: UiProjectGroup[]; nextCursor: string | null }>((resolve) => {
+      resolvePage = resolve
+    })
+
+    notify(notification('turn/started', {
+      threadId: 'thread-a',
+      turn: { id: 'turn-old', threadId: 'thread-a' },
+    }))
+    gatewayMocks.getThreadGroupsPage.mockReturnValueOnce(pagePromise)
+    const refreshPromise = state.refreshAll({ includeSelectedThreadMessages: false, refreshAncillary: false })
+    while (gatewayMocks.getThreadGroupsPage.mock.calls.length < 2) {
+      await Promise.resolve()
+    }
+    notify(notification('turn/started', {
+      threadId: 'thread-a',
+      turn: { id: 'turn-live', threadId: 'thread-a' },
+    }))
+    resolvePage({
+      groups: [{
+        projectName: 'project',
+        threads: [{ ...thread('thread-a', '/tmp/project'), inProgress: true, activeTurnId: 'turn-stale-list' }],
+      }],
+      nextCursor: null,
+    })
+    await refreshPromise
+
+    notify(notification('turn/completed', {
+      threadId: 'thread-a',
+      turn: { id: 'turn-live', threadId: 'thread-a', status: 'completed' },
+    }))
+    expect(state.selectedThreadInProgress.value).toBe(false)
   })
 
   it('uses a rollout terminal marker to clear an old running turn', async () => {

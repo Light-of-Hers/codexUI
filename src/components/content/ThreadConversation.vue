@@ -1664,6 +1664,7 @@ function commandStatusLabel(message: UiMessage): string {
     case 'failed': return compact ? 'Failed' : '✗ Failed'
     case 'declined': return compact ? 'Declined' : '⊘ Declined'
     case 'interrupted': return compact ? 'Stopped' : '⊘ Interrupted'
+    case 'unknown': return 'Finished'
     default: return ''
   }
 }
@@ -1672,6 +1673,7 @@ function commandStatusClass(message: UiMessage): string {
   const s = message.commandExecution?.status
   if (s === 'inProgress') return 'cmd-status-running'
   if (s === 'completed' && message.commandExecution?.exitCode === 0) return 'cmd-status-ok'
+  if (s === 'unknown') return 'cmd-status-neutral'
   return 'cmd-status-error'
 }
 
@@ -7053,6 +7055,10 @@ onBeforeUnmount(() => {
 
 .cmd-status-ok .cmd-status {
   @apply text-emerald-600;
+}
+
+.cmd-status-neutral .cmd-status {
+  @apply text-zinc-500;
 }
 
 .cmd-status-error .cmd-status {
