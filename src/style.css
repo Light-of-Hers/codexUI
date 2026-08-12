@@ -485,7 +485,8 @@
 }
 
 :root.dark .thread-composer-preview.thread-composer-preview .message-inline-code {
-  @apply border-zinc-600 bg-zinc-700/60 text-zinc-200;
+  background: var(--ark-markdown-inline-bg);
+  color: var(--ark-markdown-inline-ink);
 }
 
 :root.dark .thread-composer-preview.thread-composer-preview .message-code-block {
@@ -1142,7 +1143,9 @@
 }
 
 .message-inline-code {
-  @apply rounded-md border border-slate-200 bg-slate-100/60 px-1.5 py-0.5 text-[0.875em] leading-[1.4] text-slate-900 font-mono;
+  @apply inline border-0 rounded-none px-1 py-0 text-[0.875em] leading-[1.35] font-mono;
+  background: var(--ark-markdown-inline-bg);
+  color: var(--ark-markdown-inline-ink);
   font-family: var(--codex-code-font-family);
   font-weight: var(--codex-code-font-weight);
   font-synthesis: none;
@@ -1160,7 +1163,8 @@
 }
 
 .message-inline-code .message-inline-code-link {
-  @apply text-[#0969da] text-[inherit] leading-[inherit] underline decoration-sky-300 underline-offset-2;
+  color: var(--ark-markdown-inline-link);
+  @apply text-[inherit] leading-[inherit] underline decoration-sky-300 underline-offset-2;
 }
 
 .message-inline-code .message-inline-code-link:hover,
@@ -1444,7 +1448,8 @@
 }
 
 :root.dark .message-inline-code {
-  @apply border-zinc-600 bg-zinc-700/60 text-zinc-200;
+  background: var(--ark-markdown-inline-bg);
+  color: var(--ark-markdown-inline-ink);
 }
 
 :root.dark .message-collapse {
@@ -1469,7 +1474,8 @@
 }
 
 :root.dark .message-inline-code .message-inline-code-link {
-  @apply text-sky-300 decoration-sky-500;
+  color: var(--ark-markdown-inline-link);
+  @apply decoration-sky-500;
 }
 
 :root.dark .message-inline-code .message-inline-code-link:hover,
@@ -2103,7 +2109,8 @@
 }
 
 :root.dark .plan-card-markdown .message-inline-code {
-  @apply bg-zinc-800 text-zinc-100;
+  background: var(--ark-markdown-inline-bg);
+  color: var(--ark-markdown-inline-ink);
 }
 
 :root.dark .plan-card-markdown .message-inline-code .message-inline-code-link {
@@ -2675,6 +2682,9 @@
   --ark-table-grid: #a2a9b1;
   --ark-table-body: #f8f9fa;
   --ark-table-head: #ebedef;
+  --ark-markdown-inline-bg: #e7ecee;
+  --ark-markdown-inline-ink: #273337;
+  --ark-markdown-inline-link: #087aa9;
   --ark-command-panel: #d7dcde;
   --ark-command-code: #585858;
   --ark-command-code-border: #585858;
@@ -2706,6 +2716,9 @@
   --ark-table-grid: #68757a;
   --ark-table-body: #1a1f21;
   --ark-table-head: #14191b;
+  --ark-markdown-inline-bg: #293336;
+  --ark-markdown-inline-ink: #e0e7e8;
+  --ark-markdown-inline-link: #79d7ff;
   --ark-command-panel: #303b3f;
   --ark-command-code: #585858;
   --ark-command-code-border: #585858;

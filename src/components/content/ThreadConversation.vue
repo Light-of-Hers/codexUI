@@ -6538,7 +6538,9 @@ onBeforeUnmount(() => {
 }
 
 .plan-card-markdown :deep(.message-inline-code) {
-  @apply rounded-md bg-slate-200/80 px-1.5 py-0.5 font-mono text-[0.9em] text-slate-900;
+  @apply inline border-0 rounded-none px-1 py-0 font-mono text-[0.875em] leading-[1.35];
+  background: var(--ark-markdown-inline-bg);
+  color: var(--ark-markdown-inline-ink);
   font-family: var(--conversation-code-font-family);
   font-weight: var(--conversation-code-font-weight);
   font-synthesis: none;
@@ -7659,7 +7661,13 @@ onBeforeUnmount(() => {
   color: var(--ark-muted);
 }
 
-.message-inline-code,
+.message-inline-code {
+  border: 0;
+  border-radius: 0;
+  background: var(--ark-markdown-inline-bg);
+  color: var(--ark-markdown-inline-ink);
+}
+
 .message-source-text {
   border-color: var(--ark-line);
   border-radius: 2px;

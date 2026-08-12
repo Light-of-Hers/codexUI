@@ -8067,3 +8067,27 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - Archive the disposable fork created for verification. No source thread or rollout rewriting is required.
+
+### Feature: Arknights-style Markdown inline code
+
+#### Prerequisites
+- App server is running from this repository.
+- A thread contains paragraphs with inline code, a file-reference inline code link, a blockquote, a table, and a fenced code block.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. In Light appearance, open the thread and inspect inline code in ordinary messages, plan cards, composer Markdown preview, and the local editor's Markdown preview iframe. Confirm inline code uses compact monospace text with a flat rectangular muted-gray background, no pill-shaped border, and readable cyan-blue file links.
+2. Confirm blockquotes retain a square industrial treatment with a structural left rule, while fenced code blocks remain visually distinct from inline code.
+3. Switch to Dark appearance and repeat steps 1-2, including the editor preview iframe under the operating-system dark color scheme. Confirm inline code uses the dark graphite surface and light text/link colors without reverting to a rounded chip.
+
+#### Expected Results
+- Inline code follows the Hexo Arknights theme's compact `code` treatment: background emphasis and tight horizontal padding, without the previous rounded bordered capsule.
+- Ordinary messages, plan cards, and composer preview use the same Light/Dark inline-code palette.
+- Existing Markdown parsing, file-link behavior, fenced code rendering, and table rendering remain unchanged.
+
+#### Performance Audit
+- `pnpm exec vitest run src/components/content/markdownRenderer.test.ts src/server/localBrowseUi.test.ts` passed: 48 tests.
+- `pnpm run build` passed with only the existing KaTeX runtime-font and large-chunk warnings. The first combined profile attempt hit a transient Chromium SIGSEGV; reruns succeeded. Home profile recorded 7.45 s / 183.0 KB (`threadRead=10`, `skillsList=1`, `rateLimitsRead=2`); direct-thread profile recorded 7.44 s / 220.6 KB (`threadRead=11`, `skillsList=2`, `rateLimitsRead=2`). The CSS/preview-template change adds no request, payload, blocking path, fan-out, or cache invalidation.
+
+#### Rollback/Cleanup
+- No data cleanup is required; revert the CSS commit to restore the prior inline-code treatment.

@@ -2766,7 +2766,9 @@ watch(
 }
 
 .thread-composer-preview :deep(.message-inline-code) {
-  @apply rounded-md border border-slate-200 bg-slate-100/70 px-1.5 py-0.5 text-[0.875em] leading-[1.4] text-slate-900;
+  @apply inline border-0 rounded-none px-1 py-0 text-[0.875em] leading-[1.35];
+  background: var(--ark-markdown-inline-bg);
+  color: var(--ark-markdown-inline-ink);
   font-family: var(--thread-composer-code-font-family), "Fira Code", Consolas, "舟方日明", monospace;
   font-weight: var(--thread-composer-code-font-weight);
   font-synthesis: none;
