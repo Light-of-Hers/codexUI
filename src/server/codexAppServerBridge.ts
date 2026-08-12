@@ -340,30 +340,99 @@ type SessionRecoveredModelState = {
   rolloutTurnState?: 'active' | 'terminal'
 }
 
-type SessionModelStateCacheEntry = {
-  size: number
-  mtimeMs: number
-  modelState: SessionRecoveredModelState
+type SessionRolloutRow = {
+  row: Record<string, unknown>
+  payload: Record<string, unknown> | null
+  lineEndByteOffset: number
 }
 
-type SessionUserInputEnrichmentCacheEntry = {
+type SessionRolloutSnapshot = {
   size: number
   mtimeMs: number
+  raw: string
+  rows: SessionRolloutRow[]
+  modelState: SessionRecoveredModelState
+  userMessageIndex: SessionUserMessageIndexEntry[]
   skillsByTurnId: Map<string, SessionRecoveredSkillInput[]>
   contextsByTurnId: Map<string, string[]>
+  turnEnds: Map<string, SessionTurnEnd>
 }
 
-const SESSION_MODEL_STATE_CACHE_LIMIT = 256
-const SESSION_USER_INPUT_ENRICHMENT_CACHE_LIMIT = 64
-const SESSION_USER_MESSAGE_COUNT_CACHE_LIMIT = 256
-const sessionModelStateCache = new Map<string, SessionModelStateCacheEntry>()
-const sessionUserInputEnrichmentCache = new Map<string, SessionUserInputEnrichmentCacheEntry>()
-const sessionUserMessageCountCache = new Map<string, SessionUserMessageCountCacheEntry>()
+const SESSION_ROLLOUT_SNAPSHOT_CACHE_LIMIT = 64
+const SESSION_ROLLOUT_SNAPSHOT_BYTE_LIMIT = 64 * 1024 * 1024
+const sessionRolloutSnapshotCache = new Map<string, SessionRolloutSnapshot>()
+const sessionRolloutSnapshotPromiseByPath = new Map<string, Promise<SessionRolloutSnapshot>>()
+let sessionRolloutSnapshotBytes = 0
 
-type SessionUserMessageCountCacheEntry = {
-  size: number
-  mtimeMs: number
-  count: number
+function parseSessionRolloutRows(sessionLogRaw: string): SessionRolloutRow[] {
+  const rows: SessionRolloutRow[] = []
+  let byteOffset = 0
+  const lines = sessionLogRaw.split('\n')
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const rawLine = lines[lineIndex] ?? ''
+    byteOffset += Buffer.byteLength(rawLine, 'utf8') + (lineIndex < lines.length - 1 ? 1 : 0)
+    if (!rawLine.trim()) continue
+    try {
+      const row = asRecord(JSON.parse(rawLine) as unknown)
+      if (row) rows.push({ row, payload: asRecord(row.payload), lineEndByteOffset: byteOffset })
+    } catch {
+      // Ignore incomplete or legacy-invalid JSONL rows.
+    }
+  }
+  return rows
+}
+
+function pruneSessionRolloutSnapshotCache(): void {
+  while (
+    sessionRolloutSnapshotCache.size > SESSION_ROLLOUT_SNAPSHOT_CACHE_LIMIT
+    || sessionRolloutSnapshotBytes > SESSION_ROLLOUT_SNAPSHOT_BYTE_LIMIT
+  ) {
+    const oldestPath = sessionRolloutSnapshotCache.keys().next().value
+    if (!oldestPath) break
+    const oldest = sessionRolloutSnapshotCache.get(oldestPath)
+    sessionRolloutSnapshotCache.delete(oldestPath)
+    sessionRolloutSnapshotBytes = Math.max(0, sessionRolloutSnapshotBytes - (oldest?.size ?? 0))
+  }
+}
+
+async function readSessionRolloutSnapshot(sessionPath: string): Promise<SessionRolloutSnapshot> {
+  const pending = sessionRolloutSnapshotPromiseByPath.get(sessionPath)
+  if (pending) return await pending
+
+  const promise = (async () => {
+    const sessionStat = await stat(sessionPath)
+    const cached = sessionRolloutSnapshotCache.get(sessionPath)
+    if (cached && cached.size === sessionStat.size && cached.mtimeMs === sessionStat.mtimeMs) {
+      sessionRolloutSnapshotCache.delete(sessionPath)
+      sessionRolloutSnapshotCache.set(sessionPath, cached)
+      return cached
+    }
+
+    const raw = await readFile(sessionPath, 'utf8')
+    const rows = parseSessionRolloutRows(raw)
+    const snapshot: SessionRolloutSnapshot = {
+      size: sessionStat.size,
+      mtimeMs: sessionStat.mtimeMs,
+      raw,
+      rows,
+      modelState: buildSessionModelStateFromRows(rows),
+      userMessageIndex: buildSessionUserMessageIndexFromRows(rows),
+      skillsByTurnId: buildSessionSkillInputsByTurnFromRows(rows),
+      contextsByTurnId: buildSessionUserPromptAdditionalContextsByTurnFromRows(rows),
+      turnEnds: buildSessionTurnEndsFromRows(rows),
+    }
+    if (cached) sessionRolloutSnapshotBytes = Math.max(0, sessionRolloutSnapshotBytes - cached.size)
+    sessionRolloutSnapshotCache.delete(sessionPath)
+    sessionRolloutSnapshotCache.set(sessionPath, snapshot)
+    sessionRolloutSnapshotBytes += snapshot.size
+    pruneSessionRolloutSnapshotCache()
+    return snapshot
+  })().finally(() => {
+    sessionRolloutSnapshotPromiseByPath.delete(sessionPath)
+  })
+
+  sessionRolloutSnapshotPromiseByPath.set(sessionPath, promise)
+  return await promise
 }
 
 function normalizeSessionReasoningEffort(value: unknown): ReasoningEffort | '' {
@@ -383,6 +452,10 @@ function normalizeSessionReasoningEffort(value: unknown): ReasoningEffort | '' {
 }
 
 export function buildSessionModelState(sessionLogRaw: string): SessionRecoveredModelState {
+  return buildSessionModelStateFromRows(parseSessionRolloutRows(sessionLogRaw))
+}
+
+function buildSessionModelStateFromRows(rows: SessionRolloutRow[]): SessionRecoveredModelState {
   const state: SessionRecoveredModelState = {
     model: '',
     modelProvider: '',
@@ -410,16 +483,7 @@ export function buildSessionModelState(sessionLogRaw: string): SessionRecoveredM
       || state.reasoningEffort
   }
 
-  for (const line of sessionLogRaw.split('\n')) {
-    if (!line.trim()) continue
-    let row: Record<string, unknown> | null = null
-    try {
-      row = JSON.parse(line) as Record<string, unknown>
-    } catch {
-      continue
-    }
-
-    const payloadRecord = asRecord(row.payload)
+  for (const { row, payload: payloadRecord } of rows) {
     if (!payloadRecord) continue
 
     if (row.type === 'session_meta') {
@@ -456,89 +520,11 @@ export function buildSessionModelState(sessionLogRaw: string): SessionRecoveredM
 }
 
 async function readCachedSessionModelState(sessionPath: string): Promise<SessionRecoveredModelState> {
-  const sessionStat = await stat(sessionPath)
-  const cached = sessionModelStateCache.get(sessionPath)
-  if (cached && cached.size === sessionStat.size && cached.mtimeMs === sessionStat.mtimeMs) {
-    return cached.modelState
-  }
-
-  const sessionLogRaw = await readFile(sessionPath, 'utf8')
-  const modelState = buildSessionModelState(sessionLogRaw)
-  sessionModelStateCache.set(sessionPath, {
-    size: sessionStat.size,
-    mtimeMs: sessionStat.mtimeMs,
-    modelState,
-  })
-  if (sessionModelStateCache.size > SESSION_MODEL_STATE_CACHE_LIMIT) {
-    const oldestKey = sessionModelStateCache.keys().next().value
-    if (oldestKey) sessionModelStateCache.delete(oldestKey)
-  }
-  return modelState
+  return (await readSessionRolloutSnapshot(sessionPath)).modelState
 }
 
 export function countSessionUserMessages(sessionLogRaw: string): number {
-  // Count *turns* that contain at least one user message, not raw
-  // response_item rows. The frontend renders one user UiMessage per user
-  // ThreadItem, and codex app-server merges every user response_item inside
-  // the same turn (including synthetic AGENTS.md preambles, files-mentioned
-  // sections, <environment_context>, <turn_aborted> markers, and the
-  // real prompt) into a single ThreadItem. Counting rows here would
-  // overcount by the number of synthetic blocks each turn contains.
-  let currentTurnId = ''
-  let orphanTurnKey = 0
-  const turnsWithUser = new Set<string>()
-  for (const line of sessionLogRaw.split('\n')) {
-    if (!line.trim()) continue
-    let row: Record<string, unknown> | null = null
-    try {
-      row = JSON.parse(line) as Record<string, unknown>
-    } catch {
-      continue
-    }
-    const payload = asRecord(row.payload)
-    if (row.type === 'turn_context') {
-      currentTurnId = readNonEmptyString(payload?.turn_id) || currentTurnId
-      continue
-    }
-    if (row.type === 'event_msg') {
-      if (payload?.type === 'task_started') {
-        currentTurnId = readNonEmptyString(payload.turn_id) || currentTurnId
-      } else if (payload?.type === 'task_complete') {
-        currentTurnId = ''
-      }
-      continue
-    }
-    if (row.type !== 'response_item') continue
-    if (payload?.type !== 'message' || payload.role !== 'user') continue
-    let turnKey = currentTurnId
-    if (!turnKey) {
-      orphanTurnKey += 1
-      turnKey = `__orphan-${orphanTurnKey}`
-    }
-    turnsWithUser.add(turnKey)
-  }
-  return turnsWithUser.size
-}
-
-async function readCachedSessionUserMessageCount(sessionPath: string): Promise<number> {
-  const sessionStat = await stat(sessionPath)
-  const cached = sessionUserMessageCountCache.get(sessionPath)
-  if (cached && cached.size === sessionStat.size && cached.mtimeMs === sessionStat.mtimeMs) {
-    return cached.count
-  }
-
-  const sessionLogRaw = await readFile(sessionPath, 'utf8')
-  const count = countSessionUserMessages(sessionLogRaw)
-  sessionUserMessageCountCache.set(sessionPath, {
-    size: sessionStat.size,
-    mtimeMs: sessionStat.mtimeMs,
-    count,
-  })
-  if (sessionUserMessageCountCache.size > SESSION_USER_MESSAGE_COUNT_CACHE_LIMIT) {
-    const oldestKey = sessionUserMessageCountCache.keys().next().value
-    if (oldestKey) sessionUserMessageCountCache.delete(oldestKey)
-  }
-  return count
+  return buildSessionUserMessageIndex(sessionLogRaw).length
 }
 
 type SessionUserMessageIndexEntry = {
@@ -549,15 +535,6 @@ type SessionUserMessageIndexEntry = {
   kind?: 'forkBoundary'
   sourceThreadId?: string
 }
-
-type SessionUserMessageIndexCacheEntry = {
-  size: number
-  mtimeMs: number
-  entries: SessionUserMessageIndexEntry[]
-}
-
-const SESSION_USER_MESSAGE_INDEX_CACHE_LIMIT = 128
-const sessionUserMessageIndexCache = new Map<string, SessionUserMessageIndexCacheEntry>()
 
 const USER_MESSAGE_PREVIEW_TITLE_MAX_LENGTH = 320
 const USER_MESSAGE_PREVIEW_TEXT_MAX_LENGTH = 88
@@ -606,6 +583,10 @@ function readSessionUserMessageText(payload: Record<string, unknown>): string {
 }
 
 export function buildSessionUserMessageIndex(sessionLogRaw: string): SessionUserMessageIndexEntry[] {
+  return buildSessionUserMessageIndexFromRows(parseSessionRolloutRows(sessionLogRaw))
+}
+
+function buildSessionUserMessageIndexFromRows(rows: SessionRolloutRow[]): SessionUserMessageIndexEntry[] {
   // Produce one entry per turn that contains at least one user message.
   // Preview text is drawn from the *last* user response_item in the turn,
   // which matches how codex app-server merges them: the final block is the
@@ -615,15 +596,7 @@ export function buildSessionUserMessageIndex(sessionLogRaw: string): SessionUser
   const orderedTurns: string[] = []
   const textByTurn = new Map<string, string>()
 
-  for (const line of sessionLogRaw.split('\n')) {
-    if (!line.trim()) continue
-    let row: Record<string, unknown> | null = null
-    try {
-      row = JSON.parse(line) as Record<string, unknown>
-    } catch {
-      continue
-    }
-    const payload = asRecord(row.payload)
+  for (const { row, payload } of rows) {
     if (row.type === 'turn_context') {
       currentTurnId = readNonEmptyString(payload?.turn_id) || currentTurnId
       continue
@@ -670,24 +643,7 @@ export function buildSessionUserMessageIndex(sessionLogRaw: string): SessionUser
 }
 
 async function readCachedSessionUserMessageIndex(sessionPath: string): Promise<SessionUserMessageIndexEntry[]> {
-  const sessionStat = await stat(sessionPath)
-  const cached = sessionUserMessageIndexCache.get(sessionPath)
-  if (cached && cached.size === sessionStat.size && cached.mtimeMs === sessionStat.mtimeMs) {
-    return cached.entries
-  }
-
-  const sessionLogRaw = await readFile(sessionPath, 'utf8')
-  const entries = buildSessionUserMessageIndex(sessionLogRaw)
-  sessionUserMessageIndexCache.set(sessionPath, {
-    size: sessionStat.size,
-    mtimeMs: sessionStat.mtimeMs,
-    entries,
-  })
-  if (sessionUserMessageIndexCache.size > SESSION_USER_MESSAGE_INDEX_CACHE_LIMIT) {
-    const oldestKey = sessionUserMessageIndexCache.keys().next().value
-    if (oldestKey) sessionUserMessageIndexCache.delete(oldestKey)
-  }
-  return entries
+  return (await readSessionRolloutSnapshot(sessionPath)).userMessageIndex
 }
 
 function makeForkBoundaryUserMessageIndexEntry(
@@ -955,25 +911,19 @@ function parseSessionSkillText(value: string): SessionRecoveredSkillInput | null
 }
 
 function buildSessionSkillInputsByTurn(sessionLogRaw: string): Map<string, SessionRecoveredSkillInput[]> {
+  return buildSessionSkillInputsByTurnFromRows(parseSessionRolloutRows(sessionLogRaw))
+}
+
+function buildSessionSkillInputsByTurnFromRows(rows: SessionRolloutRow[]): Map<string, SessionRecoveredSkillInput[]> {
   let currentTurnId = ''
   const skillsByTurnId = new Map<string, SessionRecoveredSkillInput[]>()
 
-  for (const line of sessionLogRaw.split('\n')) {
-    if (!line.trim()) continue
-    let row: Record<string, unknown> | null = null
-    try {
-      row = JSON.parse(line) as Record<string, unknown>
-    } catch {
-      continue
-    }
-
+  for (const { row, payload: payloadRecord } of rows) {
     if (row.type === 'turn_context') {
-      const payloadRecord = asRecord(row.payload)
       currentTurnId = readNonEmptyString(payloadRecord?.turn_id) || currentTurnId
       continue
     }
     if (row.type === 'event_msg') {
-      const payloadRecord = asRecord(row.payload)
       if (payloadRecord?.type === 'task_started') {
         currentTurnId = readNonEmptyString(payloadRecord.turn_id) || currentTurnId
       }
@@ -981,7 +931,6 @@ function buildSessionSkillInputsByTurn(sessionLogRaw: string): Map<string, Sessi
     }
 
     if (row.type !== 'response_item' || !currentTurnId) continue
-    const payloadRecord = asRecord(row.payload)
     if (payloadRecord?.type !== 'message' || payloadRecord.role !== 'user') continue
     const content = Array.isArray(payloadRecord.content) ? payloadRecord.content : []
 
@@ -1071,20 +1020,15 @@ export function mergeSessionSkillInputsIntoTurns(turns: unknown[], sessionLogRaw
 }
 
 function buildSessionUserPromptAdditionalContextsByTurn(sessionLogRaw: string): Map<string, string[]> {
+  return buildSessionUserPromptAdditionalContextsByTurnFromRows(parseSessionRolloutRows(sessionLogRaw))
+}
+
+function buildSessionUserPromptAdditionalContextsByTurnFromRows(rows: SessionRolloutRow[]): Map<string, string[]> {
   let currentTurnId = ''
   let awaitingAdditionalContext = false
   const contextsByTurnId = new Map<string, string[]>()
 
-  for (const line of sessionLogRaw.split('\n')) {
-    if (!line.trim()) continue
-    let row: Record<string, unknown> | null = null
-    try {
-      row = JSON.parse(line) as Record<string, unknown>
-    } catch {
-      continue
-    }
-
-    const payloadRecord = asRecord(row.payload)
+  for (const { row, payload: payloadRecord } of rows) {
     if (row.type === 'turn_context') {
       currentTurnId = readNonEmptyString(payloadRecord?.turn_id) || currentTurnId
       continue
@@ -1125,26 +1069,11 @@ async function readCachedSessionUserInputEnrichment(sessionPath: string): Promis
   skillsByTurnId: Map<string, SessionRecoveredSkillInput[]>
   contextsByTurnId: Map<string, string[]>
 }> {
-  const sessionStat = await stat(sessionPath)
-  const cached = sessionUserInputEnrichmentCache.get(sessionPath)
-  if (cached && cached.size === sessionStat.size && cached.mtimeMs === sessionStat.mtimeMs) {
-    return cached
+  const snapshot = await readSessionRolloutSnapshot(sessionPath)
+  return {
+    skillsByTurnId: snapshot.skillsByTurnId,
+    contextsByTurnId: snapshot.contextsByTurnId,
   }
-
-  const sessionLogRaw = await readFile(sessionPath, 'utf8')
-  const skillsByTurnId = buildSessionSkillInputsByTurn(sessionLogRaw)
-  const contextsByTurnId = buildSessionUserPromptAdditionalContextsByTurn(sessionLogRaw)
-  const enrichment = { skillsByTurnId, contextsByTurnId }
-  sessionUserInputEnrichmentCache.set(sessionPath, {
-    size: sessionStat.size,
-    mtimeMs: sessionStat.mtimeMs,
-    ...enrichment,
-  })
-  if (sessionUserInputEnrichmentCache.size > SESSION_USER_INPUT_ENRICHMENT_CACHE_LIMIT) {
-    const oldestKey = sessionUserInputEnrichmentCache.keys().next().value
-    if (oldestKey) sessionUserInputEnrichmentCache.delete(oldestKey)
-  }
-  return enrichment
 }
 
 function mergeSessionUserPromptAdditionalContextsIntoTurnsFromMap(
@@ -1848,7 +1777,7 @@ async function readSessionLogRawFromThreadResult(result: unknown): Promise<strin
   if (!sessionPath || !isAbsolute(sessionPath)) return null
 
   try {
-    return await readFile(sessionPath, 'utf8')
+    return (await readSessionRolloutSnapshot(sessionPath)).raw
   } catch {
     return null
   }
@@ -1868,20 +1797,10 @@ async function mergeRecoveredTurnItemsIntoThreadResultFromSession(
 
 const FORK_BOUNDARY_ITEM_TYPE = 'forkBoundary'
 const FORK_BOUNDARY_TURN_ID_PREFIX = 'codexui-fork-boundary:'
-const SESSION_TURN_BOUNDARY_CACHE_LIMIT = 128
-
 type SessionTurnEnd = {
   ordinal: number | null
   byteOffset: number
 }
-
-type SessionTurnBoundaryCacheEntry = {
-  size: number
-  mtimeMs: number
-  endByTurnId: Map<string, SessionTurnEnd>
-}
-
-const sessionTurnBoundaryCache = new Map<string, SessionTurnBoundaryCacheEntry>()
 
 function isForkBoundaryTurn(turn: unknown): boolean {
   return readNonEmptyString(asRecord(turn)?.id).startsWith(FORK_BOUNDARY_TURN_ID_PREFIX)
@@ -1902,26 +1821,14 @@ function makeForkBoundaryTurn(threadId: string, sourceThreadId: string): Record<
 }
 
 function buildSessionTurnEnds(sessionLogRaw: string): Map<string, SessionTurnEnd> {
+  return buildSessionTurnEndsFromRows(parseSessionRolloutRows(sessionLogRaw))
+}
+
+function buildSessionTurnEndsFromRows(rows: SessionRolloutRow[]): Map<string, SessionTurnEnd> {
   const endByTurnId = new Map<string, SessionTurnEnd>()
   let activeTurnId = ''
-  let byteOffset = 0
 
-  const lines = sessionLogRaw.split('\n')
-  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
-    const rawLine = lines[lineIndex] ?? ''
-    const lineByteLength = Buffer.byteLength(rawLine, 'utf8') + (lineIndex < lines.length - 1 ? 1 : 0)
-    const lineEndByteOffset = byteOffset + lineByteLength
-    byteOffset = lineEndByteOffset
-    if (!rawLine.trim()) continue
-
-    let row: Record<string, unknown> | null = null
-    try {
-      row = JSON.parse(rawLine) as Record<string, unknown>
-    } catch {
-      continue
-    }
-
-    const payload = asRecord(row.payload)
+  for (const { row, payload, lineEndByteOffset } of rows) {
     const eventType = row.type === 'event_msg' ? readNonEmptyString(payload?.type) : ''
     const eventTurnId = readNonEmptyString(payload?.turn_id)
     if (row.type === 'turn_context') {
@@ -1949,23 +1856,7 @@ function buildSessionTurnEnds(sessionLogRaw: string): Map<string, SessionTurnEnd
 }
 
 async function readCachedSessionTurnEnds(sessionPath: string): Promise<Map<string, SessionTurnEnd>> {
-  const sessionStat = await stat(sessionPath)
-  const cached = sessionTurnBoundaryCache.get(sessionPath)
-  if (cached && cached.size === sessionStat.size && cached.mtimeMs === sessionStat.mtimeMs) {
-    return cached.endByTurnId
-  }
-
-  const endByTurnId = buildSessionTurnEnds(await readFile(sessionPath, 'utf8'))
-  sessionTurnBoundaryCache.set(sessionPath, {
-    size: sessionStat.size,
-    mtimeMs: sessionStat.mtimeMs,
-    endByTurnId,
-  })
-  if (sessionTurnBoundaryCache.size > SESSION_TURN_BOUNDARY_CACHE_LIMIT) {
-    const oldestKey = sessionTurnBoundaryCache.keys().next().value
-    if (oldestKey) sessionTurnBoundaryCache.delete(oldestKey)
-  }
-  return endByTurnId
+  return (await readSessionRolloutSnapshot(sessionPath)).turnEnds
 }
 
 async function filterTurnsToHistoryBase(
@@ -8122,6 +8013,7 @@ async function fetchConnectorLogo(rawUrl: string): Promise<{ contentType: string
 }
 
 const STREAM_EVENT_BUFFER_LIMIT = 400
+const APP_SERVER_THREAD_CACHE_LIMIT = 128
 
 type StreamEventFrame = {
   method: string
@@ -8270,6 +8162,45 @@ class AppServerProcess {
   private activeTurnCount = 0
   private recentStderrErrorTimes: number[] = []
 
+  private touchThreadCacheKey<T>(cache: Map<string, T>, threadId: string): T | undefined {
+    const value = cache.get(threadId)
+    if (value === undefined) return undefined
+    cache.delete(threadId)
+    cache.set(threadId, value)
+    return value
+  }
+
+  private setBoundedThreadCache<T>(cache: Map<string, T>, threadId: string, value: T): void {
+    cache.delete(threadId)
+    cache.set(threadId, value)
+    while (cache.size > APP_SERVER_THREAD_CACHE_LIMIT) {
+      const oldestThreadId = cache.keys().next().value
+      if (!oldestThreadId) break
+      cache.delete(oldestThreadId)
+    }
+  }
+
+  private clearThreadCaches(threadId = ''): void {
+    const caches: Array<Map<string, unknown>> = [
+      this.streamEventsByThreadId,
+      this.lastThreadReadSnapshotByThreadId,
+      this.threadTurnPageReadCacheByThreadId,
+      this.threadTurnPageReadPromiseByThreadId,
+      this.capturedItemsByThreadId,
+      this.liveStateCache,
+    ]
+    if (threadId) {
+      for (const cache of caches) cache.delete(threadId)
+      return
+    }
+    for (const cache of caches) cache.clear()
+  }
+
+  releaseThreadState(threadId: string): void {
+    const normalizedThreadId = threadId.trim()
+    if (normalizedThreadId) this.clearThreadCaches(normalizedThreadId)
+  }
+
   getFreeModeState(): FreeModeState {
     return cloneFreeModeState(this.freeModeState)
   }
@@ -8343,6 +8274,7 @@ class AppServerProcess {
 
       this.pending.clear()
       this.pendingServerRequests.clear()
+      this.clearThreadCaches()
       this.process = null
       this.initialized = false
       this.initializePromise = null
@@ -8436,7 +8368,9 @@ class AppServerProcess {
     let buffer = this.streamEventsByThreadId.get(threadId)
     if (!buffer) {
       buffer = []
-      this.streamEventsByThreadId.set(threadId, buffer)
+      this.setBoundedThreadCache(this.streamEventsByThreadId, threadId, buffer)
+    } else {
+      this.touchThreadCacheKey(this.streamEventsByThreadId, threadId)
     }
     buffer.push(frame)
     if (buffer.length > STREAM_EVENT_BUFFER_LIMIT) {
@@ -8445,18 +8379,18 @@ class AppServerProcess {
   }
 
   getStreamEvents(threadId: string, limit: number): StreamEventFrame[] {
-    const buffer = this.streamEventsByThreadId.get(threadId)
+    const buffer = this.touchThreadCacheKey(this.streamEventsByThreadId, threadId)
     if (!buffer || buffer.length === 0) return []
     return buffer.slice(-limit)
   }
 
   storeThreadReadSnapshot(threadId: string, snapshot: unknown): void {
-    this.lastThreadReadSnapshotByThreadId.set(threadId, snapshot)
+    this.setBoundedThreadCache(this.lastThreadReadSnapshotByThreadId, threadId, snapshot)
     this.threadTurnPageReadCacheByThreadId.delete(threadId)
   }
 
   getLastThreadReadSnapshot(threadId: string): unknown | null {
-    return this.lastThreadReadSnapshotByThreadId.get(threadId) ?? null
+    return this.touchThreadCacheKey(this.lastThreadReadSnapshotByThreadId, threadId) ?? null
   }
 
   private async readPaginatedThreadTurns(threadId: string): Promise<unknown[]> {
@@ -8511,7 +8445,7 @@ class AppServerProcess {
       // Older Codex versions have the same pagination storage format but no
       // turns/list endpoint. Reconstruct the local portion, then the caller
       // recursively supplies the inherited prefix from its source rollout.
-      const sessionLogRaw = await readFile(sessionPath, 'utf8').catch(() => '')
+      const sessionLogRaw = await readSessionRolloutSnapshot(sessionPath).then((snapshot) => snapshot.raw).catch(() => '')
       turns = sessionLogRaw ? buildSessionTurnsFromRollout(sessionLogRaw) : []
     }
 
@@ -8540,7 +8474,7 @@ class AppServerProcess {
       if (!isPaginatedThreadReadError(error)) throw error
       return await this.readPaginatedThreadForTurnPage(threadId, error)
     }).then((result) => {
-      this.threadTurnPageReadCacheByThreadId.set(threadId, {
+      this.setBoundedThreadCache(this.threadTurnPageReadCacheByThreadId, threadId, {
         result,
         expiresAt: Date.now() + THREAD_TURN_PAGE_READ_CACHE_TTL_MS,
       })
@@ -8554,11 +8488,11 @@ class AppServerProcess {
   }
 
   cacheLiveState(threadId: string, data: unknown, turnCount: number, sessionSize: number): void {
-    this.liveStateCache.set(threadId, { data, turnCount, sessionSize })
+    this.setBoundedThreadCache(this.liveStateCache, threadId, { data, turnCount, sessionSize })
   }
 
   getCachedLiveState(threadId: string, turnCount: number, sessionSize: number): unknown | null {
-    const cached = this.liveStateCache.get(threadId)
+    const cached = this.touchThreadCacheKey(this.liveStateCache, threadId)
     if (!cached) return null
     if (cached.turnCount !== turnCount || cached.sessionSize !== sessionSize) return null
     return cached.data
@@ -8592,7 +8526,9 @@ class AppServerProcess {
     let threadItems = this.capturedItemsByThreadId.get(threadId)
     if (!threadItems) {
       threadItems = new Map()
-      this.capturedItemsByThreadId.set(threadId, threadItems)
+      this.setBoundedThreadCache(this.capturedItemsByThreadId, threadId, threadItems)
+    } else {
+      this.touchThreadCacheKey(this.capturedItemsByThreadId, threadId)
     }
 
     const isCompleted = notification.method === 'item/completed'
@@ -8610,7 +8546,7 @@ class AppServerProcess {
   }
 
   mergeItemsIntoTurns(threadId: string, turns: unknown[]): unknown[] {
-    const capturedMap = this.capturedItemsByThreadId.get(threadId)
+    const capturedMap = this.touchThreadCacheKey(this.capturedItemsByThreadId, threadId)
     if (!capturedMap || capturedMap.size === 0) return turns
 
     const itemsByTurnId = new Map<string, CapturedItem[]>()
@@ -8884,6 +8820,7 @@ class AppServerProcess {
     }
     this.pending.clear()
     this.pendingServerRequests.clear()
+    this.clearThreadCaches()
     if (proc) {
       try {
         proc.stdin.end()
@@ -9754,6 +9691,7 @@ class AppServerRuntime {
 }
 
 class AppServerRuntimePool {
+  private static readonly THREAD_RUNTIME_CACHE_LIMIT = 512
   private readonly runtimesBySignature = new Map<string, AppServerRuntime>()
   private readonly notificationListeners = new Set<(notification: BridgeNotification) => void>()
   private readonly runtimeByThreadId = new Map<string, AppServerRuntime>()
@@ -9770,7 +9708,7 @@ class AppServerRuntimePool {
     runtime = new AppServerRuntime(state, (notification) => {
       const threadId = extractThreadIdFromParams(notification.params)
       if (threadId) {
-        this.runtimeByThreadId.set(threadId, runtime)
+        this.recordThreadRuntime(threadId, runtime)
       }
       this.emitNotification(notification)
     }, (method, params) => {
@@ -9814,7 +9752,22 @@ class AppServerRuntimePool {
   recordThreadRuntime(threadId: string, runtime: AppServerRuntime): void {
     const normalizedThreadId = threadId.trim()
     if (!normalizedThreadId) return
+    this.runtimeByThreadId.delete(normalizedThreadId)
     this.runtimeByThreadId.set(normalizedThreadId, runtime)
+    while (this.runtimeByThreadId.size > AppServerRuntimePool.THREAD_RUNTIME_CACHE_LIMIT) {
+      const oldestThreadId = this.runtimeByThreadId.keys().next().value
+      if (!oldestThreadId) break
+      this.runtimeByThreadId.delete(oldestThreadId)
+    }
+  }
+
+  releaseThreadState(threadId: string): void {
+    const normalizedThreadId = threadId.trim()
+    if (!normalizedThreadId) return
+    this.runtimeByThreadId.delete(normalizedThreadId)
+    for (const runtime of this.runtimesBySignature.values()) {
+      runtime.appServer.releaseThreadState(normalizedThreadId)
+    }
   }
 
   findRuntimeWithThreadState(threadId: string, excludedRuntime?: AppServerRuntime): AppServerRuntime | null {
@@ -9822,6 +9775,8 @@ class AppServerRuntimePool {
     if (!normalizedThreadId) return null
     const recordedRuntime = this.runtimeByThreadId.get(normalizedThreadId)
     if (recordedRuntime && recordedRuntime !== excludedRuntime) {
+      this.runtimeByThreadId.delete(normalizedThreadId)
+      this.runtimeByThreadId.set(normalizedThreadId, recordedRuntime)
       return recordedRuntime
     }
     for (const runtime of this.runtimesBySignature.values()) {
@@ -11228,6 +11183,10 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         ) {
           invalidatePaginatedForkThreadListRecoveryCache()
         }
+        if (body.method === 'thread/archive') {
+          const archivedThreadId = readNonEmptyString(asRecord(rpcParams)?.threadId)
+          if (archivedThreadId) runtimePool.releaseThreadState(archivedThreadId)
+        }
         if (body.method === 'thread/list') {
           result = await recoverUnlistedPaginatedForksInThreadList(result, rpcParams, effectiveRpcAppServer)
           result = await decorateThreadListWithForkLineage(result)
@@ -11425,7 +11384,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         }
 
         try {
-          const sessionLogRaw = await readFile(sessionPath, 'utf8')
+          const sessionLogRaw = (await readSessionRolloutSnapshot(sessionPath)).raw
           setJson(res, 200, { data: buildSessionFileChangeFallback(threadReadResult, sessionLogRaw) })
         } catch {
           setJson(res, 200, { data: [] })
@@ -11466,8 +11425,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           let sessionSize = 0
           if (sessionPath && isAbsolute(sessionPath)) {
             try {
-              const s = await stat(sessionPath)
-              sessionSize = s.size
+              sessionSize = (await readSessionRolloutSnapshot(sessionPath)).size
             } catch { /* missing */ }
           }
 
@@ -11481,7 +11439,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 
           if (sessionPath && isAbsolute(sessionPath) && sessionSize > 0) {
             try {
-              const sessionLogRaw = await readFile(sessionPath, 'utf8')
+              const sessionLogRaw = (await readSessionRolloutSnapshot(sessionPath)).raw
               turns = mergeSessionCommandsIntoTurns(turns, sessionLogRaw)
             } catch {
               // Session log not available — continue without command recovery
@@ -11581,7 +11539,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 
           let sessionLogRaw: string
           try {
-            sessionLogRaw = await readFile(sessionPath, 'utf8')
+            sessionLogRaw = (await readSessionRolloutSnapshot(sessionPath)).raw
           } catch {
             setJson(res, 200, { reverted: 0, errors: ['Could not read session log'], message: 'Session log unreadable' })
             return

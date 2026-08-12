@@ -8172,3 +8172,30 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - No data cleanup is required. Unpin disposable sessions and archive any test fork if it is no longer needed.
+
+### Performance: Shared rollout snapshots and bounded thread caches
+
+#### Prerequisites
+- App server is running from this repository and can access a long rollout containing messages, skills, additional context, commands, and fork history.
+- A disposable set of many threads is available for cache-lifecycle testing.
+
+#### Steps
+1. Open the long thread from a cold server and exercise initial history, message navigation, an older turn page, and live state.
+2. Confirm every consumer for the unchanged `{path,size,mtimeMs}` session signature reuses one rollout snapshot rather than reading and parsing the JSONL independently.
+3. Append a new turn and refresh. Confirm the changed size/mtime invalidates the old snapshot and all derived model, navigation, enrichment, command, and boundary data updates together.
+4. Visit more than 128 disposable threads and confirm stream-event, thread-snapshot, page, captured-item, and live-state caches evict their least-recently-used keys.
+5. Archive a disposable thread and confirm its runtime routing and per-runtime thread caches are released after the archive succeeds.
+6. Run `pnpm exec vitest run src/server/codexAppServerBridge.inlinePayload.test.ts src/server/paginatedForkHistory.test.ts src/server/threadListRecovery.test.ts src/server/codexAppServerBridge.archive.test.ts` and `pnpm exec vue-tsc --noEmit`.
+
+#### Expected Results
+- A session signature performs one `stat`, one `readFile`, and one JSONL parse; all rollout-derived views come from the same immutable snapshot.
+- Concurrent snapshot misses share one in-flight promise. The snapshot cache is limited to 64 entries and 64 MB of rollout text.
+- App-server thread-keyed caches hold at most 128 thread keys per runtime, the runtime router holds at most 512 keys, and process exit/dispose clears retained state.
+- Archive invalidates the archived thread's cached state without affecting unrelated active threads.
+
+#### Performance Audit
+- The focused server test run passes 118 tests and `vue-tsc --noEmit` passes.
+- Static inspection confirms direct `stat(sessionPath)` and `readFile(sessionPath)` calls remain only inside `readSessionRolloutSnapshot`; file-change fallback, live state, pagination fallback, recovery, model enrichment, and message navigation all reuse it.
+
+#### Rollback/Cleanup
+- Archive or remove disposable threads created for the cache exercise. No rollout content is rewritten by snapshot caching.
