@@ -336,6 +336,7 @@ type SessionRecoveredModelState = {
   model: string
   modelProvider: string
   reasoningEffort: ReasoningEffort | ''
+  activeTurnId?: string
 }
 
 type SessionModelStateCacheEntry = {
@@ -427,9 +428,18 @@ export function buildSessionModelState(sessionLogRaw: string): SessionRecoveredM
       continue
     }
 
-    if (row.type === 'event_msg' && payloadRecord.type === 'thread_settings_applied') {
-      const threadSettings = asRecord(payloadRecord.thread_settings)
-      if (threadSettings) applySettings(threadSettings)
+    if (row.type === 'event_msg') {
+      const eventType = readNonEmptyString(payloadRecord.type)
+      const turnId = readNonEmptyString(payloadRecord.turn_id)
+      if (eventType === 'task_started' && turnId) {
+        state.activeTurnId = turnId
+      } else if ((eventType === 'task_complete' || eventType === 'task_aborted' || eventType === 'turn_aborted') && (!turnId || turnId === state.activeTurnId)) {
+        delete state.activeTurnId
+      }
+      if (eventType === 'thread_settings_applied') {
+        const threadSettings = asRecord(payloadRecord.thread_settings)
+        if (threadSettings) applySettings(threadSettings)
+      }
       continue
     }
 
@@ -808,7 +818,7 @@ export async function mergeSessionModelStateIntoThreadResult(result: unknown): P
   } catch {
     return result
   }
-  if (!modelState.model && !modelState.modelProvider && !modelState.reasoningEffort) return result
+  if (!modelState.model && !modelState.modelProvider && !modelState.reasoningEffort && !modelState.activeTurnId) return result
 
   const nextRecord: Record<string, unknown> = { ...record }
   const nextThread: Record<string, unknown> = { ...thread }
@@ -826,9 +836,41 @@ export async function mergeSessionModelStateIntoThreadResult(result: unknown): P
     nextThread.reasoningEffort = modelState.reasoningEffort
   }
 
-  return {
+  return reconcileStaleThreadStatusFromSession({
     ...nextRecord,
     thread: nextThread,
+  }, modelState.activeTurnId ?? '')
+}
+
+/**
+ * Prefer the local rollout when it proves an app-server interrupted-turn
+ * snapshot is stale. This can happen while an interrupted turn is being
+ * restored, and otherwise causes a session switch to flash idle before the
+ * next activity notification arrives.
+ */
+export function reconcileStaleThreadStatusFromSession(result: unknown, activeTurnId: string): unknown {
+  const record = asRecord(result)
+  const thread = asRecord(record?.thread)
+  if (!record || !thread || !activeTurnId) return result
+
+  const threadStatus = asRecord(thread.status)
+
+  const turns = Array.isArray(thread.turns) ? thread.turns : []
+  const activeTurn = turns.find((turn) => readNonEmptyString(asRecord(turn)?.id) === activeTurnId)
+  const activeTurnStatus = readProtocolToken(asRecord(activeTurn)?.status)
+  if (activeTurnStatus !== 'interrupted') return result
+  const nextTurns = turns.map((turn) => {
+    const turnRecord = asRecord(turn)
+    if (!turnRecord || readNonEmptyString(turnRecord.id) !== activeTurnId) return turn
+    return { ...turnRecord, status: 'inProgress' }
+  })
+  return {
+    ...record,
+    thread: {
+      ...thread,
+      status: { ...threadStatus, type: 'inProgress', turnId: activeTurnId },
+      turns: nextTurns,
+    },
   }
 }
 
@@ -8933,7 +8975,25 @@ export class BackendQueueProcessor {
     }
 
     const enrichedReadResponse = await mergeSessionModelStateIntoThreadResult(response)
-    const snapshot = shouldAutoContinueInterruptedThreadFromThreadRead(enrichedReadResponse, this.intentionalInterruptTurnIds)
+    const reconciledThread = asRecord(asRecord(enrichedReadResponse)?.thread)
+    const reconciledStatus = asRecord(reconciledThread?.status)
+    if (isRunningProtocolToken(readProtocolToken(reconciledStatus?.type))) {
+      const activeTurnId = readNonEmptyString(reconciledStatus?.turnId)
+        || readNonEmptyString(reconciledStatus?.turn_id)
+      this.forwardNotification?.({
+        method: 'thread/status/changed',
+        params: {
+          threadId: normalizedThreadId,
+          status: activeTurnId ? { type: 'running', turnId: activeTurnId } : { type: 'running' },
+        },
+      })
+      return true
+    }
+
+    // The rollout-backed view above is presentation-safe. Keep recovery
+    // eligibility based on the unmodified app-server snapshot: only an
+    // actually abandoned interrupted turn should receive a new continuation.
+    const snapshot = shouldAutoContinueInterruptedThreadFromThreadRead(response, this.intentionalInterruptTurnIds)
     if (!snapshot) return false
     if (normalizedCompletedTurnId && snapshot.turnId !== normalizedCompletedTurnId && source === 'turn/completed') {
       return false
@@ -10783,7 +10843,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           const explicitModelResult = mergeExplicitModelStateIntoThreadResult(skillMergedResult, rpcParams)
           result = explicitModelResult === skillMergedResult
             ? await mergeSessionModelStateIntoThreadResult(skillMergedResult)
-            : explicitModelResult
+            : await mergeSessionModelStateIntoThreadResult(explicitModelResult)
         }
 
         if (THREAD_METHODS_WITH_THREAD_SNAPSHOT.has(body.method)) {

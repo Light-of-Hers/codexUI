@@ -147,6 +147,38 @@ This file tracks manual regression and feature verification steps.
 #### Rollback/Cleanup
 - Stop the test turn if it is still running.
 
+### Fix: Rollout-backed interrupted-turn status
+
+#### Prerequisites
+- App server is running from this repository and can read local Codex rollouts.
+- A session has an active turn whose app-server snapshot reports the same turn as `interrupted` even though the rollout still has no `task_complete`, `task_aborted`, or `turn_aborted` event.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. In light theme, open the affected session while its rollout continues to receive assistant output.
+2. Confirm the sidebar retains the running indicator and the composer shows Stop instead of Send.
+3. Inspect `thread/read` for that session and confirm `thread.status.type` is `inProgress`, with `turnId` equal to the latest rollout `task_started` turn.
+4. Confirm the matching latest turn is also returned as `inProgress`, not `interrupted`.
+5. Trigger a non-user interrupted notification for that same turn and confirm the bridge sends one matching `thread/status/changed` running event rather than starting another `Please continue.` turn.
+6. Start a disposable turn, click Stop, and confirm a following `turn_aborted` rollout event leaves the session idle.
+7. Switch to dark theme and repeat steps 1-2; confirm the running indicator and Stop control remain visible and readable.
+8. Run `pnpm exec vitest run src/server/codexAppServerBridge.inlinePayload.test.ts src/api/normalizers/v2.test.ts src/composables/useDesktopState.test.ts` and `pnpm run build`.
+
+#### Expected Results
+- A stale app-server `interrupted` snapshot cannot make a rollout-active session flash idle during a session switch.
+- The bridge preserves the exact active turn ID, so the sidebar and composer agree on the same running turn.
+- An actually aborted or completed rollout turn is not rewritten to running, and an explicit user Stop remains terminal.
+- The bridge does not issue a duplicate continuation for a turn whose rollout already proves it is active.
+- Light and dark themes preserve the existing running controls without visual regressions.
+
+#### Performance Audit
+- The rollout status is recovered inside the existing session-model cache, keyed by file size and mtime; an unchanged session is parsed once and reused by later `thread/read` calls.
+- No list fan-out, polling loop, or client request was added. The correction only runs for `thread/read`-style snapshots that already carry a local session path and whose matching turn is explicitly `interrupted`.
+- Profiled `http://127.0.0.1:4173/#/thread/019fb7b4-3c21-7490-8ec0-df3b61292438` with `PROFILE_WAIT_MS=7000`: 8.15 s total and 282.8 KB API payload. `thread/list` remained one request; `thread/read=11` with 11.5 KB total response data and a 6.55 s slowest row is an existing long-session route warning, not additional traffic from this reconciliation.
+
+#### Rollback/Cleanup
+- Stop any disposable test turn from the UI. No rollout files are changed by this status reconciliation.
+
 ### Feature: Historical session command rendering
 
 #### Prerequisites

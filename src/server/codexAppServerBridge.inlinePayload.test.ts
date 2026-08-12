@@ -20,6 +20,7 @@ import {
   parseAutomationToml,
   persistTurnStartModelProviderInCollaborationMode,
   rewriteOpenAiThreadModelProvider,
+  reconcileStaleThreadStatusFromSession,
   sanitizeThreadTurnsInlinePayloads,
   searchThreadMessagesInPayload,
   shouldAutoContinueInterruptedThreadFromThreadRead,
@@ -415,6 +416,31 @@ describe('session model state recovery', () => {
       modelProvider: 'cursor',
       reasoningEffort: 'xhigh',
     })
+  })
+
+  it('reconciles an interrupted app-server snapshot from an active rollout turn', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-stale-thread-status-'))
+    const sessionPath = join(tempDir, 'session.jsonl')
+    await writeFile(sessionPath, [
+      JSON.stringify({ type: 'event_msg', payload: { type: 'task_started', turn_id: 'turn-2' } }),
+      JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Still working.' }] } }),
+    ].join('\n'), 'utf8')
+
+    try {
+      const result = await mergeSessionModelStateIntoThreadResult({
+        thread: {
+          id: 'thread-1',
+          path: sessionPath,
+          status: { type: 'notLoaded' },
+          turns: [{ id: 'turn-2', status: 'interrupted' }],
+        },
+      }) as { thread: { status: { type: string; turnId: string }; turns: Array<{ id: string; status: string }> } }
+
+      expect(result.thread.status).toEqual({ type: 'inProgress', turnId: 'turn-2' })
+      expect(result.thread.turns).toEqual([{ id: 'turn-2', status: 'inProgress' }])
+    } finally {
+      await rm(tempDir, { recursive: true, force: true })
+    }
   })
 
   it('recovers max reasoning effort from persisted turn context', () => {
@@ -2452,6 +2478,52 @@ describe('backend queue scheduling', () => {
     expect(snapshot).toEqual({ threadId: 'thread-1', turnId: 'turn-2' })
   })
 
+  it('keeps a stale interrupted snapshot running while its rollout turn remains active', () => {
+    const state = buildSessionModelState([
+      JSON.stringify({ type: 'event_msg', payload: { type: 'task_started', turn_id: 'turn-2' } }),
+      JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Still working.' }] } }),
+    ].join('\n'))
+    const result = reconcileStaleThreadStatusFromSession({
+      thread: {
+        id: 'thread-1',
+        status: { type: 'notLoaded' },
+        turns: [
+          { id: 'turn-1', status: 'completed' },
+          { id: 'turn-2', status: 'interrupted' },
+        ],
+      },
+    }, state.activeTurnId ?? '') as { thread: { status: { type: string; turnId: string }; turns: Array<{ id: string; status: string }> } }
+
+    expect(state.activeTurnId).toBe('turn-2')
+    expect(result.thread.status).toEqual({ type: 'inProgress', turnId: 'turn-2' })
+    expect(result.thread.turns.at(-1)).toEqual({ id: 'turn-2', status: 'inProgress' })
+  })
+
+  it('does not treat a completed rollout turn as active', () => {
+    const state = buildSessionModelState([
+      JSON.stringify({ type: 'event_msg', payload: { type: 'task_started', turn_id: 'turn-2' } }),
+      JSON.stringify({ type: 'event_msg', payload: { type: 'task_complete', turn_id: 'turn-2' } }),
+    ].join('\n'))
+
+    const result = reconcileStaleThreadStatusFromSession({
+      thread: { id: 'thread-1', status: { type: 'idle' }, turns: [{ id: 'turn-2', status: 'interrupted' }] },
+    }, state.activeTurnId ?? '')
+
+    expect(state.activeTurnId).toBeUndefined()
+    expect(result).toEqual({
+      thread: { id: 'thread-1', status: { type: 'idle' }, turns: [{ id: 'turn-2', status: 'interrupted' }] },
+    })
+  })
+
+  it('does not treat an explicitly aborted rollout turn as active', () => {
+    const state = buildSessionModelState([
+      JSON.stringify({ type: 'event_msg', payload: { type: 'task_started', turn_id: 'turn-2' } }),
+      JSON.stringify({ type: 'event_msg', payload: { type: 'turn_aborted', turn_id: 'turn-2', reason: 'interrupted' } }),
+    ].join('\n'))
+
+    expect(state.activeTurnId).toBeUndefined()
+  })
+
   it('skips interrupted turns that came from a user stop', () => {
     const snapshot = shouldAutoContinueInterruptedThreadFromThreadRead({
       thread: {
@@ -2717,6 +2789,60 @@ describe('backend queue scheduling', () => {
     })
 
     processor.dispose()
+  })
+
+  it('forwards a running state instead of duplicating a rollout-active interrupted turn', async () => {
+    vi.useFakeTimers()
+    const sessionDir = await mkdtemp(join(tmpdir(), 'codexui-rollout-active-turn-'))
+    const sessionPath = join(sessionDir, 'session.jsonl')
+    await writeFile(sessionPath, [
+      JSON.stringify({ type: 'event_msg', payload: { type: 'task_started', turn_id: 'turn-1' } }),
+      JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Still working.' }] } }),
+    ].join('\n'), 'utf8')
+    const listeners: Array<(value: { method: string; params: unknown }) => void> = []
+    const calls: string[] = []
+    const forwarded: Array<{ method: string; params: Record<string, unknown> }> = []
+    const processor = new BackendQueueProcessor({
+      onNotification(listener: (value: { method: string; params: unknown }) => void) {
+        listeners.push(listener)
+        return () => undefined
+      },
+      async rpc(method: string): Promise<unknown> {
+        calls.push(method)
+        if (method === 'thread/read') {
+          return {
+            thread: {
+              id: 'thread-1',
+              path: sessionPath,
+              status: { type: 'idle' },
+              turns: [{ id: 'turn-1', status: 'interrupted' }],
+            },
+          }
+        }
+        throw new Error(`Unexpected RPC: ${method}`)
+      },
+    } as never, undefined, undefined, (notification) => {
+      forwarded.push({ method: notification.method, params: notification.params as Record<string, unknown> })
+    })
+
+    try {
+      listeners[0]?.({
+        method: 'turn/completed',
+        params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'interrupted' } },
+      })
+
+      await vi.advanceTimersByTimeAsync(250)
+      await vi.waitFor(() => {
+        expect(forwarded).toEqual([{
+          method: 'thread/status/changed',
+          params: { threadId: 'thread-1', status: { type: 'running', turnId: 'turn-1' } },
+        }])
+      })
+      expect(calls).toEqual(['thread/read'])
+    } finally {
+      processor.dispose()
+      await rm(sessionDir, { recursive: true, force: true })
+    }
   })
 
   it('does not defer an interrupted completion after an intentional stop', async () => {
