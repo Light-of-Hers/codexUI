@@ -1,5 +1,41 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { clearThreadGoal, forkThread, forkThreadThroughTurn, getAvailableModelIds, getComposerPrompts, getCurrentModelConfig, getThreadGoal, getThreadQueueState, getThreadUserMessageIndex, getThreadUserMessageNavigation, listDirectoryComposioConnectors, resumeThread, searchComposerFiles, searchFileLinkPaths, searchThreadMessages, setThreadGoal, setThreadQueueState, startThread, startThreadTurn, steerThreadTurn } from './codexGateway'
+import { clearThreadGoal, forkThread, forkThreadThroughTurn, getAvailableModelIds, getComposerPrompts, getCurrentModelConfig, getThreadDetail, getThreadGoal, getThreadQueueState, getThreadUserMessageIndex, getThreadUserMessageNavigation, listDirectoryComposioConnectors, resumeThread, searchComposerFiles, searchFileLinkPaths, searchThreadMessages, setThreadGoal, setThreadQueueState, startThread, startThreadTurn, steerThreadTurn } from './codexGateway'
+
+describe('getThreadDetail', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('loads the bounded latest page and preserves absolute turn indexes', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      result: {
+        thread: {
+          id: 'thread-1',
+          cwd: '/tmp/project',
+          turns: [
+            { id: 'turn-8', status: 'completed', items: [{ id: 'user-8', type: 'userMessage', content: [{ type: 'text', text: 'eight' }] }] },
+            { id: 'turn-9', status: 'inProgress', items: [{ id: 'user-9', type: 'userMessage', content: [{ type: 'text', text: 'nine' }] }] },
+          ],
+        },
+      },
+      startTurnIndex: 8,
+      hasMoreOlder: true,
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const detail = await getThreadDetail('thread-1')
+
+    expect(fetchMock).toHaveBeenCalledWith('/codex-api/thread-turn-page?threadId=thread-1')
+    expect(detail.messages.map((message) => [message.turnId, message.turnIndex])).toEqual([
+      ['turn-8', 8],
+      ['turn-9', 9],
+    ])
+    expect(detail.inProgress).toBe(true)
+    expect(detail.activeTurnId).toBe('turn-9')
+    expect(detail.hasMoreOlder).toBe(true)
+    expect(detail.turnIndexByTurnId).toEqual({ 'turn-8': 8, 'turn-9': 9 })
+  })
+})
 
 function mockRpcFetch(): { requests: Array<{ method: string, params: Record<string, unknown> }> } {
   const requests: Array<{ method: string, params: Record<string, unknown> }> = []

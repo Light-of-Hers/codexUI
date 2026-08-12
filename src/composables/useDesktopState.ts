@@ -2338,60 +2338,6 @@ export function useDesktopState() {
     }
   }
 
-  // Eager: how many recent turns are pulled synchronously as part of the
-  // main thread/read RPC (kept in sync with THREAD_RESPONSE_TURN_LIMIT on
-  // the server). Lazy: the target window size after the background
-  // backfill. -3..+3 around the latest turn = 7 turns.
-  const EAGER_TURN_LIMIT = 3
-  const LAZY_TURN_LIMIT = 7
-  const backgroundOlderBackfillByThreadId = new Map<string, Promise<void>>()
-
-  async function backfillOlderTurnsInBackground(threadId: string): Promise<void> {
-    if (!threadId) return
-    if (backgroundOlderBackfillByThreadId.has(threadId)) return
-    if (hasMoreOlderMessagesByThreadId.value[threadId] !== true) return
-    if (loadingOlderMessagesByThreadId.value[threadId] === true) return
-
-    const persisted = persistedMessagesByThreadId.value[threadId] ?? []
-    const distinctTurnIds = new Set<string>()
-    for (const message of persisted) {
-      const turnId = message.turnId?.trim() ?? ''
-      if (turnId) distinctTurnIds.add(turnId)
-    }
-    const missing = LAZY_TURN_LIMIT - distinctTurnIds.size
-    if (missing <= 0) return
-
-    const beforeTurnId = getFirstPersistedTurnId(threadId)
-    if (!beforeTurnId) return
-
-    const backfillPromise = (async () => {
-      try {
-        const page = await getOlderThreadMessages(threadId, beforeTurnId, missing)
-        const previousPersisted = persistedMessagesByThreadId.value[threadId] ?? []
-        const mergedMessages = mergeMessages(page.messages, previousPersisted, { preserveMissing: true })
-        setPersistedMessagesForThread(threadId, mergedMessages)
-        replaceTurnIndexLookupForThread(threadId, {
-          ...(turnIndexByTurnIdByThreadId.value[threadId] ?? {}),
-          ...page.turnIndexByTurnId,
-        })
-        rebindLiveFileChangeTurnIndices(threadId)
-        hasMoreOlderMessagesByThreadId.value = {
-          ...hasMoreOlderMessagesByThreadId.value,
-          [threadId]: page.hasMoreOlder,
-        }
-        if (page.hasMoreOlder === false) {
-          setFullHistoryMessagesForThread(threadId, mergedMessages)
-        }
-      } catch {
-        // Background prefetch is best-effort; the user can still trigger
-        // loadOlderMessages by scrolling up.
-      }
-    })().finally(() => {
-      backgroundOlderBackfillByThreadId.delete(threadId)
-    })
-    backgroundOlderBackfillByThreadId.set(threadId, backfillPromise)
-  }
-
   function shouldResumeThread(threadId: string, forceReload = false): boolean {
     const normalizedThreadId = threadId.trim()
     if (!normalizedThreadId) return false
@@ -3803,6 +3749,24 @@ export function useDesktopState() {
   function currentThreadVersion(threadId: string): string {
     const thread = flattenThreads(sourceGroups.value).find((row) => row.id === threadId)
     return thread?.updatedAtIso ?? ''
+  }
+
+  function adoptVersionsForRecentlyLoadedThreads(): void {
+    let nextVersions = loadedVersionByThreadId.value
+    let changed = false
+    const now = Date.now()
+
+    for (const [threadId, loaded] of Object.entries(loadedMessagesByThreadId.value)) {
+      if (!loaded || nextVersions[threadId]) continue
+      if (now - (lastMessageLoadAtByThreadId.get(threadId) ?? 0) >= RECENT_THREAD_MESSAGE_LOAD_REUSE_MS) continue
+      const version = currentThreadVersion(threadId)
+      if (!version) continue
+      if (!changed) nextVersions = { ...nextVersions }
+      nextVersions[threadId] = version
+      changed = true
+    }
+
+    if (changed) loadedVersionByThreadId.value = nextVersions
   }
 
   function setThreadTerminalOpen(threadId: string, isOpen: boolean): void {
@@ -6319,6 +6283,7 @@ export function useDesktopState() {
       await hydrateWorkspaceRootsStateIfNeeded(groups, rootsState)
 
       applyThreadGroups(loadedThreadListGroups, rootsState, turnStateGenerationAtRequestStart)
+      adoptVersionsForRecentlyLoadedThreads()
       hasLoadedThreads.value = true
       if (!hasLoadedAllThreadPages) {
         scheduleRemainingThreadPages(rootsState)
@@ -6541,10 +6506,15 @@ export function useDesktopState() {
           [threadId]: true,
         }
         lastMessageLoadAtByThreadId.set(threadId, Date.now())
-        if (version) {
+        // The thread list can finish while this read is in flight. Persist the
+        // newest known version so startup hydration does not immediately
+        // misclassify the just-loaded messages as stale and issue a duplicate
+        // forced detail read.
+        const appliedVersion = currentThreadVersion(threadId) || version
+        if (appliedVersion) {
           loadedVersionByThreadId.value = {
             ...loadedVersionByThreadId.value,
-            [threadId]: version,
+            [threadId]: appliedVersion,
           }
         }
         hasMoreOlderMessagesByThreadId.value = {
@@ -6553,8 +6523,6 @@ export function useDesktopState() {
         }
         if (detail.hasMoreOlder !== true) {
           setFullHistoryMessagesForThread(threadId, mergedMessages)
-        } else {
-          void backfillOlderTurnsInBackground(threadId)
         }
         if (!appliedTurnState.inProgress) {
           clearCompletedTurnLiveState(threadId)
@@ -6826,6 +6794,7 @@ export function useDesktopState() {
     threadId: string,
     options: { refreshQueue?: boolean; refreshSkills?: boolean } = {},
   ) {
+    const isAlreadySelected = selectedThreadId.value === threadId
     setSelectedThreadId(threadId)
 
     // Fire the message + queue fetches in the background so quickly
@@ -6835,7 +6804,7 @@ export function useDesktopState() {
     // preferCached lets the switch return instantly if we already have
     // this thread's messages in memory; a silent refresh is scheduled
     // internally so the view converges to the latest server state.
-    void loadMessages(threadId, { preferCached: true }).catch((unknownError) => {
+    void loadMessages(threadId, { preferCached: !isAlreadySelected }).catch((unknownError) => {
       error.value = unknownError instanceof Error ? unknownError.message : 'Unknown application error'
     })
     if (threadId && options.refreshQueue !== false) {

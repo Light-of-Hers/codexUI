@@ -802,6 +802,33 @@ describe('thread cache keep-warm', () => {
     }
   }
 
+  it('adopts the first thread-list version after an earlier direct-route message read', async () => {
+    installTestWindow()
+    let now = 1_000
+    vi.spyOn(Date, 'now').mockImplementation(() => now)
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({
+      groups: [{ projectName: 'project', threads: [thread('thread-a', '/tmp/project')] }],
+      nextCursor: null,
+    })
+    gatewayMocks.getThreadDetail.mockResolvedValue({
+      messages: [messagePayload('m-1')],
+      inProgress: false,
+      activeTurnId: '',
+      hasMoreOlder: false,
+      turnIndexByTurnId: { 'turn-1': 0 },
+    })
+
+    const state = useDesktopState()
+    state.primeSelectedThread('thread-a')
+    await state.loadMessages('thread-a')
+    await state.refreshAll({ includeSelectedThreadMessages: false, refreshAncillary: false })
+
+    now += 3_000
+    await state.selectThread('thread-a', { refreshQueue: false, refreshSkills: false })
+
+    expect(gatewayMocks.getThreadDetail).toHaveBeenCalledTimes(1)
+  })
+
   it('records visited threads in an LRU list with a cap and dedupes repeats', async () => {
     installTestWindow()
     gatewayMocks.getThreadGroupsPage.mockResolvedValue({

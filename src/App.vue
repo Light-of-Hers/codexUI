@@ -4600,16 +4600,23 @@ function onSelectCollaborationMode(mode: 'default' | 'plan'): void {
 
 async function initialize(): Promise<void> {
   await router.isReady()
-  await refreshMoonBridgeModelIds().catch(() => {})
-  await loadFreeModeStatus()
 
   if (route.name === 'thread' && routeThreadId.value) {
     primeSelectedThread(routeThreadId.value)
+    // The bridge routes reads through its persisted runtime state. Start the
+    // read before ancillary provider/sidebar hydration so opening a deep-linked
+    // conversation is not serialized behind it.
+    void loadMessages(routeThreadId.value).catch(() => {})
   }
-  await refreshAll({
-    includeSelectedThreadMessages: false,
-    refreshAncillary: false,
-  })
+
+  await Promise.all([
+    refreshMoonBridgeModelIds().catch(() => {}),
+    loadFreeModeStatus(),
+    refreshAll({
+      includeSelectedThreadMessages: false,
+      refreshAncillary: false,
+    }),
+  ])
   if (route.name === 'thread' && routeThreadId.value) {
     primeSelectedThread(routeThreadId.value)
   } else {

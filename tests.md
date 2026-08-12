@@ -8383,3 +8383,31 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - Stop the development server after verification. No repository or thread data cleanup is required.
+
+### Performance: Direct thread messages start before ancillary hydration
+
+#### Prerequisites
+- Run the app server at `http://127.0.0.1:4173`.
+- Choose an existing long thread with multiple turns and command executions.
+
+#### Steps
+1. Open `#/thread/<thread-id>` in a fresh browser context.
+2. Record the start and completion times for `/codex-api/thread-turn-page`, `/codex-api/free-mode/status`, and the first `thread/list` request.
+3. Confirm the conversation becomes visible even while slower provider or sidebar hydration requests are still pending.
+4. Reload the route and confirm exactly one initial `/codex-api/thread-turn-page` request is issued.
+5. Run `pnpm exec vitest run src/server/codexAppServerBridge.inlinePayload.test.ts src/composables/useDesktopState.test.ts` and `pnpm run ci`.
+
+#### Expected Results
+- The direct-route turn page, provider status, model metadata, and the initial thread list start concurrently.
+- Provider and sidebar hydration no longer block the initial conversation read.
+- Session command recovery reuses the cached parsed rollout rows; message content and item ordering are unchanged.
+- No eager full-history request or `thread/resume` is added.
+
+#### Performance Audit
+- Compare the same direct-route browser profile before and after the change, including turn-page duration, request start order, duplicate counts, payload size, and profiler warnings.
+- A long-session cold read parses each rollout JSONL row once per snapshot version instead of reparsing the complete file during command recovery.
+- The August 13, 2026 long-session profile reduced initial conversation payload from 355.3 KiB plus a 272.0 KiB automatic backfill to one 37.4 KiB page; total startup API payload fell from 771.4 KiB to 182.3 KiB with no profiler warnings.
+- The final profile issues one `/codex-api/thread-turn-page`, one initial `thread/list`, no `thread/read`, no `thread/resume`, and no eager `/codex-api/thread-message-history` request.
+
+#### Rollback/Cleanup
+- Stop the disposable `4173` server after profiling. The read-only test does not modify thread data.

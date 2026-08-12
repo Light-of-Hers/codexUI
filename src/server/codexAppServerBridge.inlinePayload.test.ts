@@ -23,6 +23,7 @@ import {
   reconcileRuntimeActiveTurnId,
   rewriteOpenAiThreadModelProvider,
   reconcileStaleThreadStatusFromSession,
+  readLatestThreadTurnPage,
   sanitizeThreadTurnsInlinePayloads,
   searchThreadMessagesInPayload,
   shouldAutoContinueInterruptedThreadFromThreadRead,
@@ -34,6 +35,53 @@ const pngDataUrl = `data:image/png;base64,${pngBase64}`
 const gifBase64 = 'R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=='
 const jpegBase64 = '/9j/4AAQSkZJRgABAQAAAQABAAD/2w=='
 const webpBase64 = 'UklGRiIAAABXRUJQVlA4IC4AAAAwAQCdASoBAAEAAQAcJaQAA3AA/vuUAAA='
+
+describe('latest thread turn page', () => {
+  it('returns chronological full turns with an absolute start index', async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = []
+    const appServer = {
+      rpc: vi.fn(async (method: string, params: Record<string, unknown>) => {
+        calls.push({ method, params })
+        if (method === 'thread/read') {
+          return { thread: { id: 'thread-1', path: '', cwd: '/tmp/project', turns: [] } }
+        }
+        if (params.itemsView === 'full') {
+          return {
+            data: [
+              { id: 'turn-5', status: 'inProgress', items: [{ id: 'item-5', type: 'agentMessage', text: 'latest' }] },
+              { id: 'turn-4', status: 'completed', items: [{ id: 'item-4', type: 'agentMessage', text: 'previous' }] },
+            ],
+            nextCursor: 'older',
+          }
+        }
+        return {
+          data: [
+            { id: 'turn-3', items: [] },
+            { id: 'turn-2', items: [] },
+            { id: 'turn-1', items: [] },
+            { id: 'turn-0', items: [] },
+          ],
+          nextCursor: null,
+        }
+      }),
+      mergeItemsIntoTurns: vi.fn((_threadId: string, turns: unknown[]) => turns),
+    }
+
+    const page = await readLatestThreadTurnPage(appServer as never, 'thread-1', 2)
+    const result = page.result as { threadTurnStartIndex: number; thread: { turns: Array<{ id: string }> } }
+
+    expect(result.thread.turns.map((turn) => turn.id)).toEqual(['turn-4', 'turn-5'])
+    expect(result.threadTurnStartIndex).toBe(4)
+    expect(page.startTurnIndex).toBe(4)
+    expect(page.hasMoreOlder).toBe(true)
+    expect(page.hasMoreNewer).toBe(false)
+    expect(calls).toEqual([
+      { method: 'thread/read', params: { threadId: 'thread-1', includeTurns: false } },
+      { method: 'thread/turns/list', params: { threadId: 'thread-1', cursor: null, limit: 2, sortDirection: 'desc', itemsView: 'full' } },
+      { method: 'thread/turns/list', params: { threadId: 'thread-1', cursor: 'older', limit: 100, sortDirection: 'desc', itemsView: 'notLoaded' } },
+    ])
+  })
+})
 
 describe('paginated thread compatibility errors', () => {
   it('recognizes both legacy and current app-server capability errors', () => {

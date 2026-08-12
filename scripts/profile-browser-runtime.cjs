@@ -52,6 +52,8 @@ function buildWarnings(duplicateCounts, apiSummary, apiRows) {
   if (duplicateCounts.threadResume > 0) warnings.push(`threadResume=${duplicateCounts.threadResume}`)
   const allowedThreadReads = isThreadRoute ? 1 : 0
   if (duplicateCounts.threadRead > allowedThreadReads) warnings.push(`threadRead=${duplicateCounts.threadRead}`)
+  const allowedThreadTurnPages = isThreadRoute ? 1 : 0
+  if (duplicateCounts.threadTurnPage > allowedThreadTurnPages) warnings.push(`threadTurnPage=${duplicateCounts.threadTurnPage}`)
   if (duplicateCounts.skillsList > 1) warnings.push(`skillsList=${duplicateCounts.skillsList}`)
   if (duplicateCounts.rateLimitsRead > 1) warnings.push(`rateLimitsRead=${duplicateCounts.rateLimitsRead}`)
   if (duplicateCounts.threadQueueState > 1) warnings.push(`threadQueueState=${duplicateCounts.threadQueueState}`)
@@ -225,6 +227,7 @@ async function main() {
     threadListCursor: apiRows.filter((row) => row.rpc === 'thread/list' && row.cursor).length,
     threadResume: apiRows.filter((row) => row.rpc === 'thread/resume').length,
     threadRead: apiRows.filter((row) => row.rpc === 'thread/read').length,
+    threadTurnPage: apiRows.filter((row) => row.path === '/codex-api/thread-turn-page').length,
     skillsList: apiRows.filter((row) => row.rpc === 'skills/list').length,
     rateLimitsRead: apiRows.filter((row) => row.rpc === 'account/rateLimits/read').length,
     providerModels: apiRows.filter((row) => row.path === '/codex-api/provider-models').length,

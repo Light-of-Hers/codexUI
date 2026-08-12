@@ -293,7 +293,7 @@ const COMPOSIO_CONNECTORS_PAGE_LIMIT_MAX = 1000
 
 const PROVIDER_MODELS_FETCH_TIMEOUT_MS = 5_000
 
-const THREAD_RESPONSE_TURN_LIMIT = 3
+const THREAD_RESPONSE_TURN_LIMIT = 2
 const THREAD_TURN_PAGE_READ_CACHE_TTL_MS = 30_000
 const THREAD_TURNS_LIST_PAGE_LIMIT = 100
 const THREAD_METHODS_WITH_TURNS = new Set(['thread/read', 'thread/resume', 'thread/fork', 'thread/rollback'])
@@ -344,6 +344,7 @@ type SessionRecoveredModelState = {
 type SessionRolloutRow = {
   row: Record<string, unknown>
   payload: Record<string, unknown> | null
+  lineIndex: number
   lineEndByteOffset: number
 }
 
@@ -377,7 +378,7 @@ function parseSessionRolloutRows(sessionLogRaw: string): SessionRolloutRow[] {
     if (!rawLine.trim()) continue
     try {
       const row = asRecord(JSON.parse(rawLine) as unknown)
-      if (row) rows.push({ row, payload: asRecord(row.payload), lineEndByteOffset: byteOffset })
+      if (row) rows.push({ row, payload: asRecord(row.payload), lineIndex, lineEndByteOffset: byteOffset })
     } catch {
       // Ignore incomplete or legacy-invalid JSONL rows.
     }
@@ -1769,6 +1770,7 @@ export function mergeRecoveredTurnItemsIntoThreadResult(
   result: unknown,
   mergeItemsIntoTurns: (threadId: string, turns: unknown[]) => unknown[],
   sessionLogRaw?: string | null,
+  sessionRows?: SessionRolloutRow[],
 ): unknown {
   const record = asRecord(result)
   const thread = asRecord(record?.thread)
@@ -1779,7 +1781,9 @@ export function mergeRecoveredTurnItemsIntoThreadResult(
   if (!threadId) return result
 
   let mergedTurns = mergeItemsIntoTurns(threadId, turns)
-  if (sessionLogRaw) {
+  if (sessionRows) {
+    mergedTurns = mergeSessionCommandsIntoTurnsFromRows(mergedTurns, sessionRows)
+  } else if (sessionLogRaw) {
     mergedTurns = mergeSessionCommandsIntoTurns(mergedTurns, sessionLogRaw)
   }
   if (
@@ -1798,14 +1802,14 @@ export function mergeRecoveredTurnItemsIntoThreadResult(
   }
 }
 
-async function readSessionLogRawFromThreadResult(result: unknown): Promise<string | null> {
+async function readSessionSnapshotFromThreadResult(result: unknown): Promise<SessionRolloutSnapshot | null> {
   const record = asRecord(result)
   const thread = asRecord(record?.thread)
   const sessionPath = readNonEmptyString(thread?.path)
   if (!sessionPath || !isAbsolute(sessionPath)) return null
 
   try {
-    return (await readSessionRolloutSnapshot(sessionPath)).raw
+    return await readSessionRolloutSnapshot(sessionPath)
   } catch {
     return null
   }
@@ -1815,11 +1819,12 @@ async function mergeRecoveredTurnItemsIntoThreadResultFromSession(
   appServer: AppServerProcess,
   result: unknown,
 ): Promise<unknown> {
-  const sessionLogRaw = await readSessionLogRawFromThreadResult(result)
+  const snapshot = await readSessionSnapshotFromThreadResult(result)
   return mergeRecoveredTurnItemsIntoThreadResult(
     result,
     (threadId, turns) => appServer.mergeItemsIntoTurns(threadId, turns),
-    sessionLogRaw,
+    undefined,
+    snapshot?.rows,
   )
 }
 
@@ -4651,37 +4656,29 @@ export function buildSessionTurnsFromRollout(sessionLogRaw: string): Record<stri
     .filter((turn): turn is RecoveredTurn => Boolean(turn && turn.items.length > 0))
 }
 
-function buildSessionItemOrder(sessionLogRaw: string, turnIds: Set<string>): Map<string, SessionItemSlot[]> {
+function buildSessionItemOrderFromRows(
+  rows: SessionRolloutRow[],
+  turnIds?: Set<string>,
+): Map<string, SessionItemSlot[]> {
   let currentTurnId = ''
   let orphanResponseTurnId = ''
   const orderByTurnId = new Map<string, SessionItemSlot[]>()
   const callIdToCommands = new Map<string, SessionRecoveredCommand[]>()
   const callIdToToolCall = new Map<string, SessionRecoveredToolCall>()
   const cursorPayloadCache: CursorToolPayloadCache = new Map()
-  const lines = sessionLogRaw.split('\n')
 
-  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
-    const line = lines[lineIndex]!
-    if (!line.trim()) continue
-    let row: Record<string, unknown> | null = null
-    try {
-      row = JSON.parse(line) as Record<string, unknown>
-    } catch {
-      continue
-    }
+  for (const { row, payload, lineIndex } of rows) {
 
     if (row.type === 'turn_context') {
-      const p = asRecord(row.payload)
-      currentTurnId = readNonEmptyString(p?.turn_id) || currentTurnId
+      currentTurnId = readNonEmptyString(payload?.turn_id) || currentTurnId
       orphanResponseTurnId = ''
       continue
     }
     if (row.type === 'event_msg') {
-      const p = asRecord(row.payload)
-      if (p?.type === 'task_started') {
-        currentTurnId = readNonEmptyString(p.turn_id) || currentTurnId
+      if (payload?.type === 'task_started') {
+        currentTurnId = readNonEmptyString(payload.turn_id) || currentTurnId
         orphanResponseTurnId = ''
-      } else if (p?.type === 'task_complete') {
+      } else if (payload?.type === 'task_complete') {
         currentTurnId = ''
         orphanResponseTurnId = ''
       }
@@ -4694,8 +4691,7 @@ function buildSessionItemOrder(sessionLogRaw: string, turnIds: Set<string>): Map
       orphanResponseTurnId ||= `rollout-${String(lineIndex + 1)}`
       targetTurnId = orphanResponseTurnId
     }
-    if (!targetTurnId || !turnIds.has(targetTurnId)) continue
-    const payload = asRecord(row.payload)
+    if (!targetTurnId || (turnIds && !turnIds.has(targetTurnId))) continue
     if (!payload) continue
 
     let slots = orderByTurnId.get(targetTurnId)
@@ -4815,6 +4811,10 @@ function buildSessionItemOrder(sessionLogRaw: string, turnIds: Set<string>): Map
   }
 
   return orderByTurnId
+}
+
+function buildSessionItemOrder(sessionLogRaw: string, turnIds: Set<string>): Map<string, SessionItemSlot[]> {
+  return buildSessionItemOrderFromRows(parseSessionRolloutRows(sessionLogRaw), turnIds)
 }
 
 function splitMergedAgentMessageFromSessionSlots(
@@ -5388,7 +5388,10 @@ async function revertTurnFileChanges(
   return { reverted, errors }
 }
 
-function mergeSessionCommandsIntoTurns(turns: unknown[], sessionLogRaw: string): unknown[] {
+function mergeSessionCommandsIntoTurnsFromOrder(
+  turns: unknown[],
+  orderByTurnId: Map<string, SessionItemSlot[]>,
+): unknown[] {
   const turnIds = new Set<string>()
   for (const turn of turns) {
     const turnRecord = asRecord(turn)
@@ -5397,8 +5400,6 @@ function mergeSessionCommandsIntoTurns(turns: unknown[], sessionLogRaw: string):
   }
 
   if (turnIds.size === 0) return turns
-
-  const orderByTurnId = buildSessionItemOrder(sessionLogRaw, turnIds)
   if (orderByTurnId.size === 0) return turns
 
   return turns.map((turn) => {
@@ -5498,6 +5499,21 @@ function mergeSessionCommandsIntoTurns(turns: unknown[], sessionLogRaw: string):
       items: interleaved,
     }
   })
+}
+
+function mergeSessionCommandsIntoTurnsFromRows(turns: unknown[], rows: SessionRolloutRow[]): unknown[] {
+  const turnIds = new Set(
+    turns.flatMap((turn) => {
+      const turnId = readNonEmptyString(asRecord(turn)?.id)
+      return turnId ? [turnId] : []
+    }),
+  )
+  if (turnIds.size === 0) return turns
+  return mergeSessionCommandsIntoTurnsFromOrder(turns, buildSessionItemOrderFromRows(rows, turnIds))
+}
+
+function mergeSessionCommandsIntoTurns(turns: unknown[], sessionLogRaw: string): unknown[] {
+  return mergeSessionCommandsIntoTurnsFromRows(turns, parseSessionRolloutRows(sessionLogRaw))
 }
 
 function isExactPhraseMatch(query: string, doc: ThreadSearchDocument): boolean {
@@ -10446,6 +10462,115 @@ type ThreadTurnSliceResponse = {
   hasMoreNewer: boolean
 }
 
+type ThreadTurnsListPage = {
+  data: unknown[]
+  nextCursor: string
+}
+
+function normalizeThreadTurnsListPage(value: unknown): ThreadTurnsListPage {
+  const record = asRecord(value)
+  if (!Array.isArray(record?.data)) {
+    throw new Error('thread/turns/list returned an invalid payload')
+  }
+  return {
+    data: record.data,
+    nextCursor: readNonEmptyString(record.nextCursor),
+  }
+}
+
+export async function readLatestThreadTurnPage(
+  appServer: AppServerProcess,
+  threadId: string,
+  limit: number,
+): Promise<ThreadTurnSliceResponse> {
+  const metadataResult = await appServer.rpc('thread/read', {
+    threadId,
+    includeTurns: false,
+  })
+  const metadataRecord = asRecord(metadataResult)
+  const metadataThread = asRecord(metadataRecord?.thread)
+  if (!metadataRecord || !metadataThread) {
+    throw new Error('thread/read returned an invalid thread response')
+  }
+
+  const sessionPath = readNonEmptyString(metadataThread.path)
+  let sessionSnapshot: SessionRolloutSnapshot | null = null
+  if (sessionPath && isAbsolute(sessionPath)) {
+    const lineage = await readSessionForkLineage(
+      sessionPath,
+      isArchivedSessionPath(sessionPath),
+    ).catch(() => null)
+    // Fork history can span several rollout files and needs the canonical
+    // reconstruction path before it can be sliced safely.
+    if (lineage?.forkedFromId) {
+      const prepared = await readPreparedThreadReadResult(appServer, threadId)
+      return readThreadTurnSlice(
+        appServer,
+        threadId,
+        Math.max(0, prepared.turns.length - limit),
+        prepared.turns.length,
+        prepared,
+      )
+    }
+    sessionSnapshot = await readSessionRolloutSnapshot(sessionPath).catch(() => null)
+  }
+
+  const latestPage = normalizeThreadTurnsListPage(await appServer.rpc('thread/turns/list', {
+    threadId,
+    cursor: null,
+    limit,
+    sortDirection: 'desc',
+    itemsView: 'full',
+  }))
+  let totalTurnCount = sessionSnapshot?.turnEnds.size ?? 0
+  if (totalTurnCount < latestPage.data.length) {
+    totalTurnCount = latestPage.data.length
+    let cursor = latestPage.nextCursor
+    const seenCursors = new Set<string>()
+    while (cursor && !seenCursors.has(cursor)) {
+      seenCursors.add(cursor)
+      const countPage = normalizeThreadTurnsListPage(await appServer.rpc('thread/turns/list', {
+        threadId,
+        cursor,
+        limit: THREAD_TURNS_LIST_PAGE_LIMIT,
+        sortDirection: 'desc',
+        itemsView: 'notLoaded',
+      }))
+      totalTurnCount += countPage.data.length
+      cursor = countPage.nextCursor
+    }
+  }
+
+  const startTurnIndex = Math.max(0, totalTurnCount - latestPage.data.length)
+  const rawResult = {
+    ...metadataRecord,
+    thread: {
+      ...metadataThread,
+      turns: [...latestPage.data].reverse(),
+    },
+  }
+  const recoveredResult = mergeRecoveredTurnItemsIntoThreadResult(
+    rawResult,
+    (id, turns) => appServer.mergeItemsIntoTurns(id, turns),
+    undefined,
+    sessionSnapshot?.rows,
+  )
+  const enrichedResult = await mergeSessionModelStateIntoThreadResult(recoveredResult, appServer)
+  const record = asRecord(enrichedResult)
+  const thread = asRecord(record?.thread)
+  if (!record || !thread) {
+    throw new Error('thread/read returned an invalid thread response')
+  }
+  const turns = Array.isArray(thread.turns) ? thread.turns : []
+
+  return {
+    result: await finalizeThreadReadResult(record, thread, turns, startTurnIndex),
+    startTurnIndex,
+    hasMoreOlder: startTurnIndex > 0,
+    hasMoreNewer: false,
+  }
+}
+
 async function readPreparedThreadReadResult(appServer: AppServerProcess, threadId: string): Promise<PreparedThreadReadResult> {
   const threadReadResult = await appServer.readThreadForTurnPage(threadId)
   const recoveredThreadReadResult = await mergeRecoveredTurnItemsIntoThreadResultFromSession(appServer, threadReadResult)
@@ -11393,6 +11518,21 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
             return
           }
 
+          if (!beforeTurnId) {
+            try {
+              const page = await readLatestThreadTurnPage(appServer, threadId, limit)
+              setJson(res, 200, {
+                result: page.result,
+                startTurnIndex: page.startTurnIndex,
+                hasMoreOlder: page.hasMoreOlder,
+              })
+              return
+            } catch {
+              // Older app-server builds do not expose thread/turns/list.
+              // Preserve compatibility through the canonical full-read path.
+            }
+          }
+
           const prepared = await readPreparedThreadReadResult(appServer, threadId)
           const { turns } = prepared
           const beforeIndex = beforeTurnId
@@ -11609,9 +11749,11 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 
           const sessionPath = readNonEmptyString(thread?.path)
           let sessionSize = 0
+          let sessionSnapshot: SessionRolloutSnapshot | null = null
           if (sessionPath && isAbsolute(sessionPath)) {
             try {
-              sessionSize = (await readSessionRolloutSnapshot(sessionPath)).size
+              sessionSnapshot = await readSessionRolloutSnapshot(sessionPath)
+              sessionSize = sessionSnapshot.size
             } catch { /* missing */ }
           }
 
@@ -11623,13 +11765,8 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 
           let turns = appServer.mergeItemsIntoTurns(threadId, rawTurns)
 
-          if (sessionPath && isAbsolute(sessionPath) && sessionSize > 0) {
-            try {
-              const sessionLogRaw = (await readSessionRolloutSnapshot(sessionPath)).raw
-              turns = mergeSessionCommandsIntoTurns(turns, sessionLogRaw)
-            } catch {
-              // Session log not available — continue without command recovery
-            }
+          if (sessionSnapshot) {
+            turns = mergeSessionCommandsIntoTurnsFromRows(turns, sessionSnapshot.rows)
           }
 
           const lastTurn = turns.length > 0 ? asRecord(turns[turns.length - 1]) : null

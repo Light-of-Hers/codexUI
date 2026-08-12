@@ -933,11 +933,22 @@ async function getThreadDetailV2(threadId: string): Promise<{
   hasMoreOlder: boolean
   turnIndexByTurnId: ThreadTurnIndexById
 }> {
-  const payload = await callRpc<ThreadReadResponse>('thread/read', {
-    threadId,
-    includeTurns: true,
-  })
-  const startTurnIndex = readThreadTurnStartIndex(payload)
+  const params = new URLSearchParams({ threadId })
+  const response = await fetch(`/codex-api/thread-turn-page?${params.toString()}`)
+  const page = await response.json().catch(() => null) as {
+    result?: ThreadReadResponse
+    hasMoreOlder?: unknown
+    startTurnIndex?: unknown
+    error?: string
+  } | null
+  if (!response.ok) {
+    throw new Error(getErrorMessageFromPayload(page, `Thread detail request failed with ${response.status}`))
+  }
+  if (!page?.result) {
+    throw new Error('Thread detail response did not include a thread result')
+  }
+  const payload = page.result
+  const startTurnIndex = Math.max(0, Math.floor(typeof page.startTurnIndex === 'number' ? page.startTurnIndex : 0))
   const normalized = normalizeThreadMessagesV2(payload, startTurnIndex)
   return {
     model: normalizeThreadModelFromPayload(payload),
@@ -948,7 +959,7 @@ async function getThreadDetailV2(threadId: string): Promise<{
     activeTurnId: readActiveTurnIdFromResponse(payload),
     terminalTurnIds: readTerminalTurnIdsFromResponse(payload),
     rolloutTurnState: readRolloutTurnStateFromResponse(payload),
-    hasMoreOlder: startTurnIndex > 0,
+    hasMoreOlder: page.hasMoreOlder === true,
     turnIndexByTurnId: buildTurnIndexByTurnId(payload, startTurnIndex),
   }
 }
