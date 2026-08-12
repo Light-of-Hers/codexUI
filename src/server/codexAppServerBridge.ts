@@ -2877,6 +2877,28 @@ function isTerminalProtocolToken(value: string): boolean {
   return value === 'completed' || value === 'failed' || value === 'cancelled' || value === 'canceled'
 }
 
+export function reconcileRuntimeActiveTurnId(input: {
+  currentTurnId: string
+  method: string
+  statusType?: string
+  turnId?: string
+}): string {
+  const currentTurnId = input.currentTurnId.trim()
+  const turnId = input.turnId?.trim() ?? ''
+  if (input.method === 'turn/started') return turnId || currentTurnId
+  if (input.method === 'turn/completed') {
+    return !turnId || turnId === currentTurnId ? '' : currentTurnId
+  }
+  if (input.method !== 'thread/status/changed') return currentTurnId
+
+  const statusType = readProtocolToken(input.statusType)
+  if (isRunningProtocolToken(statusType)) return turnId || currentTurnId
+  if (statusType === 'interrupted' || isTerminalProtocolToken(statusType)) {
+    return !turnId || !currentTurnId || turnId === currentTurnId ? '' : currentTurnId
+  }
+  return currentTurnId
+}
+
 function turnHasAssistantResult(turn: Record<string, unknown> | null): boolean {
   const items = Array.isArray(turn?.items) ? turn.items : []
   return items.some((item) => {
@@ -8486,12 +8508,25 @@ class AppServerProcess {
     if (sanitizedNotification.method === 'turn/started') {
       this.activeTurnCount += 1
       const turnId = extractTurnIdFromNotificationParams(sanitizedNotification.params)
-      if (nThreadId && turnId) this.activeTurnIdByThreadId.set(nThreadId, turnId)
+      if (nThreadId) {
+        const activeTurnId = reconcileRuntimeActiveTurnId({
+          currentTurnId: this.activeTurnIdByThreadId.get(nThreadId) ?? '',
+          method: sanitizedNotification.method,
+          turnId,
+        })
+        if (activeTurnId) this.activeTurnIdByThreadId.set(nThreadId, activeTurnId)
+      }
     } else if (sanitizedNotification.method === 'turn/completed') {
       this.activeTurnCount = Math.max(0, this.activeTurnCount - 1)
       const turnId = extractTurnIdFromNotificationParams(sanitizedNotification.params)
-      if (nThreadId && (!turnId || this.activeTurnIdByThreadId.get(nThreadId) === turnId)) {
-        this.activeTurnIdByThreadId.delete(nThreadId)
+      if (nThreadId) {
+        const activeTurnId = reconcileRuntimeActiveTurnId({
+          currentTurnId: this.activeTurnIdByThreadId.get(nThreadId) ?? '',
+          method: sanitizedNotification.method,
+          turnId,
+        })
+        if (activeTurnId) this.activeTurnIdByThreadId.set(nThreadId, activeTurnId)
+        else this.activeTurnIdByThreadId.delete(nThreadId)
       }
       this.trySelfHeal()
     } else if (sanitizedNotification.method === 'thread/status/changed' && nThreadId) {
@@ -8499,11 +8534,14 @@ class AppServerProcess {
       const status = asRecord(params?.status)
       const statusType = readProtocolToken(status?.type ?? params?.status)
       const turnId = extractTurnIdFromNotificationParams(sanitizedNotification.params)
-      if (isRunningProtocolToken(statusType) && turnId) {
-        this.activeTurnIdByThreadId.set(nThreadId, turnId)
-      } else if (statusType === 'idle' || statusType === 'interrupted' || isTerminalProtocolToken(statusType)) {
-        this.activeTurnIdByThreadId.delete(nThreadId)
-      }
+      const activeTurnId = reconcileRuntimeActiveTurnId({
+        currentTurnId: this.activeTurnIdByThreadId.get(nThreadId) ?? '',
+        method: sanitizedNotification.method,
+        statusType,
+        turnId,
+      })
+      if (activeTurnId) this.activeTurnIdByThreadId.set(nThreadId, activeTurnId)
+      else this.activeTurnIdByThreadId.delete(nThreadId)
     }
     for (const listener of this.notificationListeners) {
       listener(sanitizedNotification)

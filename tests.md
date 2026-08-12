@@ -8342,7 +8342,7 @@ Markdown files opened through the local editor expose a preview button that rend
 - History navigation and background reconciliation use `thread/read`; they never call `thread/resume` or acquire a runtime writer.
 - Only write paths resume the thread, preserving the user's explicit model/provider selection.
 - Cache-first navigation returns immediately and refreshes in the background; dirty or version-changed state cannot be hidden by the recent-load reuse window.
-- Closing Vite disposes the shared bridge and all provider runtimes instead of leaving an app-server process attached.
+- A Vite HTTP-server restart keeps the process-level shared bridge alive so an active turn is not interrupted; final Node process exit still disposes all provider runtimes.
 
 #### Performance Audit
 - Opening a cached thread remains synchronous while exactly one forced `thread/read` refresh runs in the background.
@@ -8355,3 +8355,31 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - Stop the disposable CLI/UI clients. No thread data is modified by the read-only verification steps.
+
+### Reliability: Live activity and active turns survive transient idle and Vite restart
+
+#### Prerequisites
+- Run Codex UI in development mode with a thread capable of executing a multi-step task.
+- Keep the browser open on that thread.
+
+#### Steps
+1. Start a turn and confirm the live overlay initially shows `Thinking`.
+2. While the same turn remains active, deliver a `thread/status/changed` notification with `status.type=idle` and the current turn id, followed by reasoning, command, and assistant-message item events.
+3. Confirm the overlay progresses through `Thinking`, `Running command`, and `Writing response` instead of disappearing after the idle notification.
+4. Trigger a Vite restart by editing a server-side module imported by the development configuration while a turn is active.
+5. Reconnect the browser and let the turn finish.
+6. Run `pnpm exec vitest run src/composables/useDesktopState.test.ts` and `pnpm exec vue-tsc --noEmit`.
+
+#### Expected Results
+- An ambiguous idle status requests reconciliation but does not create irreversible terminal evidence for an active turn.
+- `turn/completed`, explicit completed/interrupted/failed status, or a final non-retryable error still ends the matching turn.
+- Vite closes the old WebSocket server during restart without disposing the process-level bridge or killing its app-server children.
+- A real Node process exit still runs the shared bridge cleanup hook.
+
+#### Performance Audit
+- The fix adds no timer, polling loop, request, rollout read, or per-delta allocation.
+- Keeping the existing runtime across a Vite restart avoids a replacement app-server spawn and duplicate hydration requests.
+- The isolated post-restart profile reports no warnings, 36.9 KiB total API payload, `thread/read=0`, and `thread/resume=0`; both app-server PIDs remain unchanged across the Vite restart.
+
+#### Rollback/Cleanup
+- Stop the development server after verification. No repository or thread data cleanup is required.

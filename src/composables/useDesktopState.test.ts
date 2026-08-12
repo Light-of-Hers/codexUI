@@ -3159,6 +3159,78 @@ describe('live turn rendering', () => {
     expect(state.selectedLiveOverlay.value).toBeNull()
   })
 
+  it('keeps live activity visible across an idle status until the turn explicitly completes', async () => {
+    const { state, notify } = await createLiveStateHarness()
+
+    notify(notification('turn/started', {
+      threadId: 'thread-a',
+      turn: { id: 'turn-1', threadId: 'thread-a', startedAt: '2026-05-23T00:00:00.000Z' },
+    }))
+    expect(state.selectedLiveOverlay.value?.activityLabel).toBe('Thinking')
+
+    notify(notification('thread/status/changed', {
+      threadId: 'thread-a',
+      status: { type: 'idle', turnId: 'turn-1' },
+    }))
+    expect(state.selectedThreadInProgress.value).toBe(true)
+    expect(state.selectedLiveOverlay.value?.activityLabel).toBe('Thinking')
+
+    notify(notification('item/started', {
+      threadId: 'thread-a',
+      turnId: 'turn-1',
+      item: { id: 'command-1', type: 'commandExecution', command: 'pnpm test', cwd: '/tmp/project' },
+    }))
+    expect(state.selectedLiveOverlay.value?.activityLabel).toBe('Running command')
+
+    notify(notification('item/reasoning/textDelta', {
+      threadId: 'thread-a',
+      turnId: 'turn-1',
+      itemId: 'reason-1',
+      delta: 'checking the result',
+    }))
+    expect(state.selectedLiveOverlay.value?.activityLabel).toBe('Thinking')
+
+    notify(notification('item/agentMessage/delta', {
+      threadId: 'thread-a',
+      turnId: 'turn-1',
+      itemId: 'agent-1',
+      delta: 'Done.',
+    }))
+    expect(state.selectedLiveOverlay.value?.activityLabel).toBe('Writing response')
+
+    notify(notification('turn/completed', {
+      threadId: 'thread-a',
+      turn: { id: 'turn-1', threadId: 'thread-a', status: 'completed' },
+    }))
+    expect(state.selectedThreadInProgress.value).toBe(false)
+    expect(state.selectedLiveOverlay.value).toBeNull()
+  })
+
+  it('keeps Thinking visible when running and idle status changes omit the turn id', async () => {
+    const { state, notify } = await createLiveStateHarness()
+
+    notify(notification('thread/status/changed', {
+      threadId: 'thread-a',
+      status: { type: 'running' },
+    }))
+    expect(state.selectedThreadInProgress.value).toBe(true)
+    expect(state.selectedLiveOverlay.value?.activityLabel).toBe('Thinking')
+
+    notify(notification('thread/status/changed', {
+      threadId: 'thread-a',
+      status: { type: 'idle' },
+    }))
+    expect(state.selectedThreadInProgress.value).toBe(true)
+    expect(state.selectedLiveOverlay.value?.activityLabel).toBe('Thinking')
+
+    notify(notification('item/agentMessage/delta', {
+      threadId: 'thread-a',
+      itemId: 'agent-1',
+      delta: 'Still running.',
+    }))
+    expect(state.selectedLiveOverlay.value?.activityLabel).toBe('Writing response')
+  })
+
   it('ignores stale terminal notifications after a newer turn has started', async () => {
     const { state, notify } = await createLiveStateHarness()
 

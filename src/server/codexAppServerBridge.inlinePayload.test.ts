@@ -20,6 +20,7 @@ import {
   mergeSessionSkillInputsIntoTurns,
   parseAutomationToml,
   persistTurnStartModelProviderInCollaborationMode,
+  reconcileRuntimeActiveTurnId,
   rewriteOpenAiThreadModelProvider,
   reconcileStaleThreadStatusFromSession,
   sanitizeThreadTurnsInlinePayloads,
@@ -41,6 +42,42 @@ describe('paginated thread compatibility errors', () => {
     ))).toBe(true)
     expect(isPaginatedThreadReadError(new Error('list_turns is not supported yet'))).toBe(true)
     expect(isPaginatedThreadReadError(new Error('thread not found'))).toBe(false)
+  })
+})
+
+describe('runtime active turn reconciliation', () => {
+  it('preserves an active turn across ambiguous idle status changes', () => {
+    expect(reconcileRuntimeActiveTurnId({
+      currentTurnId: 'turn-1',
+      method: 'thread/status/changed',
+      statusType: 'idle',
+      turnId: 'turn-1',
+    })).toBe('turn-1')
+  })
+
+  it('clears only matching completion or explicit terminal status', () => {
+    expect(reconcileRuntimeActiveTurnId({
+      currentTurnId: 'turn-new',
+      method: 'turn/completed',
+      turnId: 'turn-old',
+    })).toBe('turn-new')
+    expect(reconcileRuntimeActiveTurnId({
+      currentTurnId: 'turn-new',
+      method: 'turn/completed',
+      turnId: 'turn-new',
+    })).toBe('')
+    expect(reconcileRuntimeActiveTurnId({
+      currentTurnId: 'turn-new',
+      method: 'thread/status/changed',
+      statusType: 'interrupted',
+      turnId: 'turn-old',
+    })).toBe('turn-new')
+    expect(reconcileRuntimeActiveTurnId({
+      currentTurnId: 'turn-new',
+      method: 'thread/status/changed',
+      statusType: 'interrupted',
+      turnId: 'turn-new',
+    })).toBe('')
   })
 })
 

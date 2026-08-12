@@ -4859,6 +4859,10 @@ export function useDesktopState() {
     return value === 'idle' || value === 'completed' || value === 'interrupted' || value === 'failed'
   }
 
+  function isExplicitTerminalStatusType(value: string): boolean {
+    return value === 'completed' || value === 'interrupted' || value === 'failed'
+  }
+
   function readStatusChangeTurnId(params: Record<string, unknown>): string {
     const status = asRecord(params.status)
     const thread = asRecord(params.thread)
@@ -5585,13 +5589,21 @@ export function useDesktopState() {
         }
       } else if (isIdleStatusType(statusChange.statusType)) {
         if (isTerminalUpdateForActiveTurn(statusChange.threadId, statusChange.turnId)) {
-          markTerminalTurnForThread(
-            statusChange.threadId,
-            statusChange.turnId || activeTurnIdByThreadId.value[statusChange.threadId] || '',
-          )
-          clearActiveTurnForThread(statusChange.threadId)
-          setTurnActivityForThread(statusChange.threadId, null)
-          setTurnErrorForThread(statusChange.threadId, null)
+          const activeTurnId = activeTurnIdByThreadId.value[statusChange.threadId]?.trim() ?? ''
+          const hasActiveTurnEvidence = Boolean(activeTurnId) || inProgressById.value[statusChange.threadId] === true
+          const isAmbiguousIdleForActiveTurn = statusChange.statusType === 'idle' && hasActiveTurnEvidence
+          const isRetryPause = turnErrorByThreadId.value[statusChange.threadId]?.transient === true
+          if (!isAmbiguousIdleForActiveTurn || isRetryPause) {
+            if (isExplicitTerminalStatusType(statusChange.statusType)) {
+              markTerminalTurnForThread(
+                statusChange.threadId,
+                statusChange.turnId || activeTurnId,
+              )
+            }
+            clearActiveTurnForThread(statusChange.threadId)
+            setTurnActivityForThread(statusChange.threadId, null)
+            setTurnErrorForThread(statusChange.threadId, null)
+          }
           pendingThreadMessageRefresh.add(statusChange.threadId)
           pendingThreadsRefresh = true
         }
