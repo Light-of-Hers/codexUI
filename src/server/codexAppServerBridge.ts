@@ -4045,6 +4045,235 @@ function readJavaScriptObjectStringProperty(objectSource: string, propertyName: 
   return null
 }
 
+function readJavaScriptObjectIdentifierProperty(objectSource: string, propertyName: string): string | null {
+  let index = skipJavaScriptWhitespace(objectSource, 0)
+  if (objectSource[index] !== '{') return null
+  index += 1
+
+  while (index < objectSource.length) {
+    index = skipJavaScriptWhitespace(objectSource, index)
+    if (objectSource[index] === '}') return null
+
+    let key = ''
+    const char = objectSource[index]
+    if (char === '"' || char === "'" || char === '`') {
+      const literal = readJavaScriptStringLiteral(objectSource, index)
+      if (!literal) return null
+      key = literal.value
+      index = literal.nextIndex
+    } else {
+      const keyMatch = objectSource.slice(index).match(/^[A-Za-z_$][\w$]*/u)
+      if (!keyMatch) return null
+      key = keyMatch[0]
+      index += key.length
+    }
+
+    index = skipJavaScriptWhitespace(objectSource, index)
+    if (objectSource[index] !== ':') {
+      if (key === propertyName && (objectSource[index] === ',' || objectSource[index] === '}')) {
+        return key
+      }
+      if (objectSource[index] === ',') {
+        index += 1
+        continue
+      }
+      return null
+    }
+
+    index = skipJavaScriptWhitespace(objectSource, index + 1)
+    if (key === propertyName) {
+      const identifier = objectSource.slice(index).match(/^[A-Za-z_$][\w$]*/u)?.[0] ?? ''
+      if (!identifier) return null
+      const nextIndex = skipJavaScriptWhitespace(objectSource, index + identifier.length)
+      return objectSource[nextIndex] === ',' || objectSource[nextIndex] === '}' ? identifier : null
+    }
+
+    index = skipJavaScriptObjectValue(objectSource, index)
+    if (objectSource[index] === ',') {
+      index += 1
+      continue
+    }
+    if (objectSource[index] === '}') return null
+  }
+
+  return null
+}
+
+function readJavaScriptDelimitedLiteral(
+  source: string,
+  startIndex: number,
+  opening: '[' | '{',
+  closing: ']' | '}',
+): { value: string, nextIndex: number } | null {
+  if (source[startIndex] !== opening) return null
+  let depth = 0
+
+  for (let index = startIndex; index < source.length; index += 1) {
+    const char = source[index]!
+    if (char === '"' || char === "'" || char === '`') {
+      const literal = readJavaScriptStringLiteral(source, index)
+      if (!literal) return null
+      index = literal.nextIndex - 1
+      continue
+    }
+    if (char === '/' && source[index + 1] === '/') {
+      const newlineIndex = source.indexOf('\n', index + 2)
+      index = newlineIndex < 0 ? source.length : newlineIndex
+      continue
+    }
+    if (char === '/' && source[index + 1] === '*') {
+      const commentEnd = source.indexOf('*/', index + 2)
+      if (commentEnd < 0) return null
+      index = commentEnd + 1
+      continue
+    }
+    if (char === opening) {
+      depth += 1
+      continue
+    }
+    if (char === closing) {
+      depth -= 1
+      if (depth === 0) return { value: source.slice(startIndex, index + 1), nextIndex: index + 1 }
+    }
+  }
+
+  return null
+}
+
+function splitJavaScriptArrayEntries(arraySource: string): string[] | null {
+  if (arraySource[0] !== '[' || arraySource.at(-1) !== ']') return null
+
+  const entries: string[] = []
+  let entryStart = 1
+  let squareDepth = 0
+  let curlyDepth = 0
+  let parenDepth = 0
+
+  for (let index = 1; index < arraySource.length - 1; index += 1) {
+    const char = arraySource[index]!
+    if (char === '"' || char === "'" || char === '`') {
+      const literal = readJavaScriptStringLiteral(arraySource, index)
+      if (!literal) return null
+      index = literal.nextIndex - 1
+      continue
+    }
+    if (char === '/' && arraySource[index + 1] === '/') {
+      const newlineIndex = arraySource.indexOf('\n', index + 2)
+      index = newlineIndex < 0 ? arraySource.length - 1 : newlineIndex
+      continue
+    }
+    if (char === '/' && arraySource[index + 1] === '*') {
+      const commentEnd = arraySource.indexOf('*/', index + 2)
+      if (commentEnd < 0) return null
+      index = commentEnd + 1
+      continue
+    }
+    if (char === '[') squareDepth += 1
+    else if (char === ']') squareDepth -= 1
+    else if (char === '{') curlyDepth += 1
+    else if (char === '}') curlyDepth -= 1
+    else if (char === '(') parenDepth += 1
+    else if (char === ')') parenDepth -= 1
+    else if (char === ',' && squareDepth === 0 && curlyDepth === 0 && parenDepth === 0) {
+      entries.push(arraySource.slice(entryStart, index).trim())
+      entryStart = index + 1
+    }
+  }
+
+  const lastEntry = arraySource.slice(entryStart, -1).trim()
+  if (lastEntry) entries.push(lastEntry)
+  return entries
+}
+
+function readJavaScriptStaticTuple(tupleSource: string): Array<string | null> | null {
+  const entries = splitJavaScriptArrayEntries(tupleSource.trim())
+  if (!entries) return null
+
+  return entries.map((entry) => {
+    const start = skipJavaScriptWhitespace(entry, 0)
+    const literal = readJavaScriptStringLiteral(entry, start)
+    if (!literal) return null
+    return skipJavaScriptWhitespace(entry, literal.nextIndex) === entry.length ? literal.value : null
+  })
+}
+
+type StaticTupleDeclaration = {
+  name: string
+  startIndex: number
+  tuples: Array<Array<string | null>>
+}
+
+function findStaticJavaScriptTupleDeclarations(input: string): StaticTupleDeclaration[] {
+  const declarations: StaticTupleDeclaration[] = []
+  const declarationPattern = /\b(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*/gu
+  let match: RegExpExecArray | null
+
+  while ((match = declarationPattern.exec(input)) !== null) {
+    const arrayStart = skipJavaScriptWhitespace(input, declarationPattern.lastIndex)
+    const arrayLiteral = readJavaScriptDelimitedLiteral(input, arrayStart, '[', ']')
+    if (!arrayLiteral) continue
+    const tupleEntries = splitJavaScriptArrayEntries(arrayLiteral.value)
+    if (!tupleEntries) continue
+    const tuples = tupleEntries
+      .map((entry) => readJavaScriptStaticTuple(entry))
+      .filter((tuple): tuple is Array<string | null> => Boolean(tuple))
+    if (tuples.length !== tupleEntries.length) continue
+    declarations.push({ name: match[1]!, startIndex: match.index, tuples })
+  }
+
+  return declarations
+}
+
+function escapedRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
+}
+
+function buildStaticMappedExecRecoveredCommands(input: string): Array<{ startIndex: number, commands: Array<{ command: string, cwd: string | null }> }> {
+  const declarations = findStaticJavaScriptTupleDeclarations(input)
+  const recovered: Array<{ startIndex: number, commands: Array<{ command: string, cwd: string | null }> }> = []
+
+  for (const declaration of declarations) {
+    const mapPattern = new RegExp(
+      `\\b${escapedRegExp(declaration.name)}\\s*\\.map\\s*\\(\\s*(?:async\\s*)?\\(\\s*\\[([^\\]]+)\\]\\s*\\)\\s*=>\\s*tools\\.exec_command\\s*\\(\\s*`,
+      'gu',
+    )
+    let mapMatch: RegExpExecArray | null
+    while ((mapMatch = mapPattern.exec(input)) !== null) {
+      if (mapMatch.index < declaration.startIndex) continue
+      const tupleNames = mapMatch[1]!
+        .split(',')
+        .map((name) => name.trim())
+        .filter((name) => /^[A-Za-z_$][\w$]*$/u.test(name))
+      const objectStart = skipJavaScriptWhitespace(input, mapPattern.lastIndex)
+      const objectLiteral = readJavaScriptDelimitedLiteral(input, objectStart, '{', '}')
+      if (!objectLiteral) continue
+
+      const commandName = readJavaScriptObjectIdentifierProperty(objectLiteral.value, 'cmd')
+      const commandIndex = commandName ? tupleNames.indexOf(commandName) : -1
+      if (commandIndex < 0) continue
+      const workdirName = readJavaScriptObjectIdentifierProperty(objectLiteral.value, 'workdir')
+        || readJavaScriptObjectIdentifierProperty(objectLiteral.value, 'cwd')
+      const workdirIndex = workdirName ? tupleNames.indexOf(workdirName) : -1
+      const literalWorkdir = readJavaScriptObjectStringProperty(objectLiteral.value, 'workdir')
+        || readJavaScriptObjectStringProperty(objectLiteral.value, 'cwd')
+
+      const commands = declaration.tuples
+        .map((tuple) => {
+          const command = tuple[commandIndex]
+          if (!command) return null
+          return {
+            command,
+            cwd: literalWorkdir || (workdirIndex >= 0 ? tuple[workdirIndex] : null),
+          }
+        })
+        .filter((command): command is { command: string, cwd: string | null } => Boolean(command))
+      if (commands.length > 0) recovered.push({ startIndex: mapMatch.index, commands })
+    }
+  }
+
+  return recovered
+}
+
 function buildCustomExecRecoveredCommands(payload: Record<string, unknown>): SessionRecoveredCommand[] {
   if (payload.name !== 'exec') return []
   const callId = readNonEmptyString(payload.call_id)
@@ -4052,8 +4281,11 @@ function buildCustomExecRecoveredCommands(payload: Record<string, unknown>): Ses
   const argumentJsons = jsonObjectsAfterMarker(input, 'tools.exec_command(')
   if (!callId || argumentJsons.length === 0) return []
 
-  const commands: Array<{ command: string; cwd: string | null }> = []
+  const commandGroups: Array<{ startIndex: number, commands: Array<{ command: string, cwd: string | null }> }> = []
+  let searchFrom = 0
   for (const argumentJson of argumentJsons) {
+    const startIndex = input.indexOf(argumentJson, searchFrom)
+    searchFrom = startIndex < 0 ? searchFrom : startIndex + argumentJson.length
     let args: Record<string, unknown> | null = null
     try {
       args = asRecord(JSON.parse(argumentJson))
@@ -4065,15 +4297,24 @@ function buildCustomExecRecoveredCommands(payload: Record<string, unknown>): Ses
     const command = readNonEmptyString(args?.cmd)
       || readJavaScriptObjectStringProperty(argumentJson, 'cmd')
     if (!command) continue
-    commands.push({
-      command,
-      cwd: readNonEmptyString(args?.workdir)
-        || readNonEmptyString(args?.cwd)
-        || readJavaScriptObjectStringProperty(argumentJson, 'workdir')
-        || readJavaScriptObjectStringProperty(argumentJson, 'cwd')
-        || null,
+    commandGroups.push({
+      startIndex: startIndex < 0 ? Number.MAX_SAFE_INTEGER : startIndex,
+      commands: [{
+        command,
+        cwd: readNonEmptyString(args?.workdir)
+          || readNonEmptyString(args?.cwd)
+          || readJavaScriptObjectStringProperty(argumentJson, 'workdir')
+          || readJavaScriptObjectStringProperty(argumentJson, 'cwd')
+          || null,
+      }],
     })
   }
+
+  commandGroups.push(...buildStaticMappedExecRecoveredCommands(input))
+  const commands = commandGroups
+    .sort((first, second) => first.startIndex - second.startIndex)
+    .flatMap((group) => group.commands)
+  if (commands.length === 0) return []
 
   return commands.map((command, index) => ({
     id: commands.length === 1 ? `session-cmd-${callId}` : `session-cmd-${callId}-${index}`,

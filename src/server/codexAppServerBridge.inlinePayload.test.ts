@@ -1160,6 +1160,63 @@ describe('thread session skill recovery', () => {
     ])
   })
 
+  it('reorders commands expanded from a static tuple array map instead of appending them', () => {
+    const result = {
+      thread: {
+        id: 'thread-static-command-map',
+        path: '/tmp/session.jsonl',
+        turns: [{
+          id: 'turn-1',
+          items: [
+            { id: 'user-1', type: 'userMessage', content: [{ type: 'text', text: 'inspect', text_elements: [] }] },
+            { id: 'agent-before', type: 'agentMessage', text: 'I will inspect the project.' },
+            { id: 'agent-after', type: 'agentMessage', text: 'The inspection is complete.' },
+            { id: 'native-first', type: 'commandExecution', command: '/bin/bash -lc "git status --short"', cwd: '/tmp/project', status: 'completed', aggregatedOutput: '', exitCode: 0 },
+            { id: 'native-second', type: 'commandExecution', command: '/bin/bash -lc "pnpm test:unit"', cwd: '/tmp/project', status: 'completed', aggregatedOutput: '', exitCode: 0 },
+            { id: 'native-third', type: 'commandExecution', command: '/bin/bash -lc "git diff --check"', cwd: '/tmp/project', status: 'completed', aggregatedOutput: '', exitCode: 0 },
+          ],
+        }],
+      },
+    }
+    const sessionLog = [
+      JSON.stringify({ type: 'turn_context', payload: { turn_id: 'turn-1' } }),
+      JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'I will inspect the project.' }] } }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'custom_tool_call',
+          name: 'exec',
+          status: 'completed',
+          call_id: 'call-static-map',
+          input: [
+            'const calls = [',
+            '  ["git status --short", 12000],',
+            '  ["pnpm test:unit", 30000],',
+            '  ["git diff --check", 12000],',
+            '];',
+            'const results = await Promise.all(calls.map(([cmd, timeout]) => tools.exec_command({ cmd, workdir: "/tmp/project", timeout })));',
+          ].join('\n'),
+        },
+      }),
+      JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'The inspection is complete.' }] } }),
+    ].join('\n')
+
+    const merged = mergeRecoveredTurnItemsIntoThreadResult(
+      result,
+      (_threadId, turns) => turns,
+      sessionLog,
+    ) as typeof result
+
+    expect(merged.thread.turns[0].items.map((item) => item.id)).toEqual([
+      'user-1',
+      'agent-before',
+      'native-first',
+      'native-second',
+      'native-third',
+      'agent-after',
+    ])
+  })
+
   it('matches shell-wrapped native commands before appending unmatched history', () => {
     const result = {
       thread: {
