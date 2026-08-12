@@ -2543,7 +2543,6 @@ const forkableTurnByAnchorId = computed<Record<string, { turnId: string; turnInd
       !isCopyableAssistantMessage(message)
       || typeof message.turnIndex !== 'number'
       || !turnId
-      || isMessageInInheritedForkHistory(message)
     ) continue
 
     const responseKey = `turn:${turnId}`
