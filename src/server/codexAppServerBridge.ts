@@ -2147,9 +2147,11 @@ export function isEmptyThreadReadError(error: unknown): boolean {
 
 export function isPaginatedThreadReadError(error: unknown): boolean {
   const message = getErrorMessage(error, '').toLowerCase()
-  return message.includes('paginated threads')
-    && message.includes('thread/read')
-    && message.includes('includeturns')
+  return (
+    message.includes('paginated threads')
+      && message.includes('thread/read')
+      && message.includes('includeturns')
+  ) || message.includes('list_turns is not supported')
 }
 
 function isNoRolloutFoundError(error: unknown): boolean {

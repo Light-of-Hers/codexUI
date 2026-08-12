@@ -13,6 +13,7 @@ import {
   mergeSessionUserPromptAdditionalContextsIntoTurns,
   createCodexBridgeMiddleware,
   getThreadTurnWindowBounds,
+  isPaginatedThreadReadError,
   mergeExplicitModelStateIntoThreadResult,
   mergeRecoveredTurnItemsIntoThreadResult,
   mergeSessionModelStateIntoThreadResult,
@@ -32,6 +33,16 @@ const pngDataUrl = `data:image/png;base64,${pngBase64}`
 const gifBase64 = 'R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=='
 const jpegBase64 = '/9j/4AAQSkZJRgABAQAAAQABAAD/2w=='
 const webpBase64 = 'UklGRiIAAABXRUJQVlA4IC4AAAAwAQCdASoBAAEAAQAcJaQAA3AA/vuUAAA='
+
+describe('paginated thread compatibility errors', () => {
+  it('recognizes both legacy and current app-server capability errors', () => {
+    expect(isPaginatedThreadReadError(new Error(
+      'thread/read includeTurns is unsupported for paginated threads',
+    ))).toBe(true)
+    expect(isPaginatedThreadReadError(new Error('list_turns is not supported yet'))).toBe(true)
+    expect(isPaginatedThreadReadError(new Error('thread not found'))).toBe(false)
+  })
+})
 
 afterEach(() => {
   vi.useRealTimers()
