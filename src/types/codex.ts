@@ -73,6 +73,7 @@ export type UiThread = {
   forkedFromId?: string
   forkPointOrdinal?: number | null
   forkPointByteOffset?: number | null
+  activeTurnId?: string
   unread: boolean
   inProgress: boolean
   pendingRequestState?: UiPendingRequestState | null

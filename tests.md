@@ -128,11 +128,13 @@ This file tracks manual regression and feature verification steps.
 11. With notification replay or debug tooling, deliver an `idle`, `turn/completed`, or non-retryable `error` notification for an older turn after a newer turn has started; confirm the newer turn remains running.
 12. During a reconnect, confirm `error` with `willRetry: true` keeps the active turn in the running state.
 13. While a command in the active turn finishes, trigger a `thread/read` refresh before the agent starts its next command; confirm the stop button and sidebar running indicator stay visible.
-14. Repeat the same flow in dark theme.
+14. Switch from an idle session to a session already marked running in the sidebar; before the detail request finishes, confirm the composer stop button and sidebar running indicator remain visible.
+15. Repeat the same flow in dark theme.
 
 #### Expected Results
 - If `thread/read` briefly lags behind `turn/start`, the UI keeps the thread marked as running instead of reverting to idle.
 - A detail snapshot can clear a cached active turn only when it explicitly marks that exact turn `completed`, `interrupted`, or `failed`; a missing running marker is not treated as an idle signal.
+- A positive `thread/list` running snapshot is retained while switching sessions, so the initial selected-session frame cannot regress to idle before the detail refresh confirms the live turn.
 - If a later detail refresh discovers an active turn while the local state was idle, the composer stop button, sidebar running indicator, and `Thinking` overlay all appear.
 - If `turn/started` is missed but a running thread status notification arrives, the UI still marks the thread as running and uses the notification turn id for stop/steer.
 - The composer stop button is driven by the selected thread's local running state, so it appears even when the selected session has not yet been merged into the sidebar list.

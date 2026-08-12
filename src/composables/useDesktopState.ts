@@ -1345,6 +1345,7 @@ function areThreadFieldsEqual(first: UiThread, second: UiThread): boolean {
     first.forkedFromId === second.forkedFromId &&
     first.forkPointOrdinal === second.forkPointOrdinal &&
     first.forkPointByteOffset === second.forkPointByteOffset &&
+    first.activeTurnId === second.activeTurnId &&
     first.unread === second.unread &&
     first.inProgress === second.inProgress &&
     first.pendingRequestState === second.pendingRequestState
@@ -5906,7 +5907,42 @@ export function useDesktopState() {
     }
 
     const orderedGroups = orderGroupsByProjectOrder(visibleGroups, projectOrder.value)
-    markServerListedThreads(new Set(flattenThreads(orderedGroups).map((thread) => thread.id)))
+    const listedThreads = flattenThreads(orderedGroups)
+    markServerListedThreads(new Set(listedThreads.map((thread) => thread.id)))
+
+    // thread/list can be the first indication that a session is running when a
+    // user switches to it. Keep that positive server signal instead of letting
+    // the empty local live-state map render a transient idle frame before the
+    // following thread/read or thread/resume response arrives.
+    let nextInProgressById = inProgressById.value
+    let nextActiveTurnIds = activeTurnIdByThreadId.value
+    for (const thread of listedThreads) {
+      if (thread.inProgress !== true) continue
+      ensureActiveTurnActivity(thread.id)
+      const activeTurnId = thread.activeTurnId?.trim() ?? ''
+      // Notifications are more granular than thread/list. Let the list fill a
+      // missing turn id during startup or a switch, but never replace a newer
+      // id already observed from the live event stream.
+      if (activeTurnId && !nextActiveTurnIds[thread.id]) {
+        nextActiveTurnIds = {
+          ...nextActiveTurnIds,
+          [thread.id]: activeTurnId,
+        }
+      }
+      if (nextInProgressById[thread.id] !== true) {
+        nextInProgressById = {
+          ...nextInProgressById,
+          [thread.id]: true,
+        }
+      }
+    }
+    if (nextInProgressById !== inProgressById.value) {
+      inProgressById.value = nextInProgressById
+    }
+    if (nextActiveTurnIds !== activeTurnIdByThreadId.value) {
+      activeTurnIdByThreadId.value = nextActiveTurnIds
+    }
+
     const mergedWithInProgress = mergeIncomingWithLocalInProgressThreads(
       sourceGroups.value,
       orderedGroups,

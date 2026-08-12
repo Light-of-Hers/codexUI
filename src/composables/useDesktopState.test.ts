@@ -2168,6 +2168,68 @@ describe('active turn state reconciliation', () => {
     return state
   }
 
+  it('keeps a session marked running by thread/list active while switching to it', async () => {
+    installTestWindow()
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true })) as never)
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({
+      groups: [{
+        projectName: 'project',
+        threads: [
+          thread('thread-a', '/tmp/project'),
+          { ...thread('thread-b', '/tmp/project'), inProgress: true, activeTurnId: 'turn-b' },
+        ],
+      }],
+      nextCursor: null,
+    })
+    gatewayMocks.resumeThread.mockImplementation(
+      () => new Promise(() => {}),
+    )
+
+    const state = useDesktopState()
+    await state.refreshAll({ includeSelectedThreadMessages: false, refreshAncillary: false })
+
+    expect(state.projectGroups.value[0]?.threads.find((item) => item.id === 'thread-b')?.inProgress).toBe(true)
+
+    void state.selectThread('thread-b')
+
+    expect(state.selectedThreadInProgress.value).toBe(true)
+    expect(state.selectedLiveOverlay.value?.activityLabel).toBe('Thinking')
+  })
+
+  it('clears a list-reported active turn when detail marks that same turn terminal', async () => {
+    installTestWindow()
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true })) as never)
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({
+      groups: [{
+        projectName: 'project',
+        threads: [
+          thread('thread-a', '/tmp/project'),
+          { ...thread('thread-b', '/tmp/project'), inProgress: true, activeTurnId: 'turn-b' },
+        ],
+      }],
+      nextCursor: null,
+    })
+    gatewayMocks.resumeThread.mockResolvedValue({
+      model: '',
+      modelProvider: '',
+      reasoningEffort: '',
+      messages: [],
+      inProgress: false,
+      activeTurnId: '',
+      terminalTurnIds: ['turn-b'],
+      hasMoreOlder: false,
+      turnIndexByTurnId: { 'turn-b': 0 },
+    })
+
+    const state = useDesktopState()
+    await state.refreshAll({ includeSelectedThreadMessages: false, refreshAncillary: false })
+    expect(state.projectGroups.value[0]?.threads.find((item) => item.id === 'thread-b')?.inProgress).toBe(true)
+
+    await state.loadMessages('thread-b', { force: true, silent: true })
+
+    expect(state.projectGroups.value[0]?.threads.find((item) => item.id === 'thread-b')?.inProgress).toBe(false)
+  })
+
   it('restores running UI state when the send recheck finds an active turn', async () => {
     const state = await createThreadHarness()
     gatewayMocks.getThreadSummary.mockResolvedValue({

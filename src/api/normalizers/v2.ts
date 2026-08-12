@@ -793,6 +793,23 @@ function isTurnInProgress(turn: Turn | null | undefined): boolean {
   return isInProgressStatus(turn?.status)
 }
 
+function readActiveTurnIdFromThread(thread: Thread): string {
+  const rawThread = thread as Record<string, unknown>
+  if (isInProgressStatus(rawThread.status)) {
+    const statusTurnId = readStatusTurnId(rawThread.status)
+    if (statusTurnId) return statusTurnId
+  }
+
+  const turns = Array.isArray(thread.turns) ? thread.turns : []
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const turn = turns[index]
+    if (isTurnInProgress(turn) && typeof turn.id === 'string' && turn.id.trim().length > 0) {
+      return turn.id.trim()
+    }
+  }
+  return ''
+}
+
 function readThreadInProgress(summary: Thread): boolean {
   const rawSummary = summary as Record<string, unknown>
   if (rawSummary.inProgress === true) return true
@@ -828,6 +845,7 @@ function toUiThread(summary: Thread): UiThread {
     forkedFromId: readString(rawSummary.forkedFromId).trim() || undefined,
     forkPointOrdinal: readNonNegativeSafeInteger(rawSummary.forkPointOrdinal),
     forkPointByteOffset: readNonNegativeSafeInteger(rawSummary.forkPointByteOffset),
+    activeTurnId: readActiveTurnIdFromThread(summary) || undefined,
     unread: false,
     inProgress: readThreadInProgress(summary),
   }
@@ -889,26 +907,18 @@ export function readThreadInProgressFromResponse(payload: ThreadReadResponse): b
 }
 
 export function readActiveTurnIdFromResponse(payload: ThreadReadResponse): string {
-  const rawThread = payload.thread as unknown as Record<string, unknown>
-  if (isInProgressStatus(rawThread.status)) {
-    const statusTurnId = readStatusTurnId(rawThread.status)
-    if (statusTurnId) return statusTurnId
-  }
-
-  const turns = Array.isArray(payload.thread.turns) ? payload.thread.turns : []
-  for (let index = turns.length - 1; index >= 0; index -= 1) {
-    const turn = turns[index]
-    if (isTurnInProgress(turn) && typeof turn.id === 'string' && turn.id.trim().length > 0) {
-      return turn.id.trim()
-    }
-  }
-  return ''
+  return readActiveTurnIdFromThread(payload.thread)
 }
 
 export function readTerminalTurnIdsFromResponse(payload: ThreadReadResponse): string[] {
   const turns = Array.isArray(payload.thread.turns) ? payload.thread.turns : []
-  return turns.flatMap((turn) => {
+  const terminalTurnIds = turns.flatMap((turn) => {
     const turnId = typeof turn?.id === 'string' ? turn.id.trim() : ''
     return turnId && isTerminalStatus(turn.status) ? [turnId] : []
   })
+  const rawThread = payload.thread as unknown as Record<string, unknown>
+  const statusTurnId = isTerminalStatus(rawThread.status) ? readStatusTurnId(rawThread.status) : ''
+  return statusTurnId && !terminalTurnIds.includes(statusTurnId)
+    ? [...terminalTurnIds, statusTurnId]
+    : terminalTurnIds
 }

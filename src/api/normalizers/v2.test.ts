@@ -82,6 +82,7 @@ describe('normalizeThreadGroupsV2', () => {
     const groups = normalizeThreadGroupsV2(payload)
 
     expect(groups[0]?.threads[0]?.inProgress).toBe(true)
+    expect(groups[0]?.threads[0]?.activeTurnId).toBe('turn-active')
   })
 
   it('preserves fork lineage injected into thread-list summaries', () => {
@@ -165,6 +166,27 @@ describe('thread active turn normalization', () => {
     } as ThreadReadResponse
 
     expect(readTerminalTurnIdsFromResponse(payload)).toEqual(['turn-complete', 'turn-failed'])
+  })
+
+  it('reads a terminal turn id from the thread status when the turn list is stale', () => {
+    const payload = {
+      thread: {
+        id: 'thread-1',
+        preview: 'Just completed',
+        modelProvider: 'openai',
+        createdAt: 1,
+        updatedAt: 2,
+        path: null,
+        cwd: '/tmp/project',
+        cliVersion: 'test',
+        source: 'appServer',
+        gitInfo: null,
+        status: { type: 'completed', turnId: 'turn-current' },
+        turns: [],
+      },
+    } as ThreadReadResponse
+
+    expect(readTerminalTurnIdsFromResponse(payload)).toEqual(['turn-current'])
   })
 })
 
