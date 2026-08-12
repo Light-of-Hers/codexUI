@@ -24,8 +24,9 @@
     "cli"
   ],
   "engines": {
-    "node": ">=18"
+    "node": "^20.0.0 || ^22.0.0"
   },
+  "packageManager": "pnpm@11.10.0",
   "bin": {
     "codexapp": "dist-cli/index.js",
     "codexui": "dist-cli/index.js"
@@ -42,6 +43,8 @@
     "build:frontend": "vue-tsc --noEmit && vite build",
     "build:cli": "tsup",
     "build": "pnpm run build:frontend && pnpm run build:cli",
+    "check:bundle": "node scripts/check-bundle-budget.cjs",
+    "ci": "pnpm run test:unit && pnpm run build && pnpm run check:bundle",
     "postinstall": "node scripts/fix-pty-native-build.cjs",
     "test:unit": "vitest run",
     "preview": "vite preview",
