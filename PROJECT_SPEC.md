@@ -31,7 +31,7 @@
 │  └─────────────────────────────────────┼─────────────┘ │
 │                                        │ stdin/stdout   │
 │  ┌─────────────────────────────────────┼─────────────┐ │
-│  │ codex app-server (child process)    │             │ │
+│  │ Provider-aware app-server pool      │             │ │
 │  │ JSON-RPC over newline-delimited I/O │             │ │
 │  └───────────────────────────────────────────────────┘ │
 └──────────────────────────────────────────────────────────┘
@@ -41,8 +41,10 @@
 
 - **No Pinia / Vuex**: All state lives in a single composable (`useDesktopState`). Reactive refs + computed properties manage thread, message, model, and UI state.
 - **Realtime transport**: Client prefers **WebSocket** on `/codex-api/ws` for server-to-client notifications, with automatic fallback to **SSE** (`EventSource`) on `/codex-api/events`. Client-to-server RPC stays on HTTP POST.
-- **Single child process**: The Node server spawns exactly one `codex app-server` child process and multiplexes all RPC calls through it via stdin/stdout.
-- **Shared bridge state**: A global singleton (`AppServerProcess` + `MethodCatalog`) survives Vite HMR reloads during development.
+- **Provider-aware runtime pool**: Threads are routed to the correct `codex app-server` runtime while preserving fork/archive ownership across providers.
+- **Shared bridge state**: A global singleton (`AppServerRuntimePool`) survives Vite HMR reloads during development. Thread-keyed state is bounded and released on archive, runtime exit, and disposal.
+- **Shared rollout snapshots**: Rollout consumers reuse a signature-keyed, bounded snapshot rather than repeatedly reading and parsing the same JSONL file.
+- **Shared local routes**: Development and production mount the same local browse/editor/preview middleware and enforce the same request limits and error contract.
 
 ## Tech Stack
 
@@ -56,7 +58,7 @@
 | Type checking | TypeScript 5, vue-tsc 2 | ^5.7 / ^2.2 |
 | Server | Express 5 | ^5.1 |
 | CLI framework | Commander 13 | ^13.1 |
-| Runtime | Node.js >= 18 | — |
+| Runtime | Node.js 20 or 22 | — |
 
 ## Project Structure
 
@@ -86,6 +88,7 @@ codex-web-local/
 │   ├── server/                       # Node.js server (production + dev)
 │   │   ├── codexAppServerBridge.ts   # Spawns/proxies codex app-server
 │   │   ├── httpServer.ts             # Express app for production
+│   │   ├── localHttpRoutes.ts        # Shared browse/editor/preview routes
 │   │   ├── authMiddleware.ts         # Password-based auth
 │   │   └── password.ts              # Password generation + comparison
 │   ├── cli/
@@ -114,9 +117,9 @@ codex-web-local/
 
 | Feature | Description |
 |---|---|
-| Thread management | List, create, archive, select threads; resume inactive threads on demand |
-| Chat conversation | Send messages, view full conversation history with user/assistant/system roles |
-| Real-time streaming | SSE-based live updates for agent messages, reasoning text, and turn lifecycle |
+| Thread management | List, create, archive, fork, rollback, rename, pin, and select threads; resume inactive threads on demand |
+| Chat conversation | Send, queue, and steer messages; browse paginated and fork-aware conversation history |
+| Real-time streaming | WebSocket-first live updates for messages, reasoning, commands, file changes, plans, token usage, and turn lifecycle; SSE fallback |
 | Model selection | Dropdown to choose from available models (`model/list` RPC) |
 | Reasoning effort | Configurable reasoning effort level (none → xhigh) |
 | Turn interrupt | Stop in-progress agent turns |
@@ -131,6 +134,10 @@ codex-web-local/
 | New thread creation | "Let's build" hero view with folder selector |
 | Live overlay | Reasoning text, activity labels, and error messages during agent work |
 | Turn duration display | "Worked for Xm Ys" summary after turn completion |
+| Rich transcript | Markdown, syntax highlighting, math, Mermaid, annotations, command output, file changes, and MCP progress |
+| Skills and apps | Browse skills, inspect skill details, and use app integrations from the composer |
+| Account and configuration | Account, rate-limit, model-provider, collaboration-mode, and configuration controls |
+| Review and Git tooling | Start reviews and inspect local Git diffs and file history |
 
 ### Not Yet Implemented
 
@@ -138,63 +145,11 @@ Based on the app-server protocol (`documentation/APP_SERVER_DOCUMENTATION.md`), 
 
 | Feature | Relevant RPC Methods |
 |---|---|
-| Thread forking | `thread/fork` |
-| Thread rollback | `thread/rollback` |
-| Thread naming | `thread/name/set` |
 | Thread unarchiving | `thread/unarchive` |
-| Context compaction | `thread/compact/start` |
-| Code review | `review/start` |
-| Skills management | `skills/list`, `skills/remote/read`, `skills/remote/write`, `skills/config/write` |
-| Apps management | `app/list` |
-| MCP server status | `mcpServerStatus/list`, `config/mcpServer/reload` |
-| Account management | `account/login/start`, `account/logout`, `account/read`, `account/rateLimits/read` |
-| Configuration UI | `config/read`, `config/value/write`, `config/batchWrite`, `configRequirements/read` |
+| Manual context compaction | `thread/compact/start` |
 | Command execution | `command/exec` |
-| Git diff view | `gitDiffToRemote` |
-| Fuzzy file search | `fuzzyFileSearch`, session-based search |
-| Feedback upload | `feedback/upload` |
-| Collaboration modes | `collaborationMode/list` |
 | Experimental features | `experimentalFeature/list` |
-| Turn diff view | `turn/diff/updated` notification |
-| Turn plan view | `turn/plan/updated` notification |
-| Token usage display | `thread/tokenUsage/updated` notification |
-| Command output streaming | `item/commandExecution/outputDelta` notification |
-| File change output | `item/fileChange/outputDelta` notification |
-| MCP tool call progress | `item/mcpToolCall/progress` notification |
 | Terminal interaction | `item/commandExecution/terminalInteraction` notification |
-
-### Planned: Thread Forking
-
-Forking creates a new thread from an existing thread so users can branch the conversation without mutating the original.
-
-#### UX Requirements
-
-- Add a `Fork thread` action in thread row controls and thread header controls.
-- On success, navigate to the new forked thread immediately.
-- Show lineage metadata in the forked thread header:
-  - `Forked from: <source thread title or id>`
-- Preserve lineage information in thread list tooltips/details where available.
-
-#### RPC Contract
-
-- Method: `thread/fork`
-- Primary input: `threadId` of the source thread (preferred over `path`)
-- Optional overrides: `cwd`, `model`, `approvalPolicy`, `sandbox`, `baseInstructions`, `developerInstructions`
-- Expected response: `ThreadForkResponse` with a new `thread.id`
-
-#### State + Routing Behavior
-
-- Insert the new thread into `sourceGroups` / `projectGroups` immediately after fork returns.
-- Set `selectedThreadId` to the new forked thread id.
-- Route to `/thread/:threadId` for the new thread.
-- Keep original thread unchanged and still selectable.
-
-#### Acceptance Criteria
-
-- User can fork from any existing thread.
-- Forked thread has a different id from the source thread.
-- Source thread history remains intact.
-- UI displays the fork origin for the selected forked thread.
 
 ## Communication Protocol
 
@@ -230,10 +185,19 @@ Communication uses newline-delimited JSON-RPC 2.0 over stdin/stdout of the `code
 | `thread/start` | Create a new thread |
 | `thread/resume` | Resume an inactive thread |
 | `thread/archive` | Archive a thread |
+| `thread/fork` | Fork a thread while preserving lineage |
+| `thread/rollback` | Restore a thread to an earlier user turn |
+| `thread/name/set` | Rename a thread |
 | `turn/start` | Send a user message and start agent turn |
 | `turn/interrupt` | Interrupt an in-progress turn |
 | `model/list` | List available models |
 | `config/read` | Read current model and reasoning effort |
+| `config/batchWrite` | Persist configuration changes |
+| `skills/list` | Discover local and remote skills |
+| `collaborationMode/list` | Discover collaboration modes |
+| `account/read` | Load account state and authentication requirements |
+| `account/rateLimits/read` | Load current rate-limit windows |
+| `review/start` | Start a code review turn |
 
 ### Notifications Handled by the Frontend
 
@@ -246,6 +210,13 @@ Communication uses newline-delimited JSON-RPC 2.0 over stdin/stdout of the `code
 | `item/agentMessage/delta` | Append to live agent message text |
 | `item/reasoning/summaryTextDelta` | Append to live reasoning overlay |
 | `item/reasoning/summaryPartAdded` | Insert reasoning section break |
+| `item/commandExecution/outputDelta` | Append frame-batched command output |
+| `item/fileChange/outputDelta` | Append file-change output |
+| `item/mcpToolCall/progress` | Update MCP tool progress |
+| `turn/plan/updated` | Update the current plan |
+| `turn/diff/updated` | Update the current turn diff |
+| `thread/tokenUsage/updated` | Update token usage |
+| `account/rateLimits/updated` | Update rate-limit windows |
 | `server/request` | Show pending approval in UI |
 | `server/request/resolved` | Remove resolved request from UI |
 | `error` | Display error notification |
@@ -283,7 +254,7 @@ All frontend state is managed by `useDesktopState()` — a single Vue composable
 ### Event Processing Pipeline
 
 1. Realtime events arrive via WebSocket on `/codex-api/ws` (fallback: `EventSource` on `/codex-api/events`)
-2. Each event is passed to `applyRealtimeUpdates()` for immediate UI effects (activity labels, live text, in-progress flags)
+2. Each event is passed to `applyRealtimeUpdates()` for immediate lifecycle effects; high-frequency text/output deltas are accumulated by thread and item and published at most once per animation frame
 3. Events are also passed to `queueEventDrivenSync()` which debounces (220ms) a full data refresh
 4. The debounced `syncFromNotifications()` calls `loadThreads()` and `loadMessages()` to reconcile server state
 
@@ -302,7 +273,8 @@ Bidirectional sync between `selectedThreadId` state and URL is handled via Vue `
 
 ### Prerequisites
 
-- Node.js >= 18
+- Node.js 20 or 22
+- pnpm 11.10.0 (pinned in `packageManager`)
 - `codex` CLI installed and in PATH
 
 ### Scripts
@@ -313,6 +285,8 @@ Bidirectional sync between `selectedThreadId` state and URL is handled via Vue `
 | `pnpm run build` | Type-check + build frontend + build CLI |
 | `pnpm run build:frontend` | `vue-tsc --noEmit && vite build` |
 | `pnpm run build:cli` | `tsup` (builds CLI to `dist-cli/`) |
+| `pnpm run check:bundle` | Enforce production entry and Markdown chunk budgets |
+| `pnpm run ci` | Run unit tests, builds, and bundle budgets |
 | `pnpm run preview` | Preview production build |
 
 ### Dev Mode
@@ -340,4 +314,4 @@ The CLI starts an Express server that serves the built frontend from `dist/` and
 2. **Protocol-first**: The UI is designed around the Codex app-server protocol; all features map directly to RPC methods and notifications
 3. **Offline-resilient**: localStorage persistence ensures the UI recovers gracefully from disconnections
 4. **Reference equality optimization**: Extensive use of identity checks and shallow merging to minimize unnecessary Vue re-renders
-5. **Single composable pattern**: All state and logic in one place for discoverability, at the cost of file size (~2000 LOC)
+5. **Explicit hot-path boundaries**: Shared rollout snapshots, runtime routing, startup request coalescing, stream batching, Markdown load policy, and local HTTP routes are independently testable boundaries around the larger UI state modules
