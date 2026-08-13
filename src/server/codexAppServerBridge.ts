@@ -66,7 +66,7 @@ import {
   resolveCodexMoonCommand,
 } from '../commandResolution.js'
 import type { CollaborationModeKind, ReasoningEffort, UiFileChange, UiMessage, UiThread } from '../types/codex.js'
-import { isAbsoluteLikePath, toProjectName } from '../pathUtils.js'
+import { isAbsoluteLikePath, normalizePathForUi, toProjectName } from '../pathUtils.js'
 import { searchComposerPaths } from './composerFileSearch.js'
 import { normalizeThreadMessagesV2 } from '../api/normalizers/v2.js'
 import { BoundedLruCache } from './boundedLruCache.js'
@@ -302,6 +302,9 @@ const THREAD_SEARCH_FULL_TEXT_THREAD_LIMIT = 100
 const THREAD_MESSAGE_SEARCH_DEFAULT_LIMIT = 100
 const THREAD_MESSAGE_SEARCH_MAX_LIMIT = 500
 const THREAD_MESSAGE_SEARCH_SNIPPET_CONTEXT = 72
+const THREAD_COMMAND_DETAILS_CACHE_ENTRY_LIMIT = 2_000
+const THREAD_COMMAND_DETAILS_CACHE_BYTE_LIMIT = 48 * 1024 * 1024
+const THREAD_COMMAND_DETAILS_CACHE_IDLE_MS = 30 * 60 * 1000
 const CURSOR_CONTEXT_AUTO_COMPACT_COOLDOWN_MS = 60_000
 const PROJECTLESS_THREAD_DIRECTORY_MAX_ATTEMPTS = 100
 const PROJECTLESS_THREAD_SLUG_MAX_LENGTH = 80
@@ -348,6 +351,17 @@ type SessionRolloutRow = {
   lineEndByteOffset: number
 }
 
+export type DeferredCommandExecutionDetails = {
+  command: string
+  cwd: string | null
+  aggregatedOutput: string
+}
+
+type SessionCommandDetailsEntry = {
+  turnId: string
+  details: DeferredCommandExecutionDetails
+}
+
 type SessionRolloutSnapshot = {
   size: number
   mtimeMs: number
@@ -359,6 +373,7 @@ type SessionRolloutSnapshot = {
   skillsByTurnId: Map<string, SessionRecoveredSkillInput[]>
   contextsByTurnId: Map<string, string[]>
   turnEnds: Map<string, SessionTurnEnd>
+  commandDetailsByItemId: Map<string, SessionCommandDetailsEntry> | null
 }
 
 const SESSION_ROLLOUT_SNAPSHOT_CACHE_LIMIT = 64
@@ -367,6 +382,92 @@ const SESSION_ROLLOUT_SNAPSHOT_IDLE_MS = 30 * 60 * 1000
 const sessionRolloutSnapshotCache = new Map<string, SessionRolloutSnapshot>()
 const sessionRolloutSnapshotPromiseByPath = new Map<string, Promise<SessionRolloutSnapshot>>()
 let sessionRolloutSnapshotBytes = 0
+const deferredCommandDetailsCache = new BoundedLruCache<DeferredCommandExecutionDetails>({
+  maxEntries: THREAD_COMMAND_DETAILS_CACHE_ENTRY_LIMIT,
+  maxWeight: THREAD_COMMAND_DETAILS_CACHE_BYTE_LIMIT,
+  maxIdleMs: THREAD_COMMAND_DETAILS_CACHE_IDLE_MS,
+})
+
+function deferredCommandDetailsCacheKey(threadId: string, turnId: string, itemId: string): string {
+  return `${threadId}\u0000${turnId}\u0000${itemId}`
+}
+
+function formatCommandArgument(value: string): string {
+  if (value.length === 0) return "''"
+  if (/^[A-Za-z0-9_@%+=:,./-]+$/u.test(value)) return value
+  return `'${value.replace(/'/gu, `'\\''`)}'`
+}
+
+function readDeferredCommandExecutionDetails(item: Record<string, unknown>): DeferredCommandExecutionDetails {
+  const rawCommand = item.command
+  const command = typeof rawCommand === 'string'
+    ? rawCommand
+    : Array.isArray(rawCommand)
+      ? rawCommand.filter((part): part is string => typeof part === 'string').map(formatCommandArgument).join(' ')
+      : ''
+  const cwdRaw = typeof item.cwd === 'string' ? item.cwd : ''
+  const aggregatedOutput = typeof item.aggregatedOutput === 'string'
+    ? item.aggregatedOutput
+    : typeof item.aggregated_output === 'string'
+      ? item.aggregated_output
+      : [
+          typeof item.stdout === 'string' ? item.stdout : '',
+          typeof item.stderr === 'string' ? item.stderr : '',
+        ].filter(Boolean).join('\n')
+
+  return {
+    command,
+    cwd: cwdRaw ? normalizePathForUi(cwdRaw.replace(/^file:\/\//u, '')) : null,
+    aggregatedOutput,
+  }
+}
+
+function rememberDeferredCommandDetails(
+  threadId: string,
+  turnId: string,
+  itemId: string,
+  details: DeferredCommandExecutionDetails,
+): void {
+  if (!threadId || !turnId || !itemId) return
+  deferredCommandDetailsCache.set(
+    deferredCommandDetailsCacheKey(threadId, turnId, itemId),
+    details,
+    (details.command.length + details.aggregatedOutput.length + (details.cwd?.length ?? 0)) * 2,
+  )
+}
+
+function buildSessionCommandDetailsByItemId(rows: SessionRolloutRow[]): Map<string, SessionCommandDetailsEntry> {
+  const detailsByItemId = new Map<string, SessionCommandDetailsEntry>()
+  let activeTurnId = ''
+
+  for (const { row, payload } of rows) {
+    if (!payload) continue
+    if (row.type === 'turn_context') {
+      activeTurnId = readNonEmptyString(payload.turn_id) || activeTurnId
+      continue
+    }
+    if (row.type !== 'event_msg') continue
+
+    const eventType = readNonEmptyString(payload.type)
+    const eventTurnId = readNonEmptyString(payload.turn_id)
+    if (eventType === 'task_started') activeTurnId = eventTurnId || activeTurnId
+    const turnId = eventTurnId || activeTurnId
+    const item = asRecord(payload.item)
+    const itemType = readNonEmptyString(item?.type).replace(/[_-]/gu, '').toLowerCase()
+    const itemId = readNonEmptyString(item?.id)
+    if (turnId && itemId && item && itemType === 'commandexecution') {
+      detailsByItemId.set(itemId, {
+        turnId,
+        details: readDeferredCommandExecutionDetails(item),
+      })
+    }
+    if (eventType === 'task_complete' || eventType === 'task_aborted' || eventType === 'turn_aborted') {
+      if (!eventTurnId || eventTurnId === activeTurnId) activeTurnId = ''
+    }
+  }
+
+  return detailsByItemId
+}
 
 function parseSessionRolloutRows(sessionLogRaw: string): SessionRolloutRow[] {
   const rows: SessionRolloutRow[] = []
@@ -438,6 +539,7 @@ async function readSessionRolloutSnapshot(sessionPath: string): Promise<SessionR
       skillsByTurnId: buildSessionSkillInputsByTurnFromRows(rows),
       contextsByTurnId: buildSessionUserPromptAdditionalContextsByTurnFromRows(rows),
       turnEnds: buildSessionTurnEndsFromRows(rows),
+      commandDetailsByItemId: null,
     }
     if (cached) sessionRolloutSnapshotBytes = Math.max(0, sessionRolloutSnapshotBytes - cached.size)
     sessionRolloutSnapshotCache.delete(sessionPath)
@@ -4570,6 +4672,17 @@ function buildCursorRecoveredCommand(payload: Record<string, unknown>): SessionR
     source: 'cursor',
     cursorCallId: callId,
   }
+}
+
+function buildCursorShellCommandFromMessageText(
+  text: string,
+  payloadCache: CursorToolPayloadCache,
+): SessionRecoveredCommand | null {
+  if (!CURSOR_TOOL_COMPLETED_MESSAGE.test(text.trimStart())) return null
+  const payload = readInlineCursorToolPayloadRecord(text)
+    ?? readCursorToolPayloadFromMessageText(text, payloadCache)
+  if (payload?.tool !== 'shell') return null
+  return buildCursorRecoveredCommand(payload)
 }
 
 function buildCursorToolSessionSlot(
@@ -10514,6 +10627,148 @@ type ThreadTurnsListPage = {
   nextCursor: string
 }
 
+export function deferThreadCommandExecutionDetails(
+  result: unknown,
+  remember: (threadId: string, turnId: string, itemId: string, details: DeferredCommandExecutionDetails) => void = rememberDeferredCommandDetails,
+): unknown {
+  const record = asRecord(result)
+  const thread = asRecord(record?.thread)
+  const threadId = readNonEmptyString(thread?.id)
+  const turns = Array.isArray(thread?.turns) ? thread.turns : null
+  if (!record || !thread || !threadId || !turns) return result
+
+  let changed = false
+  const cursorPayloadCache: CursorToolPayloadCache = new Map()
+  const nextTurns = turns.map((turn) => {
+    const turnRecord = asRecord(turn)
+    const turnId = readNonEmptyString(turnRecord?.id)
+    const items = Array.isArray(turnRecord?.items) ? turnRecord.items : null
+    if (!turnRecord || !turnId || !items) return turn
+
+    let itemChanged = false
+    const nextItems = items.map((item) => {
+      const itemRecord = asRecord(item)
+      const cursorCommand = itemRecord?.type === 'agentMessage' && typeof itemRecord.text === 'string'
+        ? buildCursorShellCommandFromMessageText(itemRecord.text, cursorPayloadCache)
+        : null
+      const commandItem = cursorCommand as Record<string, unknown> | null ?? itemRecord
+      const itemId = readNonEmptyString(commandItem?.id)
+      if (
+        !commandItem
+        || commandItem.type !== 'commandExecution'
+        || !itemId
+        || commandItem.codexUiCommandDetailsDeferred === true
+      ) {
+        return item
+      }
+
+      const details = readDeferredCommandExecutionDetails(commandItem)
+      remember(threadId, turnId, itemId, details)
+      itemChanged = true
+      const nextItem = { ...commandItem }
+      for (const field of [
+        'command',
+        'cwd',
+        'aggregatedOutput',
+        'aggregated_output',
+        'stdout',
+        'stderr',
+        'formattedOutput',
+        'formatted_output',
+        'commandActions',
+        'command_actions',
+        'parsedCmd',
+        'parsed_cmd',
+        'processId',
+        'process_id',
+        'pluginId',
+        'plugin_id',
+        'scriptPath',
+        'script_path',
+      ]) {
+        delete nextItem[field]
+      }
+      nextItem.command = ''
+      nextItem.cwd = null
+      nextItem.aggregatedOutput = ''
+      nextItem.codexUiCommandOutputLength = details.aggregatedOutput.length
+      nextItem.codexUiCommandDetailsDeferred = true
+      return nextItem
+    })
+
+    if (!itemChanged) return turn
+    changed = true
+    return { ...turnRecord, items: nextItems }
+  })
+
+  if (!changed) return result
+  return {
+    ...record,
+    thread: {
+      ...thread,
+      turns: nextTurns,
+    },
+  }
+}
+
+function deferLiveStateCommandExecutionDetails(threadId: string, value: unknown): unknown {
+  const record = asRecord(value)
+  const conversationState = asRecord(record?.conversationState)
+  const turns = Array.isArray(conversationState?.turns) ? conversationState.turns : null
+  if (!record || !conversationState || !turns) return value
+
+  const deferred = deferThreadCommandExecutionDetails({ thread: { id: threadId, turns } })
+  const deferredTurns = asRecord(asRecord(deferred)?.thread)?.turns
+  if (!Array.isArray(deferredTurns) || deferredTurns === turns) return value
+  return {
+    ...record,
+    conversationState: {
+      ...conversationState,
+      turns: deferredTurns,
+    },
+  }
+}
+
+export async function readDeferredThreadCommandDetails(
+  appServer: AppServerProcess,
+  threadId: string,
+  turnId: string,
+  itemId: string,
+): Promise<DeferredCommandExecutionDetails | null> {
+  const cacheKey = deferredCommandDetailsCacheKey(threadId, turnId, itemId)
+  const cached = deferredCommandDetailsCache.get(cacheKey)
+  if (cached) return cached
+
+  const metadataResult = await appServer.rpc('thread/read', { threadId, includeTurns: false })
+  const sessionPath = readNonEmptyString(asRecord(asRecord(metadataResult)?.thread)?.path)
+  if (sessionPath && isAbsolute(sessionPath)) {
+    const snapshot = await readSessionRolloutSnapshot(sessionPath).catch(() => null)
+    if (snapshot && !snapshot.commandDetailsByItemId) {
+      snapshot.commandDetailsByItemId = buildSessionCommandDetailsByItemId(snapshot.rows)
+    }
+    const entry = snapshot?.commandDetailsByItemId?.get(itemId)
+    if (entry?.turnId === turnId) {
+      rememberDeferredCommandDetails(threadId, turnId, itemId, entry.details)
+      return entry.details
+    }
+  }
+
+  // Legacy and inherited fork items may not exist in the local rollout. This
+  // bounded fallback uses the canonical reconstructed read only after both the
+  // hot detail cache and the session index miss.
+  const prepared = await readPreparedThreadReadResult(appServer, threadId)
+  const targetTurn = prepared.turns.find((turn) => readNonEmptyString(asRecord(turn)?.id) === turnId)
+  const targetItem = Array.isArray(asRecord(targetTurn)?.items)
+    ? (asRecord(targetTurn)?.items as unknown[]).find((item) => readNonEmptyString(asRecord(item)?.id) === itemId)
+    : null
+  const itemRecord = asRecord(targetItem)
+  if (!itemRecord || itemRecord.type !== 'commandExecution') return null
+
+  const details = readDeferredCommandExecutionDetails(itemRecord)
+  rememberDeferredCommandDetails(threadId, turnId, itemId, details)
+  return details
+}
+
 function normalizeThreadTurnsListPage(value: unknown): ThreadTurnsListPage {
   const record = asRecord(value)
   if (!Array.isArray(record?.data)) {
@@ -10649,7 +10904,8 @@ async function finalizeThreadReadResult(record: Record<string, unknown>, thread:
       turns,
     },
   }
-  const sanitized = await sanitizeThreadTurnsInlinePayloads('thread/read', pagedResult)
+  const deferred = deferThreadCommandExecutionDetails(pagedResult)
+  const sanitized = await sanitizeThreadTurnsInlinePayloads('thread/read', deferred)
   return mergeSessionSkillInputsIntoThreadResult(sanitized)
 }
 
@@ -10677,7 +10933,13 @@ async function readThreadTurnSlice(
 
 async function readFullSearchableThreadResult(appServer: AppServerProcess, threadId: string): Promise<unknown> {
   const { record, thread, turns } = await readPreparedThreadReadResult(appServer, threadId)
-  return finalizeThreadReadResult(record, thread, turns, readThreadTurnStartIndex(record))
+  const fullResult = {
+    ...record,
+    thread: { ...thread, turns },
+  }
+  return mergeSessionSkillInputsIntoThreadResult(
+    await sanitizeThreadTurnsInlinePayloads('thread/read', fullResult),
+  )
 }
 
 async function loadAllThreadsForSearch(appServer: AppServerProcess): Promise<ThreadSearchDocument[]> {
@@ -11479,7 +11741,8 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 	            const threadId = typeof params?.threadId === 'string' ? params.threadId.trim() : ''
 	            const snapshot = threadId ? effectiveRpcAppServer.getLastThreadReadSnapshot(threadId) : null
 	            if (snapshot) {
-	              setJson(res, 200, { result: await mergeSessionModelStateIntoThreadResult(snapshot, effectiveRpcAppServer) })
+	              const enrichedSnapshot = await mergeSessionModelStateIntoThreadResult(snapshot, effectiveRpcAppServer)
+	              setJson(res, 200, { result: deferThreadCommandExecutionDetails(enrichedSnapshot) })
 	              return
 	            }
 	          }
@@ -11510,7 +11773,10 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           ? await mergePaginatedForkHistoryIntoThreadResultFromSession(effectiveRpcAppServer, recoveredResult)
           : recoveredResult
         const trimmedResult = trimThreadTurnsInRpcResult(body.method, inheritedHistoryResult)
-        const sanitizedResult = await sanitizeThreadTurnsInlinePayloads(body.method, trimmedResult)
+        const deferredResult = THREAD_METHODS_WITH_TURNS.has(body.method)
+          ? deferThreadCommandExecutionDetails(trimmedResult)
+          : trimmedResult
+        const sanitizedResult = await sanitizeThreadTurnsInlinePayloads(body.method, deferredResult)
         const skillMergedResult = THREAD_METHODS_WITH_TURNS.has(body.method)
           ? await mergeSessionSkillInputsIntoThreadResult(sanitizedResult)
           : sanitizedResult
@@ -11607,6 +11873,28 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           })
         } catch (error) {
           setJson(res, 500, { error: getErrorMessage(error, 'Failed to load earlier thread messages') })
+        }
+        return
+      }
+
+      if (req.method === 'GET' && url.pathname === '/codex-api/thread-command-details') {
+        try {
+          const threadId = url.searchParams.get('threadId')?.trim() ?? ''
+          const turnId = url.searchParams.get('turnId')?.trim() ?? ''
+          const itemId = url.searchParams.get('itemId')?.trim() ?? ''
+          if (!threadId || !turnId || !itemId) {
+            setJson(res, 400, { error: 'Missing threadId, turnId, or itemId' })
+            return
+          }
+
+          const details = await readDeferredThreadCommandDetails(appServer, threadId, turnId, itemId)
+          if (!details) {
+            setJson(res, 404, { error: 'Command execution was not found in this turn' })
+            return
+          }
+          setJson(res, 200, { data: details })
+        } catch (error) {
+          setJson(res, 500, { error: getErrorMessage(error, 'Failed to load command details') })
         }
         return
       }
@@ -11727,7 +12015,8 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
             recoveredThreadReadResult,
           )
           const enrichedThreadReadResult = await mergeSessionModelStateIntoThreadResult(inheritedThreadReadResult, appServer)
-          const sanitized = await sanitizeThreadTurnsInlinePayloads('thread/read', enrichedThreadReadResult)
+          const deferred = deferThreadCommandExecutionDetails(enrichedThreadReadResult)
+          const sanitized = await sanitizeThreadTurnsInlinePayloads('thread/read', deferred)
           const result = await mergeSessionSkillInputsIntoThreadResult(sanitized)
 
           setJson(res, 200, {
@@ -11807,7 +12096,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 
           const cached = appServer.getCachedLiveState(threadId, rawTurns.length, sessionSize)
           if (cached) {
-            setJson(res, 200, cached)
+            setJson(res, 200, deferLiveStateCommandExecutionDetails(threadId, cached))
             return
           }
 
@@ -11820,7 +12109,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           const lastTurn = turns.length > 0 ? asRecord(turns[turns.length - 1]) : null
           const isInProgress = lastTurn?.status === 'inProgress'
 
-          const responseData = {
+          const responseData = deferLiveStateCommandExecutionDetails(threadId, {
             threadId,
             conversationState: {
               turns,
@@ -11828,7 +12117,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
             ownerClientId: null,
             liveStateError: null,
             isInProgress,
-          }
+          })
 
           if (!isInProgress) {
             appServer.cacheLiveState(threadId, responseData, rawTurns.length, sessionSize)
@@ -11842,7 +12131,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
             const thread = asRecord(record?.thread)
             const rawTurns = Array.isArray(thread?.turns) ? thread.turns : []
             const turns = appServer.mergeItemsIntoTurns(threadId, rawTurns)
-            setJson(res, 200, {
+            setJson(res, 200, deferLiveStateCommandExecutionDetails(threadId, {
               threadId,
               conversationState: { turns },
               ownerClientId: null,
@@ -11851,7 +12140,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
                 message: getErrorMessage(error, 'thread/read failed'),
               },
               isInProgress: false,
-            })
+            }))
           } else {
             setJson(res, 200, {
               threadId,

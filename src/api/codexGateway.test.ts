@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { clearThreadGoal, forkThread, forkThreadThroughTurn, getAvailableModelIds, getComposerPrompts, getCurrentModelConfig, getThreadDetail, getThreadGoal, getThreadQueueState, getThreadUserMessageIndex, getThreadUserMessageNavigation, listDirectoryComposioConnectors, resumeThread, searchComposerFiles, searchFileLinkPaths, searchThreadMessages, setThreadGoal, setThreadQueueState, startThread, startThreadTurn, steerThreadTurn } from './codexGateway'
+import { clearThreadGoal, forkThread, forkThreadThroughTurn, getAvailableModelIds, getComposerPrompts, getCurrentModelConfig, getThreadCommandDetails, getThreadDetail, getThreadGoal, getThreadQueueState, getThreadUserMessageIndex, getThreadUserMessageNavigation, listDirectoryComposioConnectors, resumeThread, searchComposerFiles, searchFileLinkPaths, searchThreadMessages, setThreadGoal, setThreadQueueState, startThread, startThreadTurn, steerThreadTurn } from './codexGateway'
 
 describe('getThreadDetail', () => {
   afterEach(() => {
@@ -34,6 +34,42 @@ describe('getThreadDetail', () => {
     expect(detail.activeTurnId).toBe('turn-9')
     expect(detail.hasMoreOlder).toBe(true)
     expect(detail.turnIndexByTurnId).toEqual({ 'turn-8': 8, 'turn-9': 9 })
+  })
+})
+
+describe('getThreadCommandDetails', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('loads one deferred command item by thread, turn, and item id', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      data: {
+        command: 'pnpm run ci',
+        cwd: '/tmp/project',
+        aggregatedOutput: 'all tests passed',
+      },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(getThreadCommandDetails('thread-1', 'turn-1', 'exec-1')).resolves.toEqual({
+      command: 'pnpm run ci',
+      cwd: '/tmp/project',
+      aggregatedOutput: 'all tests passed',
+    })
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/codex-api/thread-command-details?threadId=thread-1&turnId=turn-1&itemId=exec-1',
+    )
+  })
+
+  it('surfaces the command detail endpoint error', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      error: 'Command execution was not found in this turn',
+    }), { status: 404, headers: { 'Content-Type': 'application/json' } })))
+
+    await expect(getThreadCommandDetails('thread-1', 'turn-1', 'missing')).rejects.toThrow(
+      'Command execution was not found in this turn',
+    )
   })
 })
 

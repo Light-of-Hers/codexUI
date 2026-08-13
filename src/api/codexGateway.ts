@@ -865,6 +865,38 @@ export type ThreadTurnPage = {
   turnIndexByTurnId: ThreadTurnIndexById
 }
 
+export type ThreadCommandDetails = {
+  command: string
+  cwd: string | null
+  aggregatedOutput: string
+}
+
+export async function getThreadCommandDetails(
+  threadId: string,
+  turnId: string,
+  itemId: string,
+  signal?: AbortSignal,
+): Promise<ThreadCommandDetails> {
+  const params = new URLSearchParams({ threadId, turnId, itemId })
+  const url = `/codex-api/thread-command-details?${params.toString()}`
+  const response = signal ? await fetch(url, { signal }) : await fetch(url)
+  const payload = await response.json().catch(() => null) as {
+    data?: Partial<ThreadCommandDetails>
+    error?: string
+  } | null
+  if (!response.ok) {
+    throw new Error(getErrorMessageFromPayload(payload, `Command details request failed with ${response.status}`))
+  }
+  if (!payload?.data || typeof payload.data.command !== 'string' || typeof payload.data.aggregatedOutput !== 'string') {
+    throw new Error('Command details response was incomplete')
+  }
+  return {
+    command: payload.data.command,
+    cwd: typeof payload.data.cwd === 'string' ? payload.data.cwd : null,
+    aggregatedOutput: payload.data.aggregatedOutput,
+  }
+}
+
 function readRolloutTurnStateFromResponse(payload: ThreadReadResponse): 'active' | 'terminal' | undefined {
   const rawThread = payload.thread as unknown as Record<string, unknown>
   const state = rawThread.codexUiRolloutTurnState

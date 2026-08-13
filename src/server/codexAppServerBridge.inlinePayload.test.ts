@@ -10,6 +10,7 @@ import {
   buildSessionModelState,
   buildSessionUserMessageIndex,
   countSessionUserMessages,
+  deferThreadCommandExecutionDetails,
   mergeSessionUserPromptAdditionalContextsIntoTurns,
   createCodexBridgeMiddleware,
   getThreadTurnWindowBounds,
@@ -24,6 +25,7 @@ import {
   rewriteOpenAiThreadModelProvider,
   reconcileStaleThreadStatusFromSession,
   readLatestThreadTurnPage,
+  readDeferredThreadCommandDetails,
   sanitizeThreadTurnsInlinePayloads,
   searchThreadMessagesInPayload,
   shouldAutoContinueInterruptedThreadFromThreadRead,
@@ -114,6 +116,139 @@ describe('latest thread turn page', () => {
       const result = page.result as { thread: { turns: Array<{ items: Array<{ id: string }> }> } }
 
       expect(result.thread.turns[0]?.items.map((item) => item.id)).toEqual(nativeItems.map((item) => item.id))
+    } finally {
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('defers command and output bodies while preserving lightweight execution metadata', () => {
+    const remembered: Array<{ threadId: string; turnId: string; itemId: string; command: string; output: string }> = []
+    const source = {
+      thread: {
+        id: 'thread-1',
+        turns: [{
+          id: 'turn-1',
+          items: [{
+            id: 'exec-1',
+            type: 'commandExecution',
+            command: 'pnpm run ci',
+            cwd: '/tmp/project',
+            status: 'completed',
+            aggregatedOutput: 'all tests passed',
+            commandActions: [{ type: 'run' }],
+            exitCode: 0,
+            durationMs: 123,
+          }],
+        }],
+      },
+    }
+
+    const result = deferThreadCommandExecutionDetails(source, (threadId, turnId, itemId, details) => {
+      remembered.push({ threadId, turnId, itemId, command: details.command, output: details.aggregatedOutput })
+    }) as typeof source
+    const item = result.thread.turns[0].items[0] as Record<string, unknown>
+
+    expect(item).toEqual({
+      id: 'exec-1',
+      type: 'commandExecution',
+      command: '',
+      cwd: null,
+      status: 'completed',
+      aggregatedOutput: '',
+      codexUiCommandOutputLength: 16,
+      exitCode: 0,
+      durationMs: 123,
+      codexUiCommandDetailsDeferred: true,
+    })
+    expect(remembered).toEqual([{
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      itemId: 'exec-1',
+      command: 'pnpm run ci',
+      output: 'all tests passed',
+    }])
+    expect(source.thread.turns[0].items[0].aggregatedOutput).toBe('all tests passed')
+  })
+
+  it('normalizes completed Cursor shell proxy messages before deferring their payloads', () => {
+    const payload = {
+      type: 'cursor_tool_call',
+      subtype: 'completed',
+      call_id: 'call-cursor-direct',
+      tool: 'shell',
+      arguments: { command: 'pwd', workingDirectory: '/tmp/project' },
+      output: { success: { exitCode: 0, stdout: '/tmp/project\n' } },
+    }
+    const source = {
+      thread: {
+        id: 'thread-cursor',
+        turns: [{
+          id: 'turn-1',
+          items: [{
+            id: 'agent-cursor',
+            type: 'agentMessage',
+            text: `Ran \`pwd\`\n<codex-ui-data>${JSON.stringify(payload)}</codex-ui-data>`,
+          }],
+        }],
+      },
+    }
+
+    const result = deferThreadCommandExecutionDetails(source) as typeof source
+
+    expect(result.thread.turns[0].items[0]).toEqual({
+      id: 'cursor-command-call-cursor-direct',
+      type: 'commandExecution',
+      command: '',
+      cwd: null,
+      status: 'completed',
+      aggregatedOutput: '',
+      exitCode: 0,
+      durationMs: null,
+      source: 'cursor',
+      cursorCallId: 'call-cursor-direct',
+      codexUiCommandOutputLength: 13,
+      codexUiCommandDetailsDeferred: true,
+    })
+    expect(JSON.stringify(result)).not.toContain('/tmp/project\\n')
+  })
+
+  it('reads a deferred command from the session snapshot index after a cache miss', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-command-details-'))
+    const sessionPath = join(tempDir, 'session.jsonl')
+    await writeFile(sessionPath, [
+      JSON.stringify({ type: 'event_msg', payload: { type: 'task_started', turn_id: 'turn-1' } }),
+      JSON.stringify({
+        type: 'event_msg',
+        payload: {
+          type: 'item_completed',
+          turn_id: 'turn-1',
+          item: {
+            type: 'CommandExecution',
+            id: 'exec-indexed',
+            command: ['/bin/bash', '-lc', 'printf "hello world"'],
+            cwd: 'file:///tmp/project',
+            aggregated_output: 'hello world',
+          },
+        },
+      }),
+      JSON.stringify({ type: 'event_msg', payload: { type: 'task_complete', turn_id: 'turn-1' } }),
+    ].join('\n'), 'utf8')
+    const appServer = {
+      rpc: vi.fn(async () => ({ thread: { id: 'thread-cold', path: sessionPath } })),
+    }
+
+    try {
+      await expect(readDeferredThreadCommandDetails(
+        appServer as never,
+        'thread-cold',
+        'turn-1',
+        'exec-indexed',
+      )).resolves.toEqual({
+        command: "/bin/bash -lc 'printf \"hello world\"'",
+        cwd: '/tmp/project',
+        aggregatedOutput: 'hello world',
+      })
+      expect(appServer.rpc).toHaveBeenCalledTimes(1)
     } finally {
       await rm(tempDir, { recursive: true, force: true })
     }

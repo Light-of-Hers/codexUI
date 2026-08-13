@@ -701,13 +701,17 @@ function toUiMessages(item: ThreadItem): UiMessage[] {
     const cwd = typeof raw.cwd === 'string' ? raw.cwd : null
     const aggregatedOutput = typeof raw.aggregatedOutput === 'string' ? raw.aggregatedOutput : ''
     const exitCode = typeof raw.exitCode === 'number' ? raw.exitCode : null
+    const detailsDeferred = raw.codexUiCommandDetailsDeferred === true
+    const deferredOutputLength = typeof raw.codexUiCommandOutputLength === 'number'
+      ? Math.max(0, Math.floor(raw.codexUiCommandOutputLength))
+      : undefined
     return [
       {
         id: item.id,
         role: 'system' as const,
         text: cmd,
         messageType: 'commandExecution',
-        commandExecution: { command: cmd, cwd, status, aggregatedOutput, exitCode },
+        commandExecution: { command: cmd, cwd, status, aggregatedOutput, exitCode, detailsDeferred, deferredOutputLength },
       },
     ]
   }

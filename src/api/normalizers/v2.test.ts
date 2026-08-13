@@ -191,6 +191,36 @@ describe('thread active turn normalization', () => {
 })
 
 describe('normalizeThreadMessagesV2', () => {
+  it('preserves the deferred command detail marker without command payloads', () => {
+    const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
+      type: 'commandExecution',
+      id: 'command-deferred',
+      command: '',
+      cwd: null,
+      status: 'completed',
+      aggregatedOutput: '',
+      exitCode: 0,
+      codexUiCommandDetailsDeferred: true,
+      codexUiCommandOutputLength: 128,
+    } as never]))
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({
+      id: 'command-deferred',
+      text: '',
+      messageType: 'commandExecution',
+      commandExecution: {
+        command: '',
+        cwd: null,
+        status: 'completed',
+        aggregatedOutput: '',
+        exitCode: 0,
+        detailsDeferred: true,
+        deferredOutputLength: 128,
+      },
+    })
+  })
+
   it('preserves selected skill inputs on the rendered user message', () => {
     const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
       type: 'userMessage',

@@ -103,6 +103,8 @@ export type CommandExecutionData = {
   status: 'inProgress' | 'completed' | 'failed' | 'declined' | 'interrupted' | 'unknown'
   aggregatedOutput: string
   exitCode: number | null
+  detailsDeferred?: boolean
+  deferredOutputLength?: number
 }
 
 export type UiToolCallStatus = 'inProgress' | 'completed' | 'failed'

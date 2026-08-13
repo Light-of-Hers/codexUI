@@ -8439,3 +8439,40 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - Close the disposable browser context. The verification is read-only and does not interrupt or resume the active session.
+
+### Performance: Command details load only when expanded
+
+#### Prerequisites
+- Run the app server at `http://127.0.0.1:4173`.
+- Choose a command-heavy thread with completed command executions and output.
+- Keep browser developer tools open on the Network panel with request recording enabled.
+
+#### Steps
+1. Open the thread directly and inspect the initial `/codex-api/thread-turn-page` response.
+2. Confirm every historical `commandExecution` retains status and exit metadata but has empty `command`, `cwd`, and `aggregatedOutput` fields plus `codexUiCommandDetailsDeferred: true`.
+3. Without expanding a command, confirm no `/codex-api/thread-command-details` request is issued.
+4. Expand one command and confirm exactly one details request is issued with its `threadId`, `turnId`, and `itemId`; verify the command and output render after the loading state.
+5. Collapse and re-expand the same command; confirm the component cache avoids a second request.
+6. Expand a different command, then immediately navigate to another thread; confirm the stale request is cancelled and its result does not appear in the new thread.
+7. Exercise older-message loading, message-navigation window loading, and complete-history loading; repeat steps 2-5 for commands from each path.
+8. Force the details endpoint to return an error, confirm the inline error and Retry control appear, restore the endpoint, and retry successfully.
+9. Repeat the expanded, loading, and error states in Light and Dark appearance.
+10. Run `pnpm exec vitest run src/components/content/ThreadConversation.commandDetails.test.ts src/api/codexGateway.test.ts src/api/normalizers/v2.test.ts src/composables/useDesktopState.test.ts src/server/codexAppServerBridge.inlinePayload.test.ts` and `pnpm run ci`.
+
+#### Expected Results
+- No command text, working directory, or output is included in normal browser history responses; search still finds matching command and output text through the server-side full-history path.
+- One command's details are transferred only after that command is expanded, and repeated expansion reuses the bounded client cache.
+- Live command notifications continue to display current output without waiting for the history details endpoint.
+- Loading, error, retry, command, and output content remain readable without overlap in both Light and Dark appearance.
+- Thread changes abort pending detail requests and clear the per-conversation detail cache.
+
+#### Performance Audit
+- The server detail cache is bounded to 2,000 entries, 48 MiB, and 30 minutes idle; the component cache is bounded to 64 entries and 32 MiB.
+- Rollout command indexing is lazy and occurs only after a detail-cache miss; normal thread loading does not add an extra rollout scan.
+- On session `019ff582-6174-7491-ab9d-afeabf94b98e`, the initial turn-page response measured 166.1 KiB with 258 deferred commands and zero command/output payload leaks, compared with the previous 3.23 MiB profile (95.0% smaller).
+- After the same live session grew to 356 commands, the final regression sample remained 262.0 KiB with all 356 commands deferred and zero payload leaks; its sampled 5.8 KiB detail response completed in 3.7 ms.
+- A 5.8 KiB command-details response measured 3.3 ms after page prewarming and 1.6 ms on the next cache hit. After a clean server restart with no page prewarming, the same detail measured 718.7 ms for the lazy rollout read and 2.7 ms on the next cache hit.
+- The current app-server `summary` item view omits intermediate timeline items, so the bridge still requests `full` native turn items for correctness; this optimization removes browser transfer, frontend parse, and retained-memory cost rather than that internal app-server response.
+
+#### Rollback/Cleanup
+- Stop the disposable `4173` server. The read-only verification does not modify thread or rollout data.

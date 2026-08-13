@@ -91,6 +91,12 @@
                   >
                     <Transition :duration="350" name="cmd-output-fade">
                     <div v-if="isCommandExpanded(cmd)" class="cmd-output-inner">
+                      <div v-if="isCommandDetailsLoading(cmd)" class="cmd-output-state" role="status">Loading command details…</div>
+                      <div v-else-if="commandDetailsError(cmd)" class="cmd-output-state cmd-output-state-error" role="alert">
+                        <span>{{ commandDetailsError(cmd) }}</span>
+                        <button type="button" class="cmd-output-retry" @click.stop="retryCommandDetails(cmd)">Retry</button>
+                      </div>
+                      <template v-else>
                       <div class="cmd-output-section">
                         <span class="cmd-output-section-label">Command</span>
                         <div class="cmd-code-box" tabindex="0" @keydown="onCodeBoxKeydown">
@@ -132,6 +138,7 @@
                           </div>
                         </div>
                       </div>
+                      </template>
                     </div>
                     </Transition>
                   </div>
@@ -202,6 +209,12 @@
               >
                 <Transition :duration="350" name="cmd-output-fade">
                 <div v-if="isCommandExpanded(message)" class="cmd-output-inner">
+                  <div v-if="isCommandDetailsLoading(message)" class="cmd-output-state" role="status">Loading command details…</div>
+                  <div v-else-if="commandDetailsError(message)" class="cmd-output-state cmd-output-state-error" role="alert">
+                    <span>{{ commandDetailsError(message) }}</span>
+                    <button type="button" class="cmd-output-retry" @click.stop="retryCommandDetails(message)">Retry</button>
+                  </div>
+                  <template v-else>
                   <div class="cmd-output-section">
                     <span class="cmd-output-section-label">Command</span>
                     <div class="cmd-code-box" tabindex="0" @keydown="onCodeBoxKeydown">
@@ -243,6 +256,7 @@
                       </div>
                     </div>
                   </div>
+                  </template>
                 </div>
                 </Transition>
               </div>
@@ -336,6 +350,12 @@
                   >
                     <Transition :duration="350" name="cmd-output-fade">
                     <div v-if="isCommandExpanded(call)" class="cmd-output-inner">
+                      <div v-if="isCommandDetailsLoading(call)" class="cmd-output-state" role="status">Loading command details…</div>
+                      <div v-else-if="commandDetailsError(call)" class="cmd-output-state cmd-output-state-error" role="alert">
+                        <span>{{ commandDetailsError(call) }}</span>
+                        <button type="button" class="cmd-output-retry" @click.stop="retryCommandDetails(call)">Retry</button>
+                      </div>
+                      <template v-else>
                       <div class="cmd-output-section">
                         <span class="cmd-output-section-label">Command</span>
                         <div class="cmd-code-box" tabindex="0" @keydown="onCodeBoxKeydown">
@@ -377,6 +397,7 @@
                           </div>
                         </div>
                       </div>
+                      </template>
                     </div>
                     </Transition>
                   </div>
@@ -1080,9 +1101,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, shallowReactive, watch } from 'vue'
 import type { UiFileChange, UiLiveOverlay, UiMessage, UiPlanStep, UiServerRequest, UiServerRequestReply } from '../../types/codex'
-import { searchFileLinkPaths, type FileLinkSearchSuggestion, type ThreadUserMessageIndexEntry } from '../../api/codexGateway'
+import { getThreadCommandDetails, searchFileLinkPaths, type FileLinkSearchSuggestion, type ThreadCommandDetails, type ThreadUserMessageIndexEntry } from '../../api/codexGateway'
 import { useFeedbackDiagnostics } from '../../composables/useFeedbackDiagnostics'
 import { useMobile } from '../../composables/useMobile'
 import { useUiLanguage } from '../../composables/useUiLanguage'
@@ -1116,6 +1137,16 @@ const expandedCommandGroupIds = ref<Set<string>>(new Set())
 const expandedToolCallIds = ref<Set<string>>(new Set())
 const expandedFileChangeSummaryIds = ref<Set<string>>(new Set())
 const expandedResponseSourceIds = ref<Set<string>>(new Set())
+const commandDetailsByKey = shallowReactive(new Map<string, ThreadCommandDetails>())
+const commandDetailsLoadingKeys = shallowReactive(new Set<string>())
+const commandDetailsErrorByKey = shallowReactive(new Map<string, string>())
+const commandDetailsWeightByKey = new Map<string, number>()
+const commandDetailsPromiseByKey = new Map<string, Promise<void>>()
+const commandDetailsAbortControllerByKey = new Map<string, AbortController>()
+const COMMAND_DETAILS_CACHE_ENTRY_LIMIT = 64
+const COMMAND_DETAILS_CACHE_BYTE_LIMIT = 32 * 1024 * 1024
+let commandDetailsCacheWeight = 0
+let commandDetailsGeneration = 0
 const activeDiffViewerSummary = ref<TurnFileChangeSummary | null>(null)
 const activeDiffViewerChangeKey = ref('')
 const isDiffViewerFileListOpen = ref(false)
@@ -1279,19 +1310,129 @@ function hasToolCallDetails(message: UiMessage): boolean {
   )
 }
 
+function commandDetailsKey(message: UiMessage): string {
+  const threadId = props.activeThreadId.trim()
+  const turnId = message.turnId?.trim() ?? ''
+  return threadId && turnId && message.id ? `${threadId}\u0000${turnId}\u0000${message.id}` : ''
+}
+
+function resolvedCommandDetails(message: UiMessage): ThreadCommandDetails | null {
+  if (!message.commandExecution?.detailsDeferred) return null
+  const key = commandDetailsKey(message)
+  return key ? commandDetailsByKey.get(key) ?? null : null
+}
+
+function isCommandDetailsLoading(message: UiMessage): boolean {
+  const key = commandDetailsKey(message)
+  return Boolean(key && commandDetailsLoadingKeys.has(key))
+}
+
+function commandDetailsError(message: UiMessage): string {
+  const key = commandDetailsKey(message)
+  return key ? commandDetailsErrorByKey.get(key) ?? '' : ''
+}
+
+function cacheCommandDetails(key: string, details: ThreadCommandDetails): void {
+  const previousWeight = commandDetailsWeightByKey.get(key) ?? 0
+  const weight = (details.command.length + details.aggregatedOutput.length + (details.cwd?.length ?? 0)) * 2
+  commandDetailsCacheWeight = Math.max(0, commandDetailsCacheWeight - previousWeight) + weight
+  commandDetailsByKey.delete(key)
+  commandDetailsWeightByKey.delete(key)
+  commandDetailsByKey.set(key, details)
+  commandDetailsWeightByKey.set(key, weight)
+
+  while (
+    commandDetailsByKey.size > COMMAND_DETAILS_CACHE_ENTRY_LIMIT
+    || (commandDetailsCacheWeight > COMMAND_DETAILS_CACHE_BYTE_LIMIT && commandDetailsByKey.size > 1)
+  ) {
+    const oldestKey = commandDetailsByKey.keys().next().value
+    if (!oldestKey) break
+    commandDetailsCacheWeight = Math.max(0, commandDetailsCacheWeight - (commandDetailsWeightByKey.get(oldestKey) ?? 0))
+    commandDetailsByKey.delete(oldestKey)
+    commandDetailsWeightByKey.delete(oldestKey)
+    commandDetailsErrorByKey.delete(oldestKey)
+  }
+}
+
+function clearCommandDetailsCache(): void {
+  commandDetailsGeneration += 1
+  for (const controller of commandDetailsAbortControllerByKey.values()) controller.abort()
+  commandDetailsByKey.clear()
+  commandDetailsLoadingKeys.clear()
+  commandDetailsErrorByKey.clear()
+  commandDetailsWeightByKey.clear()
+  commandDetailsPromiseByKey.clear()
+  commandDetailsAbortControllerByKey.clear()
+  commandDetailsCacheWeight = 0
+}
+
+async function ensureCommandDetails(message: UiMessage, force = false): Promise<void> {
+  if (!message.commandExecution?.detailsDeferred) return
+  const threadId = props.activeThreadId.trim()
+  const turnId = message.turnId?.trim() ?? ''
+  const key = commandDetailsKey(message)
+  if (!threadId || !turnId || !key) {
+    if (key) commandDetailsErrorByKey.set(key, 'Command details are unavailable for this history item.')
+    return
+  }
+  if (!force && commandDetailsByKey.has(key)) return
+  const pending = commandDetailsPromiseByKey.get(key)
+  if (pending) return await pending
+
+  const generation = commandDetailsGeneration
+  const controller = new AbortController()
+  commandDetailsLoadingKeys.add(key)
+  commandDetailsErrorByKey.delete(key)
+  commandDetailsAbortControllerByKey.set(key, controller)
+  const request = getThreadCommandDetails(threadId, turnId, message.id, controller.signal)
+    .then((details) => {
+      if (generation !== commandDetailsGeneration || props.activeThreadId.trim() !== threadId) return
+      cacheCommandDetails(key, details)
+    })
+    .catch((error) => {
+      if (generation !== commandDetailsGeneration || props.activeThreadId.trim() !== threadId) return
+      if (error instanceof Error && error.name === 'AbortError') return
+      commandDetailsErrorByKey.set(
+        key,
+        error instanceof Error ? error.message : 'Failed to load command details.',
+      )
+    })
+    .finally(() => {
+      if (commandDetailsPromiseByKey.get(key) === request) commandDetailsPromiseByKey.delete(key)
+      if (commandDetailsAbortControllerByKey.get(key) === controller) {
+        commandDetailsAbortControllerByKey.delete(key)
+      }
+      if (generation === commandDetailsGeneration) commandDetailsLoadingKeys.delete(key)
+    })
+  commandDetailsPromiseByKey.set(key, request)
+  await request
+}
+
+function retryCommandDetails(message: UiMessage): void {
+  void ensureCommandDetails(message, true)
+}
+
 function commandDisplayText(message: UiMessage): string {
-  const command = message.commandExecution?.command
+  const command = resolvedCommandDetails(message)?.command ?? message.commandExecution?.command
   return typeof command === 'string' && command.length > 0 ? command : '(command)'
 }
 
 function commandDisplayLines(message: UiMessage): string[] {
-  const command = message.commandExecution?.command
+  const command = resolvedCommandDetails(message)?.command ?? message.commandExecution?.command
   if (typeof command !== 'string' || command.length === 0) return ['(command)']
   return splitDisplayLines(command)
 }
 
 function outputDisplayLines(message: UiMessage): string[] {
-  const output = message.commandExecution?.aggregatedOutput
+  const details = resolvedCommandDetails(message)
+  const streamedOutput = message.commandExecution?.aggregatedOutput ?? ''
+  const deferredOutputLength = message.commandExecution?.deferredOutputLength ?? details?.aggregatedOutput.length ?? 0
+  const streamedCharsAlreadyInDetails = details
+    ? Math.max(0, Math.min(streamedOutput.length, details.aggregatedOutput.length - deferredOutputLength))
+    : 0
+  const output = details
+    ? `${details.aggregatedOutput}${streamedOutput.slice(streamedCharsAlreadyInDetails)}`
+    : streamedOutput
   if (typeof output !== 'string' || output.length === 0) return ['(no output)']
   return splitDisplayLines(output)
 }
@@ -1532,6 +1673,7 @@ function toggleCommandExpand(message: UiMessage): void {
 
   expandedCommandIds.value = nextExpanded
   collapsedAutoCommandIds.value = nextCollapsedAuto
+  if (isCommandExpanded(message)) void ensureCommandDetails(message)
 }
 
 function getGroupedCommandsForLatest(message: UiMessage): UiMessage[] {
@@ -5648,6 +5790,11 @@ watch(
         .filter((message) => message.messageType === 'commandExecution' && message.commandExecution)
         .map((message) => message.id),
     )
+    for (const message of renderedMessages) {
+      if (isCommandExpanded(message) && message.commandExecution?.detailsDeferred) {
+        void ensureCommandDetails(message)
+      }
+    }
     expandedCommandIds.value = pruneCommandIdSet(expandedCommandIds.value, commandIds)
     collapsedAutoCommandIds.value = pruneCommandIdSet(collapsedAutoCommandIds.value, commandIds)
     expandedCommandGroupIds.value = pruneCommandIdSet(
@@ -5738,6 +5885,7 @@ watch(
 watch(
   () => props.activeThreadId,
   async (threadId) => {
+    clearCommandDetailsCache()
     autoFollowOutput.value = true
     modalImageUrl.value = ''
     closeMessageNavigation()
@@ -5793,6 +5941,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  clearCommandDetailsCache()
   stopConversationMermaidThemeObserver?.()
   stopConversationMermaidThemeObserver = null
   observedConversationMermaidRoot = null
@@ -7058,6 +7207,18 @@ onBeforeUnmount(() => {
 
 .cmd-output-section {
   @apply flex flex-col gap-1 border-b border-white/10 px-2 py-1.5;
+}
+
+.cmd-output-state {
+  @apply flex min-h-16 items-center justify-between gap-3 px-3 py-2 text-xs text-zinc-400;
+}
+
+.cmd-output-state-error {
+  @apply text-rose-300;
+}
+
+.cmd-output-retry {
+  @apply flex-shrink-0 border border-white/15 px-2 py-1 text-xs font-medium text-zinc-100 hover:bg-white/10;
 }
 
 .cmd-output-section-label {

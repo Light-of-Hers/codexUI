@@ -9,6 +9,7 @@ import {
   inferProviderFromModel,
   isThreadUnreadByLastRead,
   normalizeProviderId,
+  overlayLiveCommandsOnDeferredHistory,
   parseGoalSlashCommand,
   removeThreadFromGroups,
   useDesktopState,
@@ -168,6 +169,44 @@ describe('excludeLiveMessagesAlreadyPersisted', () => {
     ]
 
     expect(excludeLiveMessagesAlreadyPersisted(persisted, live).map((message) => message.id)).toEqual(['command-2'])
+  })
+
+  it('overlays a live command on its deferred persisted placeholder', () => {
+    const persisted = [{
+      id: 'command-1',
+      role: 'system' as const,
+      text: '',
+      messageType: 'commandExecution' as const,
+      turnId: 'turn-1',
+      turnIndex: 4,
+      itemIndex: 2,
+      commandExecution: {
+        command: '',
+        cwd: null,
+        status: 'inProgress' as const,
+        aggregatedOutput: '',
+        exitCode: null,
+        detailsDeferred: true,
+      },
+    }]
+    const live = [{
+      ...persisted[0],
+      text: 'pnpm run ci',
+      commandExecution: {
+        command: 'pnpm run ci',
+        cwd: '/tmp/project',
+        status: 'inProgress' as const,
+        aggregatedOutput: 'running\n',
+        exitCode: null,
+      },
+    }]
+
+    expect(overlayLiveCommandsOnDeferredHistory(persisted, live)).toEqual([{
+      ...live[0],
+      turnId: 'turn-1',
+      turnIndex: 4,
+      itemIndex: 2,
+    }])
   })
 })
 
@@ -2768,6 +2807,98 @@ describe('live turn rendering', () => {
     expect(commandMessages).toHaveLength(1)
     expect(commandMessages[0].commandExecution?.aggregatedOutput).toBe('running\n')
     expect(commandMessages[0].commandExecution?.status).toBe('unknown')
+  })
+
+  it('keeps a live command when a refresh returns the same item as a deferred placeholder', async () => {
+    const { state, notify } = await createLiveStateHarness()
+
+    notify(notification('turn/started', {
+      threadId: 'thread-a',
+      turn: { id: 'turn-1', threadId: 'thread-a' },
+    }))
+    notify(notification('item/started', {
+      threadId: 'thread-a',
+      turnId: 'turn-1',
+      item: { id: 'cmd-1', type: 'commandExecution', command: 'pnpm run ci', cwd: '/tmp/project' },
+    }))
+    notify(notification('item/commandExecution/outputDelta', {
+      threadId: 'thread-a',
+      turnId: 'turn-1',
+      itemId: 'cmd-1',
+      delta: 'running\n',
+    }))
+    gatewayMocks.getThreadDetail.mockResolvedValueOnce({
+      messages: [{
+        id: 'cmd-1',
+        role: 'system',
+        text: '',
+        messageType: 'commandExecution',
+        turnId: 'turn-1',
+        turnIndex: 0,
+        commandExecution: {
+          command: '',
+          cwd: null,
+          status: 'inProgress',
+          aggregatedOutput: '',
+          exitCode: null,
+          detailsDeferred: true,
+        },
+      }],
+      inProgress: true,
+      activeTurnId: 'turn-1',
+      hasMoreOlder: false,
+      turnIndexByTurnId: { 'turn-1': 0 },
+    })
+
+    await state.loadMessages('thread-a', { force: true })
+
+    const command = state.messages.value.find((message) => message.id === 'cmd-1')?.commandExecution
+    expect(command).toMatchObject({
+      command: 'pnpm run ci',
+      aggregatedOutput: 'running\n',
+      status: 'inProgress',
+    })
+    expect(command?.detailsDeferred).toBeUndefined()
+  })
+
+  it('applies an output delta to a deferred command when item started was not replayed', async () => {
+    const { state, notify } = await createLiveStateHarness()
+    gatewayMocks.getThreadDetail.mockResolvedValueOnce({
+      messages: [{
+        id: 'cmd-1',
+        role: 'system',
+        text: '',
+        messageType: 'commandExecution',
+        turnId: 'turn-1',
+        turnIndex: 0,
+        commandExecution: {
+          command: '',
+          cwd: null,
+          status: 'inProgress',
+          aggregatedOutput: '',
+          exitCode: null,
+          detailsDeferred: true,
+        },
+      }],
+      inProgress: true,
+      activeTurnId: 'turn-1',
+      hasMoreOlder: false,
+      turnIndexByTurnId: { 'turn-1': 0 },
+    })
+    await state.loadMessages('thread-a', { force: true })
+
+    notify(notification('item/commandExecution/outputDelta', {
+      threadId: 'thread-a',
+      turnId: 'turn-1',
+      itemId: 'cmd-1',
+      delta: 'reconnected output\n',
+    }))
+
+    expect(state.messages.value.find((message) => message.id === 'cmd-1')?.commandExecution).toMatchObject({
+      status: 'inProgress',
+      aggregatedOutput: 'reconnected output\n',
+      detailsDeferred: true,
+    })
   })
 
   it('does not let a later thread list revive a completed turn', async () => {

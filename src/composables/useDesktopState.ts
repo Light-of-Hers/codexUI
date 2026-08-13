@@ -913,7 +913,13 @@ function reorderStringArray(items: string[], fromIndex: number, toIndex: number)
 function areCommandExecutionsEqual(first?: CommandExecutionData, second?: CommandExecutionData): boolean {
   if (!first && !second) return true
   if (!first || !second) return false
-  return first.status === second.status && first.aggregatedOutput === second.aggregatedOutput && first.exitCode === second.exitCode
+  return first.command === second.command
+    && first.cwd === second.cwd
+    && first.status === second.status
+    && first.aggregatedOutput === second.aggregatedOutput
+    && first.exitCode === second.exitCode
+    && first.detailsDeferred === second.detailsDeferred
+    && first.deferredOutputLength === second.deferredOutputLength
 }
 
 function areToolCallsEqual(first?: UiToolCallData, second?: UiToolCallData): boolean {
@@ -1049,6 +1055,36 @@ export function excludeLiveMessagesAlreadyPersisted(
   if (persisted.length === 0 || live.length === 0) return [...live]
   const persistedIds = new Set(persisted.map((message) => message.id).filter(Boolean))
   return live.filter((message) => !persistedIds.has(message.id))
+}
+
+export function overlayLiveCommandsOnDeferredHistory(
+  persisted: UiMessage[],
+  liveCommands: readonly UiMessage[],
+): UiMessage[] {
+  if (persisted.length === 0 || liveCommands.length === 0) return persisted
+  const liveCommandById = new Map(
+    liveCommands
+      .filter((message) => message.commandExecution)
+      .map((message) => [message.id, message]),
+  )
+  if (liveCommandById.size === 0) return persisted
+
+  let changed = false
+  const next = persisted.map((message) => {
+    if (!message.commandExecution?.detailsDeferred) return message
+    const live = liveCommandById.get(message.id)
+    if (!live?.commandExecution) return message
+    changed = true
+    return {
+      ...message,
+      ...live,
+      turnId: live.turnId ?? message.turnId,
+      turnIndex: live.turnIndex ?? message.turnIndex,
+      itemIndex: live.itemIndex ?? message.itemIndex,
+      commandExecution: live.commandExecution,
+    }
+  })
+  return changed ? next : persisted
 }
 
 function sortMessagesByThreadPosition(messages: UiMessage[]): UiMessage[] {
@@ -2073,8 +2109,9 @@ export function useDesktopState() {
     const liveCommands = liveCommandsByThreadId.value[threadId] ?? []
     const liveFileChanges = liveFileChangeMessagesByThreadId.value[threadId] ?? []
     const liveToolCalls = liveToolCallMessagesByThreadId.value[threadId] ?? []
+    const persistedWithLiveCommands = overlayLiveCommandsOnDeferredHistory(persisted, liveCommands)
     const liveMessages = excludeLiveMessagesAlreadyPersisted(
-      persisted,
+      persistedWithLiveCommands,
       orderLiveMessages(
         threadId,
         [livePlan, liveAgent, liveCommands, liveFileChanges, liveToolCalls],
@@ -2085,13 +2122,13 @@ export function useDesktopState() {
     if (optimistic) {
       const optimisticText = normalizeMessageText(optimistic.text)
       const persistedHasOptimistic = optimisticText
-        ? persisted.some((message) => message.role === 'user' && normalizeMessageText(message.text) === optimisticText)
+        ? persistedWithLiveCommands.some((message) => message.role === 'user' && normalizeMessageText(message.text) === optimisticText)
         : false
       combined = persistedHasOptimistic
-        ? [...persisted, ...liveMessages]
-        : [...persisted, optimistic, ...liveMessages]
+        ? [...persistedWithLiveCommands, ...liveMessages]
+        : [...persistedWithLiveCommands, optimistic, ...liveMessages]
     } else {
-      combined = [...persisted, ...liveMessages]
+      combined = [...persistedWithLiveCommands, ...liveMessages]
     }
 
     const summary = turnSummaryByThreadId.value[threadId]
@@ -4032,6 +4069,21 @@ export function useDesktopState() {
   }
 
   function bufferCommandDelta(threadId: string, itemId: string, delta: string): void {
+    const hasLiveCommand = (liveCommandsByThreadId.value[threadId] ?? [])
+      .some((message) => message.id === itemId)
+    if (!hasLiveCommand) {
+      const persisted = (persistedMessagesByThreadId.value[threadId] ?? [])
+        .find((message) => message.id === itemId && message.commandExecution?.detailsDeferred)
+      if (persisted?.commandExecution) {
+        upsertLiveCommand(threadId, {
+          ...persisted,
+          commandExecution: {
+            ...persisted.commandExecution,
+            status: 'inProgress',
+          },
+        })
+      }
+    }
     const key = pendingLiveDeltaKey(threadId, itemId)
     const pending = pendingCommandDeltas.get(key)
     if (pending) pending.chunks.push(delta)
@@ -5415,8 +5467,11 @@ export function useDesktopState() {
   function removeLiveCommandsPersistedIn(threadId: string, persistedMessages: UiMessage[]): void {
     const current = liveCommandsByThreadId.value[threadId]
     if (!current || current.length === 0) return
-    const persistedIds = new Set(persistedMessages.map((m) => m.id))
-    const next = current.filter((m) => !persistedIds.has(m.id))
+    const persistedById = new Map(persistedMessages.map((message) => [message.id, message]))
+    const next = current.filter((message) => {
+      const persisted = persistedById.get(message.id)
+      return !persisted || persisted.commandExecution?.detailsDeferred === true
+    })
     if (next.length === current.length) return
     if (next.length === 0) {
       liveCommandsByThreadId.value = omitKey(liveCommandsByThreadId.value, threadId)
