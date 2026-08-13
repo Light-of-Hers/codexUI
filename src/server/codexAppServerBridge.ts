@@ -823,6 +823,44 @@ async function readThreadUserMessageNavigation(
 
 type RuntimeTurnStateReader = {
   hasActiveTurn(threadId: string, turnId: string): boolean
+  hasActiveSessionWriter?(threadId: string, sessionPath: string): boolean | Promise<boolean>
+}
+
+function readLinuxDeviceParts(device: bigint): { major: bigint; minor: bigint } {
+  return {
+    major: ((device >> 8n) & 0xfffn) | ((device >> 32n) & ~0xfffn),
+    minor: (device & 0xffn) | ((device >> 12n) & ~0xffn),
+  }
+}
+
+async function isThreadWriterLockHeld(threadId: string): Promise<boolean> {
+  if (process.platform !== 'linux' || !/^[A-Za-z0-9_-]+$/u.test(threadId)) return false
+
+  try {
+    const lockPath = join(getCodexHomeDir(), 'thread-writer-locks', `${threadId}.lock`)
+    const [lockStat, rawLocks] = await Promise.all([
+      stat(lockPath, { bigint: true }),
+      readFile('/proc/locks', 'utf8'),
+    ])
+    const device = readLinuxDeviceParts(lockStat.dev)
+
+    return rawLocks.split('\n').some((line) => {
+      const fields = line.trim().split(/\s+/u)
+      if (fields[1] !== 'FLOCK' || fields[3] !== 'WRITE') return false
+      const lockIdentity = fields[5]?.split(':')
+      if (!lockIdentity || lockIdentity.length !== 3) return false
+
+      try {
+        return BigInt(`0x${lockIdentity[0]}`) === device.major
+          && BigInt(`0x${lockIdentity[1]}`) === device.minor
+          && BigInt(lockIdentity[2]) === lockStat.ino
+      } catch {
+        return false
+      }
+    })
+  } catch {
+    return false
+  }
 }
 
 export async function mergeSessionModelStateIntoThreadResult(
@@ -862,9 +900,18 @@ export async function mergeSessionModelStateIntoThreadResult(
   }
 
   const threadId = readNonEmptyString(nextThread.id)
-  const trustedActiveTurnId = modelState.activeTurnId
-    && runtimeTurnState?.hasActiveTurn?.(threadId, modelState.activeTurnId)
-    ? modelState.activeTurnId
+  const recoveredActiveTurnId = modelState.activeTurnId ?? ''
+  const hasRuntimeActiveTurn = Boolean(recoveredActiveTurnId)
+    && Boolean(runtimeTurnState?.hasActiveTurn?.(threadId, recoveredActiveTurnId))
+  let hasActiveSessionWriter = false
+  if (recoveredActiveTurnId && !hasRuntimeActiveTurn) {
+    hasActiveSessionWriter = runtimeTurnState?.hasActiveSessionWriter
+      ? await runtimeTurnState.hasActiveSessionWriter(threadId, sessionPath)
+      : await isThreadWriterLockHeld(threadId)
+  }
+  const trustedActiveTurnId = recoveredActiveTurnId
+    && (hasRuntimeActiveTurn || hasActiveSessionWriter)
+    ? recoveredActiveTurnId
     : ''
   return reconcileStaleThreadStatusFromSession({
     ...nextRecord,
@@ -10549,11 +10596,12 @@ export async function readLatestThreadTurnPage(
       turns: [...latestPage.data].reverse(),
     },
   }
+  // A full native turn page already contains the canonical item sequence. The
+  // rollout recovery path is only for legacy/incomplete thread reads; applying
+  // it here would group commands ahead of reasoning and agent messages.
   const recoveredResult = mergeRecoveredTurnItemsIntoThreadResult(
     rawResult,
     (id, turns) => appServer.mergeItemsIntoTurns(id, turns),
-    undefined,
-    sessionSnapshot?.rows,
   )
   const enrichedResult = await mergeSessionModelStateIntoThreadResult(recoveredResult, appServer)
   const record = asRecord(enrichedResult)

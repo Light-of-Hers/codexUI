@@ -8411,3 +8411,31 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - Stop the disposable `4173` server after profiling. The read-only test does not modify thread data.
+
+### Reliability: Paginated live sessions preserve activity and item order
+
+#### Prerequisites
+- A session is actively running in Codex CLI while Codex UI can read the same rollout.
+- The active turn contains interleaved reasoning, command executions, and assistant messages.
+
+#### Steps
+1. Open the active session directly in a fresh Codex UI browser context.
+2. Confirm the composer shows `Thinking` and an enabled `Stop` button even though the writer belongs to the external CLI process.
+3. Inspect the latest turn and confirm reasoning and assistant messages remain between the command groups where Codex originally emitted them.
+4. End the writer process without a terminal rollout event, reopen the session, and confirm a stale `task_started` record alone does not leave the UI permanently running.
+5. Run `pnpm exec vitest run src/server/codexAppServerBridge.inlinePayload.test.ts` and `pnpm run ci`.
+
+#### Expected Results
+- A held Codex thread-writer lock is accepted as live activity evidence, so an app-server `interrupted` snapshot is reconciled to the persisted active turn.
+- A stale active rollout without either runtime ownership or a held writer lock remains idle.
+- Native `thread/turns/list` pages retain their canonical item order; rollout command recovery is reserved for legacy or incomplete thread reads.
+- Cold-opening the active session issues one initial turn-page request and does not resume or take ownership of the external writer.
+
+#### Performance Audit
+- Writer detection reads the existing Linux lock table only when the rollout reports an active turn; it adds no polling loop or full-session scan.
+- The live-session verification returned one bounded turn-page request, displayed the enabled Stop control in about 2.7 seconds, and produced no browser console errors.
+- In the sampled command-heavy turn, the largest consecutive command run fell from the incorrectly reordered 170 items to the native maximum of 5.
+- The isolated `4173` profile issued `thread-turn-page=1`, `thread/list=1`, `thread/resume=0`, and `thread-message-history=0`; its only warning was the sampled session's existing 3.23 MiB turn-page payload (about 1.81 seconds), dominated by complete command output retained for history fidelity.
+
+#### Rollback/Cleanup
+- Close the disposable browser context. The verification is read-only and does not interrupt or resume the active session.

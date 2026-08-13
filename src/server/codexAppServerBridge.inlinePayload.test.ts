@@ -81,6 +81,43 @@ describe('latest thread turn page', () => {
       { method: 'thread/turns/list', params: { threadId: 'thread-1', cursor: 'older', limit: 100, sortDirection: 'desc', itemsView: 'notLoaded' } },
     ])
   })
+
+  it('preserves the native full-page item order when rollout recovery data exists', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-native-turn-order-'))
+    const sessionPath = join(tempDir, 'session.jsonl')
+    await writeFile(sessionPath, [
+      JSON.stringify({ type: 'event_msg', payload: { type: 'task_started', turn_id: 'turn-1' } }),
+      JSON.stringify({ type: 'event_msg', payload: { type: 'user_message', message: 'check status' } }),
+      JSON.stringify({ type: 'response_item', payload: { type: 'function_call', name: 'exec_command', call_id: 'call-1', arguments: JSON.stringify({ cmd: 'pwd' }) } }),
+      JSON.stringify({ type: 'response_item', payload: { type: 'function_call_output', call_id: 'call-1', output: 'Chunk ID: abc\nProcess exited with code 0\nFinal output:\n/tmp/project' } }),
+      JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'done' }] } }),
+      JSON.stringify({ type: 'event_msg', payload: { type: 'task_complete', turn_id: 'turn-1' } }),
+    ].join('\n'), 'utf8')
+
+    const nativeItems = [
+      { id: 'user-native', type: 'userMessage', content: [{ type: 'text', text: 'check status', text_elements: [] }] },
+      { id: 'reasoning-before', type: 'reasoning', summary: ['Inspecting the repository.'] },
+      { id: 'command-native', type: 'commandExecution', command: 'pwd', cwd: '/tmp/project', status: 'completed', aggregatedOutput: '/tmp/project', exitCode: 0 },
+      { id: 'reasoning-after', type: 'reasoning', summary: ['Interpreting the command output.'] },
+      { id: 'agent-native', type: 'agentMessage', text: 'done' },
+    ]
+    const appServer = {
+      rpc: vi.fn(async (method: string) => method === 'thread/read'
+        ? { thread: { id: 'thread-1', path: sessionPath, cwd: '/tmp/project', turns: [] } }
+        : { data: [{ id: 'turn-1', status: 'completed', items: nativeItems }], nextCursor: null }),
+      mergeItemsIntoTurns: vi.fn((_threadId: string, turns: unknown[]) => turns),
+      hasActiveTurn: vi.fn(() => false),
+    }
+
+    try {
+      const page = await readLatestThreadTurnPage(appServer as never, 'thread-1', 1)
+      const result = page.result as { thread: { turns: Array<{ items: Array<{ id: string }> }> } }
+
+      expect(result.thread.turns[0]?.items.map((item) => item.id)).toEqual(nativeItems.map((item) => item.id))
+    } finally {
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('paginated thread compatibility errors', () => {
@@ -559,6 +596,13 @@ describe('session model state recovery', () => {
       }) as { thread: { status: { type: string; turnId: string }; turns: Array<{ id: string; status: string }> } }
       expect(liveResult.thread.status).toEqual({ type: 'inProgress', turnId: 'turn-2' })
       expect(liveResult.thread.turns).toEqual([{ id: 'turn-2', status: 'inProgress' }])
+
+      const externalWriterResult = await mergeSessionModelStateIntoThreadResult(source, {
+        hasActiveTurn: () => false,
+        hasActiveSessionWriter: (threadId, path) => threadId === 'thread-1' && path === sessionPath,
+      }) as { thread: { status: { type: string; turnId: string }; turns: Array<{ id: string; status: string }> } }
+      expect(externalWriterResult.thread.status).toEqual({ type: 'inProgress', turnId: 'turn-2' })
+      expect(externalWriterResult.thread.turns).toEqual([{ id: 'turn-2', status: 'inProgress' }])
     } finally {
       await rm(tempDir, { recursive: true, force: true })
     }
