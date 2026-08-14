@@ -10601,7 +10601,7 @@ type SharedBridgeState = {
 
 const SHARED_BRIDGE_KEY = '__codexRemoteSharedBridge__'
 const SHARED_BRIDGE_EXIT_CLEANUP_KEY = '__codexRemoteSharedBridgeExitCleanup__'
-const SHARED_BRIDGE_VERSION = 'experimental-api-v2'
+const SHARED_BRIDGE_VERSION = 'experimental-api-v3'
 
 type SharedBridgeStateLike = Partial<SharedBridgeState> & {
   version?: string
@@ -10643,9 +10643,15 @@ function ensureSharedBridgeExitCleanup(globalScope: SharedBridgeGlobalScope): vo
   })
 }
 
+export function supportsThreadWriterRuntimeMigration(value: unknown): boolean {
+  const runtimePool = asRecord(value)
+  return typeof runtimePool?.prepareRuntimeForThreadWrite === 'function'
+    && typeof runtimePool.recordThreadWriterRuntime === 'function'
+}
+
 function isCompleteSharedBridgeState(state: SharedBridgeStateLike): state is SharedBridgeState {
   return Boolean(
-    state.runtimePool &&
+    supportsThreadWriterRuntimeMigration(state.runtimePool) &&
     state.terminalManager &&
     state.methodCatalog &&
     state.telegramBridge,

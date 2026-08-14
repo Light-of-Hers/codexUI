@@ -29,6 +29,7 @@ import {
   sanitizeThreadTurnsInlinePayloads,
   searchThreadMessagesInPayload,
   shouldAutoContinueInterruptedThreadFromThreadRead,
+  supportsThreadWriterRuntimeMigration,
   toAutomationApiRecord,
 } from './codexAppServerBridge'
 
@@ -306,6 +307,18 @@ afterEach(() => {
   vi.useRealTimers()
   vi.restoreAllMocks()
   vi.unstubAllEnvs()
+})
+
+describe('shared bridge runtime compatibility', () => {
+  it('rejects a hot-reloaded runtime pool without writer migration methods', () => {
+    expect(supportsThreadWriterRuntimeMigration({
+      recordThreadRuntime: () => undefined,
+    })).toBe(false)
+    expect(supportsThreadWriterRuntimeMigration({
+      prepareRuntimeForThreadWrite: async () => undefined,
+      recordThreadWriterRuntime: () => undefined,
+    })).toBe(true)
+  })
 })
 
 async function waitForLogToContain(path: string, needle: string, timeoutMs = 4000): Promise<string> {
