@@ -8477,3 +8477,31 @@ Markdown files opened through the local editor expose a preview button that rend
 
 #### Rollback/Cleanup
 - Stop the disposable `4173` server. The read-only verification does not modify thread or rollout data.
+
+### Reliability: Provider runtime writer migration
+
+#### Prerequisites
+- A forked or resumed thread is currently owned by one Codex UI app-server runtime.
+- A different model or provider selection resolves to another app-server runtime.
+- Light and dark themes are both available from Settings.
+
+#### Steps
+1. Open the owned thread, select a model or provider backed by a different runtime, and send a message.
+2. Confirm the bridge sends `thread/unsubscribe` to the previous owner before `thread/resume` and `turn/start` reach the selected runtime.
+3. Confirm the request completes without `thread already has an active writer`, HTTP 502, or an interrupted session.
+4. Repeat the send flow in Light and Dark appearance and confirm Thinking, Running, and Stop state still follow the new turn.
+5. Run `pnpm exec vitest run src/server/codexAppServerBridge.inlinePayload.test.ts` and `pnpm run ci`.
+
+#### Expected Results
+- Existing writer ownership is released before a thread moves between runtime signatures.
+- Both direct `thread/resume` and the `turn/start` resume preflight use the selected runtime after migration.
+- A late `thread/closed` notification from the old runtime cannot remove the new runtime's ownership mapping.
+- Older app-server builds that reject `thread/unsubscribe` keep the request on the known owner instead of producing a cross-process active-writer conflict.
+
+#### Performance Audit
+- Same-runtime writes retain a constant-time ownership lookup and add no RPC; the ownership index mirrors app-server-loaded writers and is cleared on close, unsubscribe, archive, or bridge disposal.
+- Cross-runtime migration adds one local `thread/unsubscribe` only when ownership actually changes; it replaces the failed resume and HTTP retry path.
+- The change adds no polling, rollout scan, browser request, app-server process, or persistent cache.
+
+#### Rollback/Cleanup
+- Switch the thread back to its preferred model/provider after verification. No rollout cleanup is required.

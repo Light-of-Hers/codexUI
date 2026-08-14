@@ -370,6 +370,7 @@ async function writeThreadRoutingCommand(path: string, provider: string, logPath
   emitStartedNotification?: boolean
   interruptError?: string
   readableThread?: boolean
+  sharedOwnerPath?: string
   threadModel?: string
   threadModelProvider?: string
 } = {}): Promise<void> {
@@ -381,9 +382,27 @@ if (process.argv[2] === '--version') {
 }
 const emitStartedNotification = ${JSON.stringify(options.emitStartedNotification === true)}
 const interruptError = ${JSON.stringify(options.interruptError ?? '')}
+const sharedOwnerPath = ${JSON.stringify(options.sharedOwnerPath ?? '')}
+let ownsThread = ${JSON.stringify(ownsThread)}
 process.stdin.setEncoding('utf8')
 let buffer = ''
 let notificationEmitted = false
+function isThreadOwner() {
+  if (!sharedOwnerPath) return ownsThread
+  try {
+    return fs.readFileSync(sharedOwnerPath, 'utf8').trim() === ${JSON.stringify(provider)}
+  } catch {
+    return false
+  }
+}
+function claimThread() {
+  ownsThread = true
+  if (sharedOwnerPath) fs.writeFileSync(sharedOwnerPath, ${JSON.stringify(provider)})
+}
+function releaseThread() {
+  ownsThread = false
+  if (sharedOwnerPath && isThreadOwner()) fs.writeFileSync(sharedOwnerPath, '')
+}
 function result(id, payload) {
   process.stdout.write(JSON.stringify({ id, result: payload }) + '\\n')
 }
@@ -414,7 +433,7 @@ process.stdin.on('data', (chunk) => {
         result(message.id, { config: { model_provider: ${JSON.stringify(provider)}, model: 'gpt-5.5-extra-high' } })
         emitNotification()
       } else if (message.method === 'thread/read') {
-        if (${JSON.stringify(ownsThread || options.readableThread === true)}) {
+        if (isThreadOwner() || ${JSON.stringify(options.readableThread === true)}) {
           result(message.id, { thread: {
             id: 'thread-1',
             model: ${JSON.stringify(options.threadModel ?? '')},
@@ -426,14 +445,35 @@ process.stdin.on('data', (chunk) => {
           error(message.id, 'thread not found: thread-1')
         }
       } else if (message.method === 'thread/fork') {
-        if (${JSON.stringify(ownsThread)}) result(message.id, { thread: { id: 'forked-thread' } })
+        if (isThreadOwner()) result(message.id, { thread: { id: 'forked-thread' } })
         else error(message.id, 'thread not found: thread-1')
+      } else if (message.method === 'thread/unsubscribe') {
+        if (isThreadOwner()) {
+          releaseThread()
+          result(message.id, { status: 'unsubscribed' })
+        } else {
+          result(message.id, { status: 'notLoaded' })
+        }
+      } else if (message.method === 'thread/resume') {
+        if (!sharedOwnerPath || !fs.existsSync(sharedOwnerPath) || fs.readFileSync(sharedOwnerPath, 'utf8').trim() === '' || isThreadOwner()) {
+          claimThread()
+          result(message.id, {
+            model: message.params && message.params.model || ${JSON.stringify(options.threadModel ?? 'gpt-5.5-extra-high')},
+            modelProvider: ${JSON.stringify(provider)},
+            thread: { id: message.params && message.params.threadId || 'thread-1', turns: [] }
+          })
+        } else {
+          error(message.id, 'thread thread-1 already has an active writer')
+        }
+      } else if (message.method === 'turn/start') {
+        if (isThreadOwner()) result(message.id, { turn: { id: ${JSON.stringify(provider)} + '-turn' } })
+        else error(message.id, 'thread thread-1 already has an active writer')
       } else if (message.method === 'thread/archive') {
-        if (${JSON.stringify(ownsThread)}) result(message.id, {})
+        if (isThreadOwner()) result(message.id, {})
         else error(message.id, 'thread thread-1 already has an active writer')
       } else if (message.method === 'turn/interrupt') {
-        if (${JSON.stringify(ownsThread)} && interruptError) error(message.id, interruptError)
-        else if (${JSON.stringify(ownsThread)}) result(message.id, {})
+        if (isThreadOwner() && interruptError) error(message.id, interruptError)
+        else if (isThreadOwner()) result(message.id, {})
         else error(message.id, 'thread not found: thread-1')
       } else {
         result(message.id, {})
@@ -4129,6 +4169,81 @@ process.stdin.on('data', (chunk) => {
         },
       })
       expect(await readFile(commandLogPath, 'utf8')).toContain('moon:thread/resume\nmoon:turn/start\n')
+    } finally {
+      middleware.dispose()
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    {
+      label: 'thread/resume',
+      request: {
+        method: 'thread/resume',
+        params: {
+          threadId: 'thread-1',
+          persistExtendedHistory: true,
+          model: 'deepseek-v4-flash',
+          modelProvider: 'moon',
+        },
+      },
+      expectedTail: ['cursor:thread/unsubscribe', 'moon:thread/resume'],
+    },
+    {
+      label: 'turn/start',
+      request: {
+        method: 'turn/start',
+        params: {
+          threadId: 'thread-1',
+          input: [{ type: 'text', text: 'continue on moon' }],
+          model: 'deepseek-v4-flash',
+          modelProvider: 'moon',
+        },
+      },
+      expectedTail: ['cursor:thread/unsubscribe', 'moon:thread/resume', 'moon:turn/start'],
+    },
+  ])('releases the existing writer before provider-switched $label', async ({ request, expectedTail }) => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'codexui-provider-writer-migration-'))
+    const commandLogPath = join(tempDir, 'commands.log')
+    const ownerPath = join(tempDir, 'owner.txt')
+    const cursorCommand = join(tempDir, 'codex-cursor')
+    const moonCommand = join(tempDir, 'codex-moon')
+    await writeFile(ownerPath, 'cursor', 'utf8')
+    await writeThreadRoutingCommand(cursorCommand, 'cursor', commandLogPath, true, { sharedOwnerPath: ownerPath })
+    await writeThreadRoutingCommand(moonCommand, 'moon', commandLogPath, false, { sharedOwnerPath: ownerPath })
+    await writeFile(join(tempDir, 'webui-free-mode.json'), JSON.stringify({
+      enabled: true,
+      apiKey: null,
+      model: 'gpt-5.5-extra-high',
+      provider: 'cursor',
+    }), 'utf8')
+    vi.stubEnv('CODEX_HOME', tempDir)
+    vi.stubEnv('CODEXUI_CODEX_COMMAND', cursorCommand)
+    vi.stubEnv('CODEXUI_CODEX_CURSOR_COMMAND', cursorCommand)
+    vi.stubEnv('CODEXUI_CODEX_MOON_COMMAND', moonCommand)
+
+    const middleware = createCodexBridgeMiddleware()
+    try {
+      const ownerResponse = await invokeBridgeJson(middleware, '/codex-api/rpc', {
+        method: 'thread/resume',
+        params: {
+          threadId: 'thread-1',
+          persistExtendedHistory: true,
+          model: 'gpt-5.5-extra-high',
+          modelProvider: 'cursor',
+        },
+      })
+      expect(ownerResponse.statusCode, JSON.stringify(ownerResponse.payload)).toBe(200)
+
+      const writeResponse = await invokeBridgeJson(middleware, '/codex-api/rpc', request)
+      expect(writeResponse.statusCode, JSON.stringify(writeResponse.payload)).toBe(200)
+
+      const calls = (await readFile(commandLogPath, 'utf8'))
+        .trim()
+        .split('\n')
+        .filter((line) => expectedTail.includes(line))
+      expect(calls).toEqual(expectedTail)
+      expect(await readFile(ownerPath, 'utf8')).toBe('moon')
     } finally {
       middleware.dispose()
       await rm(tempDir, { recursive: true, force: true })

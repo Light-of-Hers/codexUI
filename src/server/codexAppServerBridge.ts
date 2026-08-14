@@ -106,6 +106,14 @@ const THREAD_MODEL_PROVIDER_OVERRIDE_METHODS = new Set([
   'turn/steer',
   'turn/interrupt',
 ])
+const THREAD_WRITER_MIGRATION_METHODS = new Set(['thread/resume', 'turn/start'])
+const THREAD_WRITER_NOTIFICATION_METHODS = new Set([
+  'thread/started',
+  'thread/status/changed',
+  'turn/started',
+  'turn/completed',
+])
+const THREAD_WRITER_RESPONSE_METHODS = new Set(['thread/start', 'thread/resume', 'thread/fork'])
 
 function isInterruptedTurnAutoContinueEnabled(): boolean {
   return process.env.CODEXUI_AUTO_CONTINUE_INTERRUPTED_TURNS !== '0'
@@ -10073,6 +10081,7 @@ class AppServerRuntimePool {
   private static readonly THREAD_RUNTIME_CACHE_IDLE_MS = 30 * 60 * 1000
   private readonly runtimesBySignature = new Map<string, AppServerRuntime>()
   private readonly notificationListeners = new Set<(notification: BridgeNotification) => void>()
+  private readonly writerRuntimeByThreadId = new Map<string, AppServerRuntime>()
   private readonly runtimeByThreadId = new BoundedLruCache<AppServerRuntime>({
     maxEntries: AppServerRuntimePool.THREAD_RUNTIME_CACHE_LIMIT,
     maxWeight: AppServerRuntimePool.THREAD_RUNTIME_CACHE_LIMIT,
@@ -10091,7 +10100,14 @@ class AppServerRuntimePool {
     runtime = new AppServerRuntime(state, (notification) => {
       const threadId = extractThreadIdFromParams(notification.params)
       if (threadId) {
-        this.recordThreadRuntime(threadId, runtime)
+        if (notification.method === 'thread/closed') {
+          this.releaseRuntimeThreadState(threadId, runtime)
+        } else {
+          this.recordThreadRuntime(threadId, runtime)
+          if (THREAD_WRITER_NOTIFICATION_METHODS.has(notification.method)) {
+            this.recordThreadWriterRuntime(threadId, runtime)
+          }
+        }
       }
       this.emitNotification(notification)
     }, (method, params) => {
@@ -10138,10 +10154,57 @@ class AppServerRuntimePool {
     this.runtimeByThreadId.set(normalizedThreadId, runtime)
   }
 
+  recordThreadWriterRuntime(threadId: string, runtime: AppServerRuntime): void {
+    const normalizedThreadId = threadId.trim()
+    if (!normalizedThreadId) return
+    this.writerRuntimeByThreadId.set(normalizedThreadId, runtime)
+  }
+
+  private releaseRuntimeThreadState(threadId: string, runtime: AppServerRuntime): void {
+    const normalizedThreadId = threadId.trim()
+    if (!normalizedThreadId) return
+    if (this.runtimeByThreadId.get(normalizedThreadId) === runtime) {
+      this.runtimeByThreadId.delete(normalizedThreadId)
+    }
+    if (this.writerRuntimeByThreadId.get(normalizedThreadId) === runtime) {
+      this.writerRuntimeByThreadId.delete(normalizedThreadId)
+    }
+    runtime.appServer.releaseThreadState(normalizedThreadId)
+  }
+
+  async prepareRuntimeForThreadWrite(threadId: string, requestedRuntime: AppServerRuntime): Promise<AppServerRuntime> {
+    const normalizedThreadId = threadId.trim()
+    if (!normalizedThreadId) return requestedRuntime
+
+    const owningRuntime = this.writerRuntimeByThreadId.get(normalizedThreadId) ?? null
+    if (!owningRuntime || owningRuntime === requestedRuntime) return requestedRuntime
+
+    try {
+      const unsubscribeResult = asRecord(await owningRuntime.appServer.rpc('thread/unsubscribe', {
+        threadId: normalizedThreadId,
+      }))
+      this.releaseRuntimeThreadState(normalizedThreadId, owningRuntime)
+      writeDebugLog('rpc-thread-runtime-migrated', 'Released the previous thread runtime before writer migration', {
+        threadId: normalizedThreadId,
+        status: readNonEmptyString(unsubscribeResult?.status),
+      }).catch(() => {})
+      return requestedRuntime
+    } catch (error) {
+      // Older app-server builds may not expose thread/unsubscribe. Keeping the
+      // request on the known owner avoids a cross-process active-writer error.
+      writeDebugLog('rpc-thread-runtime-migration-fallback', 'Could not release the previous thread runtime; using its writer', {
+        threadId: normalizedThreadId,
+        error: getErrorMessage(error, 'unknown'),
+      }).catch(() => {})
+      return owningRuntime
+    }
+  }
+
   releaseThreadState(threadId: string): void {
     const normalizedThreadId = threadId.trim()
     if (!normalizedThreadId) return
     this.runtimeByThreadId.delete(normalizedThreadId)
+    this.writerRuntimeByThreadId.delete(normalizedThreadId)
     for (const runtime of this.runtimesBySignature.values()) {
       runtime.appServer.releaseThreadState(normalizedThreadId)
     }
@@ -10201,6 +10264,7 @@ class AppServerRuntimePool {
     }
     this.runtimesBySignature.clear()
     this.runtimeByThreadId.clear()
+    this.writerRuntimeByThreadId.clear()
     this.notificationListeners.clear()
   }
 }
@@ -11591,6 +11655,14 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         let effectiveRpcRuntime = rpcRuntime
         let effectiveRpcAppServer = rpcRuntime.appServer
 
+        if (THREAD_WRITER_MIGRATION_METHODS.has(body.method)) {
+          const threadId = extractThreadIdFromParams(body.params)
+          if (threadId) {
+            effectiveRpcRuntime = await runtimePool.prepareRuntimeForThreadWrite(threadId, rpcRuntime)
+            effectiveRpcAppServer = effectiveRpcRuntime.appServer
+          }
+        }
+
         if (body.method === 'thread/archive') {
           const paramsRecord = asRecord(body.params)
           const threadId = readNonEmptyString(paramsRecord?.threadId)
@@ -11804,6 +11876,16 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           if (rpcThreadId) {
             effectiveRpcAppServer.storeThreadReadSnapshot(rpcThreadId, result)
             recordRuntimeThreadState(runtimePool, rpcThreadId, effectiveRpcRuntime)
+            if (THREAD_WRITER_RESPONSE_METHODS.has(body.method)) {
+              runtimePool.recordThreadWriterRuntime(rpcThreadId, effectiveRpcRuntime)
+            }
+          }
+        }
+
+        if (body.method === 'turn/start') {
+          const startedThreadId = extractThreadIdFromParams(rpcParams)
+          if (startedThreadId) {
+            runtimePool.recordThreadWriterRuntime(startedThreadId, effectiveRpcRuntime)
           }
         }
 
