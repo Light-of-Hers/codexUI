@@ -34,7 +34,7 @@ function deferredCommandMessage(): UiMessage {
     turnId: 'turn-1',
     turnIndex: 0,
     commandExecution: {
-      command: '',
+      command: 'pnpm run ci...',
       cwd: null,
       status: 'completed',
       aggregatedOutput: '',
@@ -76,7 +76,7 @@ describe('ThreadConversation deferred command details', () => {
 
     await flushPromises()
     expect(fetchMock).not.toHaveBeenCalled()
-    expect(wrapper.get('.cmd-label').text()).toBe('(command)')
+    expect(wrapper.get('.cmd-label').text()).toBe('pnpm run ci...')
 
     await wrapper.get('button.cmd-row').trigger('click')
     await flushPromises()

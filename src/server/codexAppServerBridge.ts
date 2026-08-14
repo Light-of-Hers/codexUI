@@ -302,6 +302,7 @@ const THREAD_SEARCH_FULL_TEXT_THREAD_LIMIT = 100
 const THREAD_MESSAGE_SEARCH_DEFAULT_LIMIT = 100
 const THREAD_MESSAGE_SEARCH_MAX_LIMIT = 500
 const THREAD_MESSAGE_SEARCH_SNIPPET_CONTEXT = 72
+const THREAD_COMMAND_PREVIEW_MAX_LENGTH = 160
 const THREAD_COMMAND_DETAILS_CACHE_ENTRY_LIMIT = 2_000
 const THREAD_COMMAND_DETAILS_CACHE_BYTE_LIMIT = 48 * 1024 * 1024
 const THREAD_COMMAND_DETAILS_CACHE_IDLE_MS = 30 * 60 * 1000
@@ -396,6 +397,14 @@ function formatCommandArgument(value: string): string {
   if (value.length === 0) return "''"
   if (/^[A-Za-z0-9_@%+=:,./-]+$/u.test(value)) return value
   return `'${value.replace(/'/gu, `'\\''`)}'`
+}
+
+function commandPreview(command: string): string {
+  if (command.length <= THREAD_COMMAND_PREVIEW_MAX_LENGTH) return command
+  let prefix = command.slice(0, THREAD_COMMAND_PREVIEW_MAX_LENGTH - 3)
+  const lastCodeUnit = prefix.charCodeAt(prefix.length - 1)
+  if (lastCodeUnit >= 0xD800 && lastCodeUnit <= 0xDBFF) prefix = prefix.slice(0, -1)
+  return `${prefix}...`
 }
 
 function readDeferredCommandExecutionDetails(item: Record<string, unknown>): DeferredCommandExecutionDetails {
@@ -10688,7 +10697,7 @@ export function deferThreadCommandExecutionDetails(
       ]) {
         delete nextItem[field]
       }
-      nextItem.command = ''
+      nextItem.command = commandPreview(details.command)
       nextItem.cwd = null
       nextItem.aggregatedOutput = ''
       nextItem.codexUiCommandOutputLength = details.aggregatedOutput.length

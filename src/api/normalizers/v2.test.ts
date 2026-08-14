@@ -191,11 +191,11 @@ describe('thread active turn normalization', () => {
 })
 
 describe('normalizeThreadMessagesV2', () => {
-  it('preserves the deferred command detail marker without command payloads', () => {
+  it('preserves the deferred command detail marker with a bounded command preview', () => {
     const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
       type: 'commandExecution',
       id: 'command-deferred',
-      command: '',
+      command: 'pnpm run ci...',
       cwd: null,
       status: 'completed',
       aggregatedOutput: '',
@@ -207,10 +207,10 @@ describe('normalizeThreadMessagesV2', () => {
     expect(messages).toHaveLength(1)
     expect(messages[0]).toMatchObject({
       id: 'command-deferred',
-      text: '',
+      text: 'pnpm run ci...',
       messageType: 'commandExecution',
       commandExecution: {
-        command: '',
+        command: 'pnpm run ci...',
         cwd: null,
         status: 'completed',
         aggregatedOutput: '',

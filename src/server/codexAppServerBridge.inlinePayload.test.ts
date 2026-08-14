@@ -122,6 +122,7 @@ describe('latest thread turn page', () => {
   })
 
   it('defers command and output bodies while preserving lightweight execution metadata', () => {
+    const fullCommand = `printf '${'x'.repeat(200)}'`
     const remembered: Array<{ threadId: string; turnId: string; itemId: string; command: string; output: string }> = []
     const source = {
       thread: {
@@ -131,7 +132,7 @@ describe('latest thread turn page', () => {
           items: [{
             id: 'exec-1',
             type: 'commandExecution',
-            command: 'pnpm run ci',
+            command: fullCommand,
             cwd: '/tmp/project',
             status: 'completed',
             aggregatedOutput: 'all tests passed',
@@ -151,7 +152,7 @@ describe('latest thread turn page', () => {
     expect(item).toEqual({
       id: 'exec-1',
       type: 'commandExecution',
-      command: '',
+      command: `${fullCommand.slice(0, 157)}...`,
       cwd: null,
       status: 'completed',
       aggregatedOutput: '',
@@ -164,7 +165,7 @@ describe('latest thread turn page', () => {
       threadId: 'thread-1',
       turnId: 'turn-1',
       itemId: 'exec-1',
-      command: 'pnpm run ci',
+      command: fullCommand,
       output: 'all tests passed',
     }])
     expect(source.thread.turns[0].items[0].aggregatedOutput).toBe('all tests passed')
@@ -198,7 +199,7 @@ describe('latest thread turn page', () => {
     expect(result.thread.turns[0].items[0]).toEqual({
       id: 'cursor-command-call-cursor-direct',
       type: 'commandExecution',
-      command: '',
+      command: 'pwd',
       cwd: null,
       status: 'completed',
       aggregatedOutput: '',
